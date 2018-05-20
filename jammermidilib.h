@@ -143,31 +143,31 @@ void jml_setup() {
 
   jml_attempt(
     MIDIClientCreate(
-     CFStringCreateWithCString( NULL, "jammer", kCFStringEncodingASCII ),
+     CFSTR("jammer"),
      NULL, NULL, &jml_midiclient),
     "creating OS-X MIDI client object." );
 
   jml_attempt(
     MIDIInputPortCreate(
-      jml_midiclient,
-      CFStringCreateWithCString( NULL, "jammer", kCFStringEncodingASCII ),
-      &read_midi,
-      NULL /* refCon */,
-      &jml_midiport),
+     jml_midiclient,
+     CFSTR("jammer"),
+     &read_midi,
+     NULL /* refCon */,
+     &jml_midiport),
     "creating input port for Axis 49");
 
   jml_attempt(
     MIDIPortConnectSource(
-      jml_midiport,
-      src,
-      NULL /* connRefCon */),
+     jml_midiport,
+     src,
+     NULL /* connRefCon */),
     "connecting to Axis 49");
 
   jml_attempt(
     MIDISourceCreate(
-      jml_midiclient,
-      CFStringCreateWithCString( NULL, "jammer", kCFStringEncodingASCII ),
-      &jml_midiendpoint),
+     jml_midiclient,
+     CFSTR("jammer"),
+     &jml_midiendpoint),
     "creating OS-X virtual MIDI source." );
 }
 
