@@ -85,6 +85,28 @@ char mapping(unsigned char note_in) {
   //TODO: map the rest of the notes
   //TODO: figure out how to get it into selfless mode
   switch (note_in) {
+  case 25: return 37;  // Db / C#
+  case 32: return 39;  // D# / Eb
+  case 39: return 41;  // F
+  case 46: return 43;  // G
+  case 28: return 44;  // G# / Ab
+  case 53: return 45;  // A
+  case 35: return 46;  // Bb
+  case 60: return 47;  // B
+  case 42: return 48;  // C
+  case 24: return 49;  // C# / Db
+  case 67: return 49;  // C# / Db
+  case 49: return 50;  // D
+  case 31: return 51;  // D# / Eb
+  case 56: return 52;  // E
+  case 38: return 53;  // F
+  case 63: return 54;  // F#
+  case 45: return 55;  // G
+  case 70: return 56;  // G# / Ab
+  case 27: return 56;  // G# / Ab
+  case 52: return 57;  // A
+  case 34: return 58;  // Bb
+  case 59: return 59;  // B
   case 41: return 60;  // C
   case 66: return 61;  // C# / Db
   case 48: return 62;  // D
@@ -109,6 +131,9 @@ char mapping(unsigned char note_in) {
   case 43: return 79;  // G
   case 68: return 80;  // G# / Ab
   case 50: return 81;  // A
+  case 57: return 83;  // B
+  case 64: return 85;  // C# / Db
+  case 71: return 87;  // D# / Eb
   default:
     return 0;
   }
