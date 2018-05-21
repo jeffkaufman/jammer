@@ -151,7 +151,7 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned char note_in = packet->data[1];
       unsigned char val = packet->data[2];
 
-      unsigned char note_out = mapping(note_in);
+      unsigned char note_out = mapping(note_in) + 12;
 
       jml_send_midi(mode, note_out, val);
 
