@@ -5,6 +5,10 @@
 #include <CoreMIDI/MIDIServices.h>
 #include <CoreAudio/HostTime.h>
 
+// Spec:
+// https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
+// https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
+
 void jml_die(char *errmsg) {
   printf("%s\n",errmsg);
   exit(-1);
