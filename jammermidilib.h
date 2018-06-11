@@ -24,7 +24,8 @@ void jml_attempt(OSStatus result, char* errmsg) {
 
 MIDIClientRef jml_midiclient;
 MIDIEndpointRef jml_midiendpoint;
-MIDIPortRef jml_midiport;
+MIDIPortRef jml_midiport_axis_49;
+MIDIPortRef jml_midiport_breath_controller;
 bool newModel;
 
 void jml_compose_midi(char actionType, int noteNo, int v, Byte* msg) {
@@ -55,10 +56,10 @@ void jml_send_midi(char actionType, int noteNo, int v) {
   jml_attempt(MIDIReceived(jml_midiendpoint, packetList), "error sending midi");
 }
 
-MIDIEndpointRef getEndpointRef() {
+bool getEndpointRef(CFStringRef targetName, MIDIEndpointRef* endpointRef) {
   int n_sources = MIDIGetNumberOfSources();
   if (!n_sources) {
-    jml_die("no sources found");
+    jml_die("no midi sources found");
   }
   for (int i = 0; i < n_sources ; i++) {
     MIDIEndpointRef src = MIDIGetSource(i);
@@ -77,18 +78,12 @@ MIDIEndpointRef getEndpointRef() {
 
     printf("Saw %s\n", CFStringGetCStringPtr(name, kCFStringEncodingUTF8));
 
-    if (CFStringCompare(name, CFSTR("AXIS-49 USB Keyboard"), 0) ==
-        kCFCompareEqualTo) {
-      newModel = false;
-      return src;
-    } else if (CFStringCompare(name, CFSTR("AXIS-49 2A"), 0) ==
-               kCFCompareEqualTo) {
-      newModel = true;
-      return src;
+    if (CFStringCompare(name, targetName, 0) == kCFCompareEqualTo) {
+      *endpointRef = src;
+      return true;
     }
   }
-  jml_die("Failed to locate an AXIS-49");
-  return 0;  // not reached
+  return false;  // failed to find one
 }
 
 char mapping(unsigned char note_in) {
@@ -252,6 +247,7 @@ char mapping(unsigned char note_in) {
   }
 }
 
+int breathVal = -1;
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
@@ -260,15 +256,21 @@ void read_midi(const MIDIPacketList *pktlist,
     if (packet->length != 3) {
       printf("bad packet len: %d\n", packet->length);
     } else {
-      unsigned char mode = packet->data[0];
-      unsigned char note_in = packet->data[1];
-      unsigned char val = packet->data[2];
+      unsigned int mode = packet->data[0];
+      unsigned int note_in = packet->data[1];
+      unsigned int val = packet->data[2];
 
-      unsigned char note_out = mapping(note_in) + 12;
-      jml_send_midi(mode, note_out, val);
+      printf("got packet %x %x %x\n", mode, note_in, val);
 
-      if (mode == 0x90) {
-        printf("%d\n", note_in);
+      if (mode == 0x80 || mode == 0x90) {
+        // note on or off
+        unsigned char note_out = mapping(note_in) + 12;
+        jml_send_midi(mode, note_out, val);
+      } else if (mode == 0xb0 && note_in == 0x02) {
+        // breath controller
+
+        // Send CC-11 instead of CC-2
+        jml_send_midi(0xb0, 0x0b, val);
       }
     }
     packet = MIDIPacketNext(packet);
@@ -276,8 +278,18 @@ void read_midi(const MIDIPacketList *pktlist,
 }
 
 void jml_setup() {
-  MIDIEndpointRef src = getEndpointRef();  // exits on failure
+  MIDIEndpointRef axis49;
+  if (getEndpointRef(CFSTR("AXIS-49 USB Keyboard"), &axis49)) {
+    newModel = false;
+  } else if (getEndpointRef(CFSTR("AXIS-49 2A"), &axis49)) {
+    newModel = true;
+  } else {
+    jml_die("Couldn't find AXIS-49");
+  }
 
+  MIDIEndpointRef breathController;
+  bool haveBreathController = getEndpointRef(CFSTR("Breath Controller 5.0-15260BA7"),
+                                             &breathController);
   jml_attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
@@ -287,18 +299,36 @@ void jml_setup() {
   jml_attempt(
     MIDIInputPortCreate(
      jml_midiclient,
-     CFSTR("jammer"),
+     CFSTR("axis 49 input port"),
      &read_midi,
      NULL /* refCon */,
-     &jml_midiport),
+     &jml_midiport_axis_49),
     "creating input port for Axis 49");
 
   jml_attempt(
     MIDIPortConnectSource(
-     jml_midiport,
-     src,
+     jml_midiport_axis_49,
+     axis49,
      NULL /* connRefCon */),
     "connecting to Axis 49");
+
+  if (haveBreathController) {
+    jml_attempt(
+      MIDIInputPortCreate(
+       jml_midiclient,
+       CFSTR("breath controller input port"),
+       &read_midi,
+       NULL /* refCon */,
+       &jml_midiport_breath_controller),
+      "creating input port for breath controller");
+
+    jml_attempt(
+      MIDIPortConnectSource(
+       jml_midiport_breath_controller,
+       breathController,
+       NULL /* connRefCon */),
+      "connecting to Breath Controller");
+  }
 
   jml_attempt(
     MIDISourceCreate(
