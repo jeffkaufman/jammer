@@ -38,7 +38,7 @@ bool polyphonic;
 //  note > curMax: switch to alto
 //  note < curMin: switch to baritone
 
-int default_endpoint;
+int selected_endpoint;
 MIDIEndpointRef jml_midiendpoints[JML_N_ENDPOINTS];
 int jml_current_note_values[JML_N_ENDPOINTS];
 
@@ -46,6 +46,9 @@ int jml_current_note_values[JML_N_ENDPOINTS];
 #define TENOR 1    // 42 - 88
 #define BARITONE 2 // 35 - 86
 #define SOPRANO 3  // 54 - 93
+
+int min_range[JML_N_ENDPOINTS];
+int max_range[JML_N_ENDPOINTS];
 
 MIDIPortRef jml_midiport_axis_49;
 MIDIPortRef jml_midiport_breath_controller;
@@ -281,6 +284,19 @@ void allNotesOff() {
   }
 }
 
+void play_note(int mode, int note, int velocity, int endpoint_index) {
+  printf("sending %d to index %d\n", note_out, endpoint_index);
+  if (endpoint_index == TENOR || endpoint_index == BARITONE) {
+    // these two sound an ocatve lower than their midi value
+    note += 12;
+  }
+  jml_send_midi(mode, note, velocity, &jml_midiendpoints[endpoint_index]);
+}
+
+bool in_range(note, endpoint) {
+  return note >= min_range[endpoint] && note <= max_range[endpoint];
+}
+
 int breathVal = -1;
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
@@ -289,64 +305,141 @@ void read_midi(const MIDIPacketList *pktlist,
   for (int i = 0; i < pktlist->numPackets; i++) {
     if (packet->length != 3) {
       printf("bad packet len: %d\n", packet->length);
-    } else {
-      unsigned int mode = packet->data[0];
-      unsigned int note_in = packet->data[1];
-      unsigned int val = packet->data[2];
+      continue;
+    }
 
-      printf("got packet %x %x %x\n", mode, note_in, val);
+    unsigned int mode = packet->data[0];
+    unsigned int note_in = packet->data[1];
+    unsigned int val = packet->data[2];
 
-      if (mode == 0x80 || mode == 0x90) {
-        // note on or off
+    printf("got packet %x %x %x\n", mode, note_in, val);
 
-        if (note_in == 1 || note_in == 2) {
-          // switch polyphonic mode
-          polyphonic = (note_in == 2);
-          printf("setting mode polyphonic=%d\n", polyphonic);
-          allNotesOff();
-        } else if (note_in >= 3 && note_in < 3 + JML_N_ENDPOINTS) {
-          // switch default endpoint for switching instruments
-          default_endpoint = note_in - 3;
-          printf("switched to endpoint %d\n", default_endpoint);
-          allNotesOff();
-        } else {
-          unsigned char note_out = mapping(note_in) + 12;
-          int endpoint_index = 0;
-          if (polyphonic) {
-            // figure out which endpoint to use to simulate polyphony
-            for (; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
-              if (mode == 0x80 || val == 0) {
-                if (jml_current_note_values[endpoint_index] == note_out) {
-                  jml_current_note_values[endpoint_index] = -1;
-                  break;
-                }
-              } else {
-                if (jml_current_note_values[endpoint_index] == -1) {
-                  jml_current_note_values[endpoint_index] = note_out;
-                  break;
+    if (mode == 0x80 || mode == 0x90) {
+      // note on or off
+
+      if (note_in == 1 || note_in == 2) {
+        // switch polyphonic mode
+        polyphonic = (note_in == 2);
+        printf("setting mode polyphonic=%d\n", polyphonic);
+        allNotesOff();
+        continue;
+      }
+
+      if (note_in >= 3 && note_in < 3 + JML_N_ENDPOINTS) {
+        // switch default endpoint for switching instruments
+        selected_endpoint = note_in - 3;
+        printf("switched to endpoint %d\n", selected_endpoint);
+        allNotesOff();
+        continue;
+      }
+
+      unsigned char note_out = mapping(note_in) + 12;
+
+      if (polyphonic) {
+        // Figure out which endpoint to use to simulate polyphony,
+        // moving notes between endpoints as needed.
+        int j;
+        for (j = 0; j < JML_N_ENDPOINTS; j++) {
+          if (mode == 0x80 || val == 0) {
+            if (jml_current_note_values[j] == note_out) {
+              jml_current_note_values[j] = -1;
+              break;
+            }
+          } else {
+            if (jml_current_note_values[j] == -1 && in_range(note_out, j) {
+              jml_current_note_values[j] = note_out;
+              break;
+            }
+          }
+        }
+        if (j < JML_N_ENDPOINTS) {
+          // found available endpoint, all set.
+          play_note(mode, note, val, j);
+          continue;
+        }
+        if (mode == 0x80) {
+          printf("this shouldn't happen");
+          continue;
+        }
+        
+        // All endpoints that could take this note are busy. Try to
+        // swap things around.
+
+        // first make sure we have a space to swap to, and put it there
+        for (j = 0; j < JML_N_ENDPOINTS; j++) {
+          if (jml_current_note_values[j] == -1):
+            jml_current_note_values[j] = note_out;
+          }
+        }
+        if (j == JML_N_ENDPOINTS) {
+          // no place to put it; no solution
+          continue;
+        }
+        // Now try to swap them around to make the range work out.
+
+        int new_notes[JML_N_ENDPOINTS];
+        for (j = 0; j < JML_N_ENDPOINTS; j++) {
+          new_notes[j] = jml_current_note_values[j];
+        }
+
+        // this is a terrible algorithm, but JML_N_ENDPOINTS is very
+        // small and it's hard to write this properly in C
+        bool progress = false;
+        while (progress) {
+          progress = false;
+          for (j = 0; j < JML_N_ENDPOINTS; j++) {
+            int noteJ = new_notes[j]
+            if (!in_range(noteJ, j) {
+              for (k = 0, k < JML_N_ENDPOINTS; k++) {
+                if (k != j) {
+                  if (in_range(noteJ, k) && in_range(new_notes[k], j)) {
+                    new_notes[j] = new_notes[k];
+                    new_notes[k] = noteJ;
+                    progress = true;
+                  }
                 }
               }
             }
           }
+        }
 
-          endpoint_index = (endpoint_index + default_endpoint) % JML_N_ENDPOINTS;
-
-          printf("sending %d to index %d\n", note_out, endpoint_index);
-          if (endpoint_index == TENOR || endpoint_index == BARITONE) {
-            // these two sound an ocatve lower than their midi value
-            note_out += 12;
+        bool success = true;
+        for (j = 0; j < JML_N_ENDPOINTS; j++) {
+          if (!in_range(new_notes[j])) {
+            success = false;
           }
-          jml_send_midi(mode, note_out, val,
-                        &jml_midiendpoints[endpoint_index]);
         }
-      } else if (mode == 0xb0 && note_in == 0x02) {
-        // breath controller
+        if (!success) {
+          printf("couldn't reallocate notes\n");
+          continue;
+        }
 
-        for (int endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
-          printf("sending breath %d on %d\n", val, endpoint_index);
-          // Send CC-11 instead of CC-2
-          jml_send_midi(0xb0, 0x0b, val, &jml_midiendpoints[endpoint_index]);
+        // Now we just need to transfer new_notes to
+        // jml_current_note_values and the synth.
+        for (j = 0; j < JML_N_ENDPOINTS; j++) {
+          if (jml_current_note_values[j] != -1) {
+            // turn off current note
+            play_note(0x80, jml_current_note_values[j], 0, j);
+          }
+          jml_current_note_values[j] = new_notes[j];
+          play_note(0x90, jml_current_note_values[j], val, j);
         }
+        // this was probably too much work
+      } else {
+        // switch instruments if out of range, but only to the bottom
+        // since all of them go higher than I want to play
+        if (note_out < min_range[selected_endpoint] &&
+            note_out >= min_range[BARITONE]) {
+          selected_endpoint = BARITONE;
+        }
+        play_note(mode, note, val, selected_endpoint);
+      }
+    } else if (mode == 0xb0 && note_in == 0x02) {
+      // breath controller
+
+      for (int j = 0; j < JML_N_ENDPOINTS; j++) {
+        // Send CC-11 instead of CC-2
+        jml_send_midi(0xb0, 0x0b, val, &jml_midiendpoints[j]);
       }
     }
     packet = MIDIPacketNext(packet);
@@ -364,7 +457,7 @@ void jml_setup() {
   }
 
   polyphonic = false;
-  default_endpoint = 0;
+  selected_endpoint = 0;
 
   MIDIEndpointRef breathController;
   bool haveBreathController = getEndpointRef(CFSTR("Breath Controller 5.0-15260BA7"),
@@ -410,6 +503,9 @@ void jml_setup() {
   }
 
   for (int i = 0; i < JML_N_ENDPOINTS; i++) {
+    min_range[i] = 0;
+    max_range[i] = 128;
+
     jml_current_note_values[i] = -1;
 
     jml_attempt(
@@ -419,6 +515,18 @@ void jml_setup() {
        &jml_midiendpoints[i]),
       "creating OS-X virtual MIDI source." );
   }
+
+  min_range[ALTO] = 47;
+  max_range[ALTO] = 91;
+
+  min_range[TENOR] = 42;
+  max_range[TENOR] = 88;
+
+  min_range[BARITONE] = 35;
+  max_range[BARITONE] = 86;
+
+  min_range[SOPRANO] = 54;
+  max_range[SOPRANO] = 93;
 }
 
 #endif
