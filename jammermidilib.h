@@ -25,7 +25,9 @@ void jml_attempt(OSStatus result, char* errmsg) {
 
 MIDIClientRef jml_midiclient;
 
-#define JML_N_ENDPOINTS 1
+bool multiphonic;
+
+#define JML_N_ENDPOINTS 4
 MIDIEndpointRef jml_midiendpoints[JML_N_ENDPOINTS];
 int jml_current_note_values[JML_N_ENDPOINTS];
 
@@ -269,37 +271,49 @@ void read_midi(const MIDIPacketList *pktlist,
 
       if (mode == 0x80 || mode == 0x90) {
         // note on or off
-        unsigned char note_out = mapping(note_in) + 12;
 
-        // figure out which endpoint to use to simulate polyphony
-        int current_oldest_value = -1;
-        int current_oldest_index = -1;
-        int endpoint_index;
-        for (endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
-          if (mode == 0x80 || val == 0) {
-            if (jml_current_note_values[endpoint_index] == note_out) {
-              jml_current_note_values[endpoint_index] = -1;
-              break;
-            }
-          } else {
-            if (jml_current_note_values[endpoint_index] == -1) {
-              jml_current_note_values[endpoint_index] = note_out;
-              break;
+        if (note_in == 1 || note_in == 2) {
+          multiphonic = (note_in == 2);
+          printf("setting mode multiphonic=%d\n", multiphonic);
+          for (int i = 0; i < JML_N_ENDPOINTS; i++) {
+            jml_current_note_values[i] = -1;
+            for (int j = 0 ; j < 128; j++) {
+              jml_send_midi(0x80, j, 0, &jml_midiendpoints[i]);
             }
           }
+        } else {
+          unsigned char note_out = mapping(note_in) + 12;
+          int endpoint_index = 0;
+          if (multiphonic) {
+            // figure out which endpoint to use to simulate polyphony
+            for (; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
+              if (mode == 0x80 || val == 0) {
+                if (jml_current_note_values[endpoint_index] == note_out) {
+                  jml_current_note_values[endpoint_index] = -1;
+                  break;
+                }
+              } else {
+                if (jml_current_note_values[endpoint_index] == -1) {
+                  jml_current_note_values[endpoint_index] = note_out;
+                  break;
+                }
+              }
+            }
+            if (endpoint_index >= JML_N_ENDPOINTS) {
+              endpoint_index = 0;
+            }
+          }
+
+          printf("sending %d to index %d\n", note_out, endpoint_index);
+          jml_send_midi(mode, note_out, val,
+                        &jml_midiendpoints[endpoint_index]);
         }
-        if (endpoint_index >= JML_N_ENDPOINTS) {
-          endpoint_index = 0;
-        }
-        printf("sending %d to index %d\n", note_out, endpoint_index);
-        jml_send_midi(mode, note_out, val,
-                      &jml_midiendpoints[endpoint_index]);
       } else if (mode == 0xb0 && note_in == 0x02) {
         // breath controller
 
-        // Send CC-11 instead of CC-2
         for (int endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
           printf("sending breath %d on %d\n", val, endpoint_index);
+          // Send CC-11 instead of CC-2
           jml_send_midi(0xb0, 0x0b, val, &jml_midiendpoints[endpoint_index]);
         }
       }
@@ -317,6 +331,8 @@ void jml_setup() {
   } else {
     jml_die("Couldn't find AXIS-49");
   }
+
+  multiphonic = false;
 
   MIDIEndpointRef breathController;
   bool haveBreathController = getEndpointRef(CFSTR("Breath Controller 5.0-15260BA7"),
