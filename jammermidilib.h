@@ -272,10 +272,10 @@ void read_midi(const MIDIPacketList *pktlist,
         unsigned char note_out = mapping(note_in) + 12;
 
         // figure out which endpoint to use to simulate polyphony
-        int endpoint_index = -1;
         int current_oldest_value = -1;
         int current_oldest_index = -1;
-        for (int endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
+        int endpoint_index;
+        for (endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
           if (mode == 0x80 || val == 0) {
             if (jml_current_note_values[endpoint_index] == note_out) {
               jml_current_note_values[endpoint_index] = -1;
@@ -363,6 +363,8 @@ void jml_setup() {
   }
 
   for (int i = 0; i < JML_N_ENDPOINTS; i++) {
+    jml_current_note_values[i] = -1;
+
     jml_attempt(
       MIDISourceCreate(
        jml_midiclient,
