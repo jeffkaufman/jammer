@@ -285,7 +285,7 @@ void allNotesOff() {
 }
 
 void play_note(int mode, int note, int velocity, int endpoint_index) {
-  printf("sending %d to index %d\n", note_out, endpoint_index);
+  printf("sending %d to index %d\n", note, endpoint_index);
   if (endpoint_index == TENOR || endpoint_index == BARITONE) {
     // these two sound an ocatve lower than their midi value
     note += 12;
@@ -346,7 +346,7 @@ void read_midi(const MIDIPacketList *pktlist,
               break;
             }
           } else {
-            if (jml_current_note_values[j] == -1 && in_range(note_out, j) {
+            if (jml_current_note_values[j] == -1 && in_range(note_out, j)) {
               jml_current_note_values[j] = note_out;
               break;
             }
@@ -354,7 +354,7 @@ void read_midi(const MIDIPacketList *pktlist,
         }
         if (j < JML_N_ENDPOINTS) {
           // found available endpoint, all set.
-          play_note(mode, note, val, j);
+          play_note(mode, note_out, val, j);
           continue;
         }
         if (mode == 0x80) {
@@ -367,7 +367,7 @@ void read_midi(const MIDIPacketList *pktlist,
 
         // first make sure we have a space to swap to, and put it there
         for (j = 0; j < JML_N_ENDPOINTS; j++) {
-          if (jml_current_note_values[j] == -1):
+          if (jml_current_note_values[j] == -1) {
             jml_current_note_values[j] = note_out;
           }
         }
@@ -388,9 +388,9 @@ void read_midi(const MIDIPacketList *pktlist,
         while (progress) {
           progress = false;
           for (j = 0; j < JML_N_ENDPOINTS; j++) {
-            int noteJ = new_notes[j]
-            if (!in_range(noteJ, j) {
-              for (k = 0, k < JML_N_ENDPOINTS; k++) {
+            int noteJ = new_notes[j];
+            if (!in_range(noteJ, j)) {
+              for (int k = 0; k < JML_N_ENDPOINTS; k++) {
                 if (k != j) {
                   if (in_range(noteJ, k) && in_range(new_notes[k], j)) {
                     new_notes[j] = new_notes[k];
@@ -405,7 +405,7 @@ void read_midi(const MIDIPacketList *pktlist,
 
         bool success = true;
         for (j = 0; j < JML_N_ENDPOINTS; j++) {
-          if (!in_range(new_notes[j])) {
+          if (!in_range(new_notes[j], j)) {
             success = false;
           }
         }
@@ -428,11 +428,11 @@ void read_midi(const MIDIPacketList *pktlist,
       } else {
         // switch instruments if out of range, but only to the bottom
         // since all of them go higher than I want to play
-        if (note_out < min_range[selected_endpoint] &&
-            note_out >= min_range[BARITONE]) {
+        if (!in_range(note_out, selected_endpoint) &&
+            in_range(note_out, BARITONE)) {
           selected_endpoint = BARITONE;
         }
-        play_note(mode, note, val, selected_endpoint);
+        play_note(mode, note_out, val, selected_endpoint);
       }
     } else if (mode == 0xb0 && note_in == 0x02) {
       // breath controller
