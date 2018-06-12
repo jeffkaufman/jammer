@@ -29,9 +29,6 @@ bool polyphonic;
 
 #define JML_N_ENDPOINTS 4
 
-// TODO: add keys for changing default endpoint, set things up so different
-// endpoints have different sounds (alto, tenor, soprano, baritone).
-//
 // TODO: at some point figure out how to allocate notes in chords to best fit
 // ranges of instruments.
 //
@@ -266,6 +263,17 @@ char mapping(unsigned char note_in) {
   }
 }
 
+void allNotesOff() {
+  for (int i = 0; i < JML_N_ENDPOINTS; i++) {
+    jml_current_note_values[i] = -1;
+    for (int j = 0 ; j < 128; j++) {
+      jml_send_midi(0x80, i, 0, &jml_midiendpoints[i]);
+    }
+    // send an explicit all notes off as well
+    jml_send_midi(0xb0, 123, 0, &jml_midiendpoints[i]);
+  }
+}
+
 int breathVal = -1;
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
@@ -285,14 +293,15 @@ void read_midi(const MIDIPacketList *pktlist,
         // note on or off
 
         if (note_in == 1 || note_in == 2) {
+          // switch polyphonic mode
           polyphonic = (note_in == 2);
           printf("setting mode polyphonic=%d\n", polyphonic);
-          for (int i = 0; i < JML_N_ENDPOINTS; i++) {
-            jml_current_note_values[i] = -1;
-            for (int j = 0 ; j < 128; j++) {
-              jml_send_midi(0x80, j, 0, &jml_midiendpoints[i]);
-            }
-          }
+          allNotesOff();
+        } else if (note_in >= 3 && note_in < 3 + JML_N_ENDPOINTS) {
+          // switch default endpoint for switching instruments
+          default_endpoint = note_in - 3;
+          printf("switched to endpoint %d\n", default_endpoint);
+          allNotesOff();
         } else {
           unsigned char note_out = mapping(note_in) + 12;
           int endpoint_index = 0;
