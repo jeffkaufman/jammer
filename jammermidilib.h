@@ -25,9 +25,21 @@ void jml_attempt(OSStatus result, char* errmsg) {
 
 MIDIClientRef jml_midiclient;
 
-bool multiphonic;
+bool polyphonic;
 
 #define JML_N_ENDPOINTS 4
+
+// TODO: add keys for changing default endpoint, set things up so different
+// endpoints have different sounds (alto, tenor, soprano, baritone).
+//
+// TODO: at some point figure out how to allocate notes in chords to best fit
+// ranges of instruments.
+//
+// TODO: when playing monophonically, consider automatically switching
+// instruments at the edge of instrument's range if there's a wider range
+// available.
+
+int default_endpoint;
 MIDIEndpointRef jml_midiendpoints[JML_N_ENDPOINTS];
 int jml_current_note_values[JML_N_ENDPOINTS];
 
@@ -273,8 +285,8 @@ void read_midi(const MIDIPacketList *pktlist,
         // note on or off
 
         if (note_in == 1 || note_in == 2) {
-          multiphonic = (note_in == 2);
-          printf("setting mode multiphonic=%d\n", multiphonic);
+          polyphonic = (note_in == 2);
+          printf("setting mode polyphonic=%d\n", polyphonic);
           for (int i = 0; i < JML_N_ENDPOINTS; i++) {
             jml_current_note_values[i] = -1;
             for (int j = 0 ; j < 128; j++) {
@@ -284,7 +296,7 @@ void read_midi(const MIDIPacketList *pktlist,
         } else {
           unsigned char note_out = mapping(note_in) + 12;
           int endpoint_index = 0;
-          if (multiphonic) {
+          if (polyphonic) {
             // figure out which endpoint to use to simulate polyphony
             for (; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
               if (mode == 0x80 || val == 0) {
@@ -299,10 +311,9 @@ void read_midi(const MIDIPacketList *pktlist,
                 }
               }
             }
-            if (endpoint_index >= JML_N_ENDPOINTS) {
-              endpoint_index = 0;
-            }
           }
+
+          endpoint_index = (endpoint_index + default_endpoint) % JML_N_ENDPOINTS;
 
           printf("sending %d to index %d\n", note_out, endpoint_index);
           jml_send_midi(mode, note_out, val,
@@ -332,7 +343,8 @@ void jml_setup() {
     jml_die("Couldn't find AXIS-49");
   }
 
-  multiphonic = false;
+  polyphonic = false;
+  default_endpoint = 0;
 
   MIDIEndpointRef breathController;
   bool haveBreathController = getEndpointRef(CFSTR("Breath Controller 5.0-15260BA7"),
