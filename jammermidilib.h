@@ -4,6 +4,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/MIDIServices.h>
 #include <CoreAudio/HostTime.h>
+#import <Foundation/Foundation.h>
 
 // Spec:
 // https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
@@ -23,7 +24,11 @@ void jml_attempt(OSStatus result, char* errmsg) {
 #define JML_CHANNEL 3
 
 MIDIClientRef jml_midiclient;
-MIDIEndpointRef jml_midiendpoint;
+
+#define JML_N_ENDPOINTS 4
+MIDIEndpointRef jml_midiendpoints[JML_N_ENDPOINTS];
+int jml_current_note_values[JML_N_ENDPOINTS];
+
 MIDIPortRef jml_midiport_axis_49;
 MIDIPortRef jml_midiport_breath_controller;
 bool newModel;
@@ -35,7 +40,7 @@ void jml_compose_midi(char actionType, int noteNo, int v, Byte* msg) {
 }
 
 #define JML_PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
-void jml_send_midi(char actionType, int noteNo, int v) {
+void jml_send_midi(char actionType, int noteNo, int v, MIDIEndpointRef* endpoint) {
   Byte buffer[JML_PACKET_BUF_SIZE];
   Byte msg[3];
   jml_compose_midi(actionType, noteNo, v, msg);
@@ -53,7 +58,7 @@ void jml_send_midi(char actionType, int noteNo, int v) {
       jml_die("packet list allocation failed");
   }
 
-  jml_attempt(MIDIReceived(jml_midiendpoint, packetList), "error sending midi");
+  jml_attempt(MIDIReceived(*endpoint, packetList), "error sending midi");
 }
 
 bool getEndpointRef(CFStringRef targetName, MIDIEndpointRef* endpointRef) {
@@ -265,12 +270,39 @@ void read_midi(const MIDIPacketList *pktlist,
       if (mode == 0x80 || mode == 0x90) {
         // note on or off
         unsigned char note_out = mapping(note_in) + 12;
-        jml_send_midi(mode, note_out, val);
+
+        // figure out which endpoint to use to simulate polyphony
+        int endpoint_index = -1;
+        int current_oldest_value = -1;
+        int current_oldest_index = -1;
+        for (int endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
+          if (mode == 0x80 || val == 0) {
+            if (jml_current_note_values[endpoint_index] == note_out) {
+              jml_current_note_values[endpoint_index] = -1;
+              break;
+            }
+          } else {
+            if (jml_current_note_values[endpoint_index] == -1) {
+              jml_current_note_values[endpoint_index] = note_out;
+              break;
+            }
+          }
+        }
+        if (endpoint_index >= JML_N_ENDPOINTS) {
+          printf("too many active notes\n");
+        } else {
+          printf("sending %d to index %d\n", note_out, endpoint_index);
+          jml_send_midi(mode, note_out, val,
+                        &jml_midiendpoints[endpoint_index]);
+        }
       } else if (mode == 0xb0 && note_in == 0x02) {
         // breath controller
 
         // Send CC-11 instead of CC-2
-        jml_send_midi(0xb0, 0x0b, val);
+        for (int endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
+          printf("sending breath %d on %d\n", val, endpoint_index);
+          jml_send_midi(0xb0, 0x0b, val, &jml_midiendpoints[endpoint_index]);
+        }
       }
     }
     packet = MIDIPacketNext(packet);
@@ -330,12 +362,14 @@ void jml_setup() {
       "connecting to Breath Controller");
   }
 
-  jml_attempt(
-    MIDISourceCreate(
-     jml_midiclient,
-     CFSTR("jammer"),
-     &jml_midiendpoint),
-    "creating OS-X virtual MIDI source." );
+  for (int i = 0; i < JML_N_ENDPOINTS; i++) {
+    jml_attempt(
+      MIDISourceCreate(
+       jml_midiclient,
+       (__bridge CFStringRef)[NSString stringWithFormat:@"jammer-%i", i],
+       &jml_midiendpoints[i]),
+      "creating OS-X virtual MIDI source." );
+  }
 }
 
 #endif
