@@ -34,11 +34,18 @@ bool polyphonic;
 //
 // TODO: when playing monophonically, consider automatically switching
 // instruments at the edge of instrument's range if there's a wider range
-// available.
+// available.  Maybe just:
+//  note > curMax: switch to alto
+//  note < curMin: switch to baritone
 
 int default_endpoint;
 MIDIEndpointRef jml_midiendpoints[JML_N_ENDPOINTS];
 int jml_current_note_values[JML_N_ENDPOINTS];
+
+#define ALTO 0     // 47 - 91
+#define TENOR 1    // 42 - 88
+#define BARITONE 2 // 35 - 86
+#define SOPRANO 3  // 54 - 93
 
 MIDIPortRef jml_midiport_axis_49;
 MIDIPortRef jml_midiport_breath_controller;
@@ -325,6 +332,10 @@ void read_midi(const MIDIPacketList *pktlist,
           endpoint_index = (endpoint_index + default_endpoint) % JML_N_ENDPOINTS;
 
           printf("sending %d to index %d\n", note_out, endpoint_index);
+          if (endpoint_index == TENOR || endpoint_index == BARITONE) {
+            // these two sound an ocatve lower than their midi value
+            note_out += 12;
+          }
           jml_send_midi(mode, note_out, val,
                         &jml_midiendpoints[endpoint_index]);
         }
