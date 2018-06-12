@@ -248,6 +248,8 @@ char mapping(unsigned char note_in) {
 }
 
 int breathVal = -1;
+#define N_CHANNELS 4
+int currentNotes[N_CHANNELS];
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
@@ -265,12 +267,34 @@ void read_midi(const MIDIPacketList *pktlist,
       if (mode == 0x80 || mode == 0x90) {
         // note on or off
         unsigned char note_out = mapping(note_in) + 12;
-        jml_send_midi(mode, note_out, val);
+
+        int i;
+        for (i = 0; i < N_CHANNELS; i++) {
+          if (mode == 0x90) {  // on
+            if (currentNotes[i] == -1) {
+              currentNotes[i] = note_out;
+              break;
+            }
+          } else {
+            if (currentNotes[i] == note_out) {
+              currentNotes[i] = -1;
+              break;
+            }
+          }
+        }
+        if (i == N_CHANNELS) {
+          printf("not enough channels\n");
+        } else {
+          printf("sending on %d\n", i);
+          jml_send_midi(mode + i, note_out, val);
+        }
       } else if (mode == 0xb0 && note_in == 0x02) {
         // breath controller
 
         // Send CC-11 instead of CC-2
-        jml_send_midi(0xb0, 0x0b, val);
+        for (int i = 0 ; i < N_CHANNELS; i++) {
+          jml_send_midi(0xb0 + i, 0x0b, val);
+        }
       }
     }
     packet = MIDIPacketNext(packet);
@@ -278,6 +302,10 @@ void read_midi(const MIDIPacketList *pktlist,
 }
 
 void jml_setup() {
+  for (int i = 0; i < N_CHANNELS; i++) {
+    currentNotes[i] = -1;
+  }
+
   MIDIEndpointRef axis49;
   if (getEndpointRef(CFSTR("AXIS-49 USB Keyboard"), &axis49)) {
     newModel = false;
