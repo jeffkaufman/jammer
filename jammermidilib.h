@@ -25,7 +25,7 @@ void jml_attempt(OSStatus result, char* errmsg) {
 
 MIDIClientRef jml_midiclient;
 
-#define JML_N_ENDPOINTS 4
+#define JML_N_ENDPOINTS 1
 MIDIEndpointRef jml_midiendpoints[JML_N_ENDPOINTS];
 int jml_current_note_values[JML_N_ENDPOINTS];
 
@@ -289,12 +289,11 @@ void read_midi(const MIDIPacketList *pktlist,
           }
         }
         if (endpoint_index >= JML_N_ENDPOINTS) {
-          printf("too many active notes\n");
-        } else {
-          printf("sending %d to index %d\n", note_out, endpoint_index);
-          jml_send_midi(mode, note_out, val,
-                        &jml_midiendpoints[endpoint_index]);
+          endpoint_index = 0;
         }
+        printf("sending %d to index %d\n", note_out, endpoint_index);
+        jml_send_midi(mode, note_out, val,
+                      &jml_midiendpoints[endpoint_index]);
       } else if (mode == 0xb0 && note_in == 0x02) {
         // breath controller
 
