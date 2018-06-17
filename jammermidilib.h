@@ -10,107 +10,42 @@
 // https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
 // https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
 
-void jml_die(char *errmsg) {
+void die(char *errmsg) {
   printf("%s\n",errmsg);
   exit(-1);
 }
 
-void jml_attempt(OSStatus result, char* errmsg) {
+void attempt(OSStatus result, char* errmsg) {
   if (result != noErr) {
-    jml_die(errmsg);
+    die(errmsg);
   }
 }
 
-#define JML_CHANNEL 3
+// Saxes are 0 through (N_SAXES-1), then other instruments.
+#define BARITONE 0 // 35 - 86
+#define TENOR 1    // 42 - 88
+#define ALTO 2     // 47 - 91
+#define SOPRANO 3  // 54 - 93
+#define ACCCORDION 5
+#define N_SAXES 4
+#define N_ENDPOINTS 5
 
-MIDIClientRef jml_midiclient;
+MIDIClientRef midiclient;
+MIDIEndpointRef saxes[N_SAXES];
+MIDIEndpointRef accordion;
+MIDIEndpointRef endpoints[N_ENDPOINTS];
 
+MIDIPortRef midiport_axis_49;
+MIDIPortRef midiport_breath_controller;
+
+int current_instrument;
+int sax_note[N_SAXES];
+
+bool new_model;
 bool polyphonic;
 
-#define JML_N_ENDPOINTS 4
-
-// TODO: at some point figure out how to allocate notes in chords to best fit
-// ranges of instruments.
-//
-// TODO: when playing monophonically, consider automatically switching
-// instruments at the edge of instrument's range if there's a wider range
-// available.  Maybe just:
-//  note > curMax: switch to alto
-//  note < curMin: switch to baritone
-
-int default_endpoint;
-MIDIEndpointRef jml_midiendpoints[JML_N_ENDPOINTS];
-int jml_current_note_values[JML_N_ENDPOINTS];
-
-#define ALTO 0     // 47 - 91
-#define TENOR 1    // 42 - 88
-#define BARITONE 2 // 35 - 86
-#define SOPRANO 3  // 54 - 93
-
-MIDIPortRef jml_midiport_axis_49;
-MIDIPortRef jml_midiport_breath_controller;
-bool newModel;
-
-void jml_compose_midi(char actionType, int noteNo, int v, Byte* msg) {
-  msg[0] = actionType + ((JML_CHANNEL-1) & 0xFF);
-  msg[1] = noteNo;
-  msg[2] = v;
-}
-
-#define JML_PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
-void jml_send_midi(char actionType, int noteNo, int v, MIDIEndpointRef* endpoint) {
-  Byte buffer[JML_PACKET_BUF_SIZE];
-  Byte msg[3];
-  jml_compose_midi(actionType, noteNo, v, msg);
-
-  MIDIPacketList *packetList = (MIDIPacketList*) buffer;
-  MIDIPacket *curPacket = MIDIPacketListInit(packetList);
-
-  curPacket = MIDIPacketListAdd(packetList,
-				JML_PACKET_BUF_SIZE,
-				curPacket,
-				AudioGetCurrentHostTime(),
-				3,
-				msg);
-  if (!curPacket) {
-      jml_die("packet list allocation failed");
-  }
-
-  jml_attempt(MIDIReceived(*endpoint, packetList), "error sending midi");
-}
-
-bool getEndpointRef(CFStringRef targetName, MIDIEndpointRef* endpointRef) {
-  int n_sources = MIDIGetNumberOfSources();
-  if (!n_sources) {
-    jml_die("no midi sources found");
-  }
-  for (int i = 0; i < n_sources ; i++) {
-    MIDIEndpointRef src = MIDIGetSource(i);
-    if (!src) continue;
-
-    MIDIEntityRef ent;
-    MIDIEndpointGetEntity(src, &ent);
-    if (!ent) continue;
-
-    MIDIDeviceRef dev;
-    MIDIEntityGetDevice(ent, &dev);
-    if (!dev) continue;
-
-    CFStringRef name;
-    MIDIObjectGetStringProperty (dev, kMIDIPropertyName, &name);
-
-    printf("Saw %s\n", CFStringGetCStringPtr(name, kCFStringEncodingUTF8));
-
-    if (CFStringCompare(name, targetName, 0) == kCFCompareEqualTo) {
-      *endpointRef = src;
-      return true;
-    }
-  }
-  return false;  // failed to find one
-}
-
 char mapping(unsigned char note_in) {
-  if (newModel) {
+  if (new_model) {
     switch(note_in) {
     case 1: return 1;  // Db
     case 2: return 3;  // Eb
@@ -270,14 +205,73 @@ char mapping(unsigned char note_in) {
   }
 }
 
-void allNotesOff() {
-  for (int i = 0; i < JML_N_ENDPOINTS; i++) {
-    jml_current_note_values[i] = -1;
+#define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
+void send_midi(char actionType, int noteNo, int v, MIDIEndpointRef* endpoint_ref) {
+  Byte buffer[PACKET_BUF_SIZE];
+  Byte msg[3];
+  msg[0] = actionType;
+  msg[1] = noteNo;
+  msg[2] = v;
+
+  MIDIPacketList *packetList = (MIDIPacketList*) buffer;
+  MIDIPacket *curPacket = MIDIPacketListInit(packetList);
+
+  curPacket = MIDIPacketListAdd(packetList,
+				PACKET_BUF_SIZE,
+				curPacket,
+				AudioGetCurrentHostTime(),
+				3,
+				msg);
+  if (!curPacket) {
+      die("packet list allocation failed");
+  }
+
+  attempt(MIDIReceived(*endpoint_ref, packetList), "error sending midi");
+}
+
+bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
+  int n_sources = MIDIGetNumberOfSources();
+  if (!n_sources) {
+    die("no midi sources found");
+  }
+  for (int i = 0; i < n_sources ; i++) {
+    MIDIEndpointRef src = MIDIGetSource(i);
+    if (!src) continue;
+
+    MIDIEntityRef ent;
+    MIDIEndpointGetEntity(src, &ent);
+    if (!ent) continue;
+
+    MIDIDeviceRef dev;
+    MIDIEntityGetDevice(ent, &dev);
+    if (!dev) continue;
+
+    CFStringRef name;
+    MIDIObjectGetStringProperty (dev, kMIDIPropertyName, &name);
+
+    printf("Saw %s\n", CFStringGetCStringPtr(name, kCFStringEncodingUTF8));
+
+    if (CFStringCompare(name, target_name, 0) == kCFCompareEqualTo) {
+      *endpoint_ref = src;
+      return true;
+    }
+  }
+  return false;  // failed to find one
+}
+
+void mark_saxes_off() {
+  for (int i = 0; i < N_SAXES; i++) {
+    sax_note[i] = -1;
+  }
+}
+
+void all_notes_off() {
+  for (int i = 0; i < N_ENDPOINTS; i++) {
     for (int j = 0 ; j < 128; j++) {
-      jml_send_midi(0x80, i, 0, &jml_midiendpoints[i]);
+      send_midi(0x80, i, 0, &endpoints[i]);
     }
     // send an explicit all notes off as well
-    jml_send_midi(0xb0, 123, 0, &jml_midiendpoints[i]);
+    send_midi(0xb0, 123, 0, &endpoints[i]);
   }
 }
 
@@ -303,49 +297,48 @@ void read_midi(const MIDIPacketList *pktlist,
           // switch polyphonic mode
           polyphonic = (note_in == 2);
           printf("setting mode polyphonic=%d\n", polyphonic);
-          allNotesOff();
-        } else if (note_in >= 3 && note_in < 3 + JML_N_ENDPOINTS) {
+          all_notes_off();
+        } else if (note_in >= 3 && note_in < 3 + N_ENDPOINTS) {
           // switch default endpoint for switching instruments
-          default_endpoint = note_in - 3;
-          printf("switched to endpoint %d\n", default_endpoint);
-          allNotesOff();
+          current_instrument = note_in - 3;
+          printf("switched to endpoint %d\n", current_instrument);
+          all_notes_off();
         } else {
           unsigned char note_out = mapping(note_in) + 12;
-          int endpoint_index = 0;
-          if (polyphonic) {
+          int endpoint = 0;
+          if (polyphonic && endpoint < N_SAXES) {
             // figure out which endpoint to use to simulate polyphony
-            for (; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
+            for (; endpoint < N_SAXES; endpoint++) {
               if (mode == 0x80 || val == 0) {
-                if (jml_current_note_values[endpoint_index] == note_out) {
-                  jml_current_note_values[endpoint_index] = -1;
+                if (sax_note[endpoint] == note_out) {
+                  sax_note[endpoint] = -1;
                   break;
                 }
               } else {
-                if (jml_current_note_values[endpoint_index] == -1) {
-                  jml_current_note_values[endpoint_index] = note_out;
+                if (sax_note[endpoint] == -1) {
+                  sax_note[endpoint] = note_out;
                   break;
                 }
               }
             }
+          } else {
+            endpoint = current_instrument;
           }
 
-          endpoint_index = (endpoint_index + default_endpoint) % JML_N_ENDPOINTS;
-
-          printf("sending %d to index %d\n", note_out, endpoint_index);
-          if (endpoint_index == TENOR || endpoint_index == BARITONE) {
+          printf("sending %d to index %d\n", note_out, endpoint);
+          if (endpoint == TENOR || endpoint == BARITONE) {
             // these two sound an ocatve lower than their midi value
             note_out += 12;
           }
-          jml_send_midi(mode, note_out, val,
-                        &jml_midiendpoints[endpoint_index]);
+          send_midi(mode, note_out, val, &endpoints[endpoint]);
         }
       } else if (mode == 0xb0 && note_in == 0x02) {
         // breath controller
 
-        for (int endpoint_index = 0; endpoint_index < JML_N_ENDPOINTS; endpoint_index++) {
-          printf("sending breath %d on %d\n", val, endpoint_index);
+        for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+          printf("sending breath %d on %d\n", val, endpoint);
           // Send CC-11 instead of CC-2
-          jml_send_midi(0xb0, 0x0b, val, &jml_midiendpoints[endpoint_index]);
+          send_midi(0xb0, 0x0b, val, &endpoints[endpoint]);
         }
       }
     }
@@ -353,72 +346,74 @@ void read_midi(const MIDIPacketList *pktlist,
   }
 }
 
+void connect_source(MIDIEndpointRef endpoint_ref, MIDIPortRef port_ref) {
+  attempt(
+    MIDIInputPortCreate(
+      midiclient,
+      CFSTR("input port"),
+      &read_midi,
+      NULL /* refCon */,
+      &port_ref),
+   "creating input port");
+
+  attempt(
+    MIDIPortConnectSource(
+      port_ref,
+      endpoint_ref,
+      NULL /* connRefCon */),
+    "connecting to device");
+}
+
+void create_source(MIDIEndpointRef* endpoint_ref, CFStringRef name) {
+  attempt(
+    MIDISourceCreate(
+      midiclient,
+      name,
+      endpoint_ref),
+   "creating OS-X virtual MIDI source." );
+}
+
 void jml_setup() {
   MIDIEndpointRef axis49;
-  if (getEndpointRef(CFSTR("AXIS-49 USB Keyboard"), &axis49)) {
-    newModel = false;
-  } else if (getEndpointRef(CFSTR("AXIS-49 2A"), &axis49)) {
-    newModel = true;
+  if (get_endpoint_ref(CFSTR("AXIS-49 USB Keyboard"), &axis49)) {
+    new_model = false;
+  } else if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
+    new_model = true;
   } else {
-    jml_die("Couldn't find AXIS-49");
+    die("Couldn't find AXIS-49");
   }
 
   polyphonic = false;
-  default_endpoint = 0;
+  current_instrument = 0;
 
-  MIDIEndpointRef breathController;
-  bool haveBreathController = getEndpointRef(CFSTR("Breath Controller 5.0-15260BA7"),
-                                             &breathController);
-  jml_attempt(
+  MIDIEndpointRef breath_controller;
+  bool have_breath_controller = get_endpoint_ref(CFSTR("Breath Controller 5.0-15260BA7"),
+                                                 &breath_controller);
+  attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
-     NULL, NULL, &jml_midiclient),
+     NULL, NULL, &midiclient),
     "creating OS-X MIDI client object." );
 
-  jml_attempt(
-    MIDIInputPortCreate(
-     jml_midiclient,
-     CFSTR("axis 49 input port"),
-     &read_midi,
-     NULL /* refCon */,
-     &jml_midiport_axis_49),
-    "creating input port for Axis 49");
+  connect_source(axis49, midiport_axis_49);
 
-  jml_attempt(
-    MIDIPortConnectSource(
-     jml_midiport_axis_49,
-     axis49,
-     NULL /* connRefCon */),
-    "connecting to Axis 49");
-
-  if (haveBreathController) {
-    jml_attempt(
-      MIDIInputPortCreate(
-       jml_midiclient,
-       CFSTR("breath controller input port"),
-       &read_midi,
-       NULL /* refCon */,
-       &jml_midiport_breath_controller),
-      "creating input port for breath controller");
-
-    jml_attempt(
-      MIDIPortConnectSource(
-       jml_midiport_breath_controller,
-       breathController,
-       NULL /* connRefCon */),
-      "connecting to Breath Controller");
+  if (have_breath_controller) {
+    connect_source(breath_controller, midiport_breath_controller);
   }
 
-  for (int i = 0; i < JML_N_ENDPOINTS; i++) {
-    jml_current_note_values[i] = -1;
+  mark_saxes_off();
 
-    jml_attempt(
-      MIDISourceCreate(
-       jml_midiclient,
-       (__bridge CFStringRef)[NSString stringWithFormat:@"jammer-%i", i],
-       &jml_midiendpoints[i]),
-      "creating OS-X virtual MIDI source." );
+  create_source(&saxes[SOPRANO], CFSTR("jammer-soprano"));
+  create_source(&saxes[ALTO], CFSTR("jammer-alto"));
+  create_source(&saxes[TENOR], CFSTR("jammer-tenor"));
+  create_source(&saxes[BARITONE], CFSTR("jammer-baritone"));
+  create_source(&accordion, CFSTR("jammer-accordion"));
+
+  int i;
+  for (i = 0; i < N_SAXES; i++) {
+    endpoints[i] = saxes[i];
   }
+  endpoints[i++] = accordion;
 }
 
 #endif
