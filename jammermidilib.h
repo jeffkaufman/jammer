@@ -26,7 +26,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TENOR 1    // 42 - 88
 #define ALTO 2     // 47 - 91
 #define SOPRANO 3  // 54 - 93
-#define ACCCORDION 5
+#define ACCORDION 4
 #define N_SAXES 4
 #define N_ENDPOINTS 5
 
@@ -206,7 +206,7 @@ char mapping(unsigned char note_in) {
 }
 
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
-void send_midi(char actionType, int noteNo, int v, MIDIEndpointRef* endpoint_ref) {
+void send_midi(char actionType, int noteNo, int v, int endpoint) {
   Byte buffer[PACKET_BUF_SIZE];
   Byte msg[3];
   msg[0] = actionType;
@@ -226,7 +226,7 @@ void send_midi(char actionType, int noteNo, int v, MIDIEndpointRef* endpoint_ref
       die("packet list allocation failed");
   }
 
-  attempt(MIDIReceived(*endpoint_ref, packetList), "error sending midi");
+  attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
 }
 
 bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
@@ -266,16 +266,15 @@ void mark_saxes_off() {
 }
 
 void all_notes_off() {
-  for (int i = 0; i < N_ENDPOINTS; i++) {
-    for (int j = 0 ; j < 128; j++) {
-      send_midi(0x80, i, 0, &endpoints[i]);
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    for (int note = 0 ; note < 128; note++) {
+      send_midi(0x80, note, 0, endpoint);
     }
     // send an explicit all notes off as well
-    send_midi(0xb0, 123, 0, &endpoints[i]);
+    send_midi(0xb0, 123, 0, endpoint);
   }
 }
 
-int breathVal = -1;
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
@@ -330,15 +329,22 @@ void read_midi(const MIDIPacketList *pktlist,
             // these two sound an ocatve lower than their midi value
             note_out += 12;
           }
-          send_midi(mode, note_out, val, &endpoints[endpoint]);
+          send_midi(mode, note_out, val, endpoint);
         }
       } else if (mode == 0xb0 && note_in == 0x02) {
         // breath controller
 
         for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+          if (endpoint == ACCORDION) {
+            val = val + 40;
+            if (val > 127) {
+              val = 127;
+            }
+          }
+
           printf("sending breath %d on %d\n", val, endpoint);
           // Send CC-11 instead of CC-2
-          send_midi(0xb0, 0x0b, val, &endpoints[endpoint]);
+          send_midi(0xb0, 0x0b, val, endpoint);
         }
       }
     }
