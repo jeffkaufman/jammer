@@ -37,6 +37,7 @@ MIDIEndpointRef endpoints[N_ENDPOINTS];
 
 MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
+MIDIPortRef midiport_game_controller;
 
 int current_instrument;
 int sax_note[N_SAXES];
@@ -238,16 +239,8 @@ bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
     MIDIEndpointRef src = MIDIGetSource(i);
     if (!src) continue;
 
-    MIDIEntityRef ent;
-    MIDIEndpointGetEntity(src, &ent);
-    if (!ent) continue;
-
-    MIDIDeviceRef dev;
-    MIDIEntityGetDevice(ent, &dev);
-    if (!dev) continue;
-
     CFStringRef name;
-    MIDIObjectGetStringProperty (dev, kMIDIPropertyName, &name);
+    MIDIObjectGetStringProperty (src, kMIDIPropertyName, &name);
 
     printf("Saw %s\n", CFStringGetCStringPtr(name, kCFStringEncodingUTF8));
 
@@ -329,22 +322,27 @@ void read_midi(const MIDIPacketList *pktlist,
             // these two sound an ocatve lower than their midi value
             note_out += 12;
           }
+          if (endpoint == ACCORDION) {
+            val = 127;
+          }
           send_midi(mode, note_out, val, endpoint);
         }
-      } else if (mode == 0xb0 && note_in == 0x02) {
-        // breath controller
-
+      } else if (mode == 0xb0) {
+        // pass control change to all synths
         for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-          if (endpoint == ACCORDION) {
-            val = val + 40;
-            if (val > 127) {
-              val = 127;
+          if (note_in == 0x02) { // breath controller
+            note_in = 0x0b; // send CC-11 instead of CC-2
+            if (endpoint == ACCORDION) {
+              // accordion always should have some volume
+              val = val + 18;
+              if (val > 127) {
+                val = 127;
+              }
             }
           }
 
-          printf("sending breath %d on %d\n", val, endpoint);
-          // Send CC-11 instead of CC-2
-          send_midi(0xb0, 0x0b, val, endpoint);
+          printf("sending CC-%d = %d to %d\n", note_in, val, endpoint);
+          send_midi(0xb0, note_in, val, endpoint);
         }
       }
     }
@@ -395,6 +393,9 @@ void jml_setup() {
   MIDIEndpointRef breath_controller;
   bool have_breath_controller = get_endpoint_ref(CFSTR("Breath Controller 5.0-15260BA7"),
                                                  &breath_controller);
+  MIDIEndpointRef game_controller;
+  bool have_game_controller = get_endpoint_ref(CFSTR("game controller"),
+                                               &game_controller);
   attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
@@ -405,6 +406,10 @@ void jml_setup() {
 
   if (have_breath_controller) {
     connect_source(breath_controller, midiport_breath_controller);
+  }
+
+  if (have_game_controller) {
+    connect_source(game_controller, midiport_game_controller);
   }
 
   mark_saxes_off();
