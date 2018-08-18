@@ -21,18 +21,14 @@ void attempt(OSStatus result, char* errmsg) {
   }
 }
 
-// Saxes are 0 through (N_SAXES-1), then other instruments.
-#define BARITONE 0 // 35 - 86
-#define TENOR 1    // 42 - 88
-#define ALTO 2     // 47 - 91
-#define SOPRANO 3  // 54 - 93
+#define KEYBOARD 0
+#define TENOR 1
+#define ALTO 2
+#define SOPRANO 3
 #define ACCORDION 4
-#define N_SAXES 4
 #define N_ENDPOINTS 5
 
 MIDIClientRef midiclient;
-MIDIEndpointRef saxes[N_SAXES];
-MIDIEndpointRef accordion;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
 
 MIDIPortRef midiport_axis_49;
@@ -40,10 +36,8 @@ MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 
 int current_instrument;
-int sax_note[N_SAXES];
 
 bool new_model;
-bool polyphonic;
 
 char mapping(unsigned char note_in) {
   if (new_model) {
@@ -252,12 +246,6 @@ bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
   return false;  // failed to find one
 }
 
-void mark_saxes_off() {
-  for (int i = 0; i < N_SAXES; i++) {
-    sax_note[i] = -1;
-  }
-}
-
 void all_notes_off() {
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     for (int note = 0 ; note < 128; note++) {
@@ -287,8 +275,7 @@ void read_midi(const MIDIPacketList *pktlist,
 
         if (note_in == 1 || note_in == 2) {
           // switch polyphonic mode
-          polyphonic = (note_in == 2);
-          printf("setting mode polyphonic=%d\n", polyphonic);
+          printf("polyphonic not implemented\n");
           all_notes_off();
         } else if (note_in >= 3 && note_in < 3 + N_ENDPOINTS) {
           // switch default endpoint for switching instruments
@@ -296,32 +283,10 @@ void read_midi(const MIDIPacketList *pktlist,
           printf("switched to endpoint %d\n", current_instrument);
           all_notes_off();
         } else {
-          unsigned char note_out = mapping(note_in) + 12;
-          int endpoint = 0;
-          if (polyphonic && endpoint < N_SAXES) {
-            // figure out which endpoint to use to simulate polyphony
-            for (; endpoint < N_SAXES; endpoint++) {
-              if (mode == 0x80 || val == 0) {
-                if (sax_note[endpoint] == note_out) {
-                  sax_note[endpoint] = -1;
-                  break;
-                }
-              } else {
-                if (sax_note[endpoint] == -1) {
-                  sax_note[endpoint] = note_out;
-                  break;
-                }
-              }
-            }
-          } else {
-            endpoint = current_instrument;
-          }
+          unsigned char note_out = mapping(note_in) + 12 + 2;
+          int endpoint = current_instrument;
 
           printf("sending %d to index %d\n", note_out, endpoint);
-          if (endpoint == TENOR || endpoint == BARITONE) {
-            // these two sound an ocatve lower than their midi value
-            note_out += 12;
-          }
           if (endpoint == ACCORDION) {
             val = 127;
           }
@@ -329,20 +294,23 @@ void read_midi(const MIDIPacketList *pktlist,
         }
       } else if (mode == 0xb0) {
         // pass control change to all synths
+        printf("got CC-%d = %d\n", note_in, val);
         for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
           if (note_in == 0x02) { // breath controller
             note_in = 0x0b; // send CC-11 instead of CC-2
-            if (endpoint == ACCORDION) {
-              // accordion always should have some volume
-              val = val + 18;
-              if (val > 127) {
-                val = 127;
-              }
+          }
+          if (endpoint == ACCORDION) {
+            // accordion always should have some volume
+            val = val + 18;
+            if (val > 127) {
+              val = 127;
             }
           }
-
-          printf("sending CC-%d = %d to %d\n", note_in, val, endpoint);
-          send_midi(0xb0, note_in, val, endpoint);
+          if (endpoint != KEYBOARD) {
+            // skip breath on keyboard
+            printf("sending CC-%d = %d to %d\n", note_in, val, endpoint);
+            send_midi(0xb0, note_in, val, endpoint);
+          }
         }
       }
     }
@@ -387,7 +355,6 @@ void jml_setup() {
     die("Couldn't find AXIS-49");
   }
 
-  polyphonic = false;
   current_instrument = 0;
 
   MIDIEndpointRef breath_controller;
@@ -412,19 +379,12 @@ void jml_setup() {
     connect_source(game_controller, midiport_game_controller);
   }
 
-  mark_saxes_off();
+  create_source(&endpoints[SOPRANO], CFSTR("jammer-soprano"));
+  create_source(&endpoints[ALTO], CFSTR("jammer-alto"));
+  create_source(&endpoints[TENOR], CFSTR("jammer-tenor"));
+  create_source(&endpoints[KEYBOARD], CFSTR("jammer-keyboard"));
+  create_source(&endpoints[ACCORDION], CFSTR("jammer-accordion"));
 
-  create_source(&saxes[SOPRANO], CFSTR("jammer-soprano"));
-  create_source(&saxes[ALTO], CFSTR("jammer-alto"));
-  create_source(&saxes[TENOR], CFSTR("jammer-tenor"));
-  create_source(&saxes[BARITONE], CFSTR("jammer-baritone"));
-  create_source(&accordion, CFSTR("jammer-accordion"));
-
-  int i;
-  for (i = 0; i < N_SAXES; i++) {
-    endpoints[i] = saxes[i];
-  }
-  endpoints[i++] = accordion;
 }
 
 #endif
