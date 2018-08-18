@@ -22,11 +22,15 @@ void attempt(OSStatus result, char* errmsg) {
 }
 
 #define KEYBOARD 0
-#define TENOR 1
-#define ALTO 2
-#define SOPRANO 3
+#define PIPES 1
+#define SAX 2
+#define TROMBONE 3
 #define ACCORDION 4
 #define N_ENDPOINTS 5
+
+#define MIDI_OFF 0x80
+#define MIDI_ON 0x90
+#define MIDI_CC 0xb0
 
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
@@ -38,6 +42,8 @@ MIDIPortRef midiport_game_controller;
 int current_instrument;
 
 bool new_model;
+
+int pipes_note = -1;
 
 char mapping(unsigned char note_in) {
   if (new_model) {
@@ -202,6 +208,12 @@ char mapping(unsigned char note_in) {
 
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
+  printf("sending %d %x:%d = %d\n",
+         endpoint,
+         (unsigned char) actionType,
+         noteNo,
+         v);
+
   Byte buffer[PACKET_BUF_SIZE];
   Byte msg[3];
   msg[0] = actionType;
@@ -249,10 +261,10 @@ bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
 void all_notes_off() {
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     for (int note = 0 ; note < 128; note++) {
-      send_midi(0x80, note, 0, endpoint);
+      send_midi(MIDI_OFF, note, 0, endpoint);
     }
     // send an explicit all notes off as well
-    send_midi(0xb0, 123, 0, endpoint);
+    send_midi(MIDI_CC, 123, 0, endpoint);
   }
 }
 
@@ -270,7 +282,11 @@ void read_midi(const MIDIPacketList *pktlist,
 
       printf("got packet %x %x %x\n", mode, note_in, val);
 
-      if (mode == 0x80 || mode == 0x90) {
+      if (mode == MIDI_ON && val == 0) {
+        mode = MIDI_OFF;
+      }
+
+      if (mode == MIDI_OFF || mode == MIDI_ON) {
         // note on or off
 
         if (note_in == 1 || note_in == 2) {
@@ -286,15 +302,26 @@ void read_midi(const MIDIPacketList *pktlist,
           unsigned char note_out = mapping(note_in) + 12 + 2;
           int endpoint = current_instrument;
 
-          printf("sending %d to index %d\n", note_out, endpoint);
-          if (endpoint == ACCORDION) {
+          if (endpoint == PIPES) {
             val = 127;
+            if (mode == MIDI_ON) {
+              if (pipes_note != -1) {
+                send_midi(MIDI_OFF, pipes_note, 0, endpoint);
+              }
+              pipes_note = note_out;
+              send_midi(MIDI_ON, note_out, val, endpoint);
+            } else if (mode == MIDI_OFF) {
+              // ignore
+            }
+          } else {
+            if (endpoint == ACCORDION) {
+              val = 127;
+            }
+            send_midi(mode, note_out, val, endpoint);
           }
-          send_midi(mode, note_out, val, endpoint);
         }
-      } else if (mode == 0xb0) {
+      } else if (mode == MIDI_CC) {
         // pass control change to all synths
-        printf("got CC-%d = %d\n", note_in, val);
         for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
           if (note_in == 0x02) { // breath controller
             note_in = 0x0b; // send CC-11 instead of CC-2
@@ -306,10 +333,15 @@ void read_midi(const MIDIPacketList *pktlist,
               val = 127;
             }
           }
-          if (endpoint != KEYBOARD) {
-            // skip breath on keyboard
-            printf("sending CC-%d = %d to %d\n", note_in, val, endpoint);
-            send_midi(0xb0, note_in, val, endpoint);
+          if (endpoint == PIPES) {
+            if (val == 0 && pipes_note != -1) {
+              send_midi(MIDI_OFF, pipes_note, 0, endpoint);
+              pipes_note = -1;
+            }
+          } else if (endpoint == KEYBOARD) {
+            // skip breath
+          } else {
+            send_midi(MIDI_CC, note_in, val, endpoint);
           }
         }
       }
@@ -379,9 +411,9 @@ void jml_setup() {
     connect_source(game_controller, midiport_game_controller);
   }
 
-  create_source(&endpoints[SOPRANO], CFSTR("jammer-soprano"));
-  create_source(&endpoints[ALTO], CFSTR("jammer-alto"));
-  create_source(&endpoints[TENOR], CFSTR("jammer-tenor"));
+  create_source(&endpoints[TROMBONE], CFSTR("jammer-trombone"));
+  create_source(&endpoints[SAX], CFSTR("jammer-sax"));
+  create_source(&endpoints[PIPES], CFSTR("jammer-pipes"));
   create_source(&endpoints[KEYBOARD], CFSTR("jammer-keyboard"));
   create_source(&endpoints[ACCORDION], CFSTR("jammer-accordion"));
 
