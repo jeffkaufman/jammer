@@ -22,7 +22,7 @@ void attempt(OSStatus result, char* errmsg) {
 }
 
 #define KEYBOARD 0
-#define PIPES 1
+#define JAWHARP 1
 #define SAX 2
 #define TROMBONE 3
 #define ACCORDION 4
@@ -307,7 +307,7 @@ void read_midi(const MIDIPacketList *pktlist,
             note_out += 12;
           }
 
-          if (endpoint == PIPES || endpoint == ACCORDION) {
+          if (endpoint == JAWHARP || endpoint == ACCORDION) {
             val = 127;
           }
 
@@ -333,18 +333,21 @@ void read_midi(const MIDIPacketList *pktlist,
           }
 
           if (endpoint == ACCORDION && !radio_buttons) {
-            // accordion always should have some volume in polyphonic mode
-            val = val + 18;
-            if (val > 127) {
-              val = 127;
-            }
+            val += 18;
+          } else if (endpoint == JAWHARP) {
+            val += 36;
           }
-          if (radio_buttons && endpoint == PIPES && val == 0 && current_note[endpoint] != -1) {
+
+          if (val > 127) {
+            val = 127;
+          }
+
+          if (radio_buttons && endpoint != JAWHARP && val == 0 && current_note[endpoint] != -1) {
             send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
             current_note[endpoint] = -1;
           }
 
-          if (endpoint == KEYBOARD || endpoint == PIPES) {
+          if (endpoint == KEYBOARD) {
             // skip breath
           } else {
             send_midi(MIDI_CC, note_in, val, endpoint);
@@ -419,7 +422,7 @@ void jml_setup() {
 
   create_source(&endpoints[TROMBONE], CFSTR("jammer-trombone"));
   create_source(&endpoints[SAX], CFSTR("jammer-sax"));
-  create_source(&endpoints[PIPES], CFSTR("jammer-pipes"));
+  create_source(&endpoints[JAWHARP], CFSTR("jammer-jawharp"));
   create_source(&endpoints[KEYBOARD], CFSTR("jammer-keyboard"));
   create_source(&endpoints[ACCORDION], CFSTR("jammer-accordion"));
 
