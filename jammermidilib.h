@@ -293,7 +293,7 @@ void read_midi(const MIDIPacketList *pktlist,
 
         if (note_in == 1 || note_in == 2) {
           radio_buttons = (note_in == 2);
-          all_notes_off();          
+          all_notes_off();
         } else if (note_in >= 3 && note_in < 3 + N_ENDPOINTS) {
           // switch default endpoint for switching instruments
           current_instrument = note_in - 3;
@@ -302,6 +302,10 @@ void read_midi(const MIDIPacketList *pktlist,
         } else {
           unsigned char note_out = mapping(note_in) + 12 + 2;
           int endpoint = current_instrument;
+
+          if (endpoint == SAX) {
+            note_out += 12;
+          }
 
           if (endpoint == PIPES || endpoint == ACCORDION) {
             val = 127;
@@ -418,7 +422,7 @@ void jml_setup() {
   create_source(&endpoints[PIPES], CFSTR("jammer-pipes"));
   create_source(&endpoints[KEYBOARD], CFSTR("jammer-keyboard"));
   create_source(&endpoints[ACCORDION], CFSTR("jammer-accordion"));
-  
+
   for (int i = 0; i < N_ENDPOINTS; i++) {
     current_note[i] = -1;
   }
