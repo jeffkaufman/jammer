@@ -28,6 +28,19 @@ void attempt(OSStatus result, char* errmsg) {
 #define ACCORDION 4
 #define N_ENDPOINTS 5
 
+#define MODE_MAJOR 0
+#define MODE_MIXO 1
+#define MODE_MINOR 2
+#define MODE_DORIAN 3
+#define N_MODES 4
+
+#define SUSTAIN_STANDARD 1
+#define SUSTAIN_RADIO 2
+#define BEGIN_ENDPOINT_RANGE (SUSTAIN_RADIO + 1)
+#define END_ENDPONT_RANGE (BEGIN_ENDPOINT_RANGE + N_ENDPOINTS)
+#define BEGIN_MODE_RANGE (END_ENDPONT_RANGE)
+#define END_MODE_RANGE (BEGIN_MODE_RANGE + N_MODES)
+
 #define MIDI_OFF 0x80
 #define MIDI_ON 0x90
 #define MIDI_CC 0xb0
@@ -39,13 +52,56 @@ MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 
-int current_instrument;
+int instrument = 0;
+int musical_mode = 0;
+int degree = 1;
 
 bool new_model;
 
 int current_note[N_ENDPOINTS];
 
 bool radio_buttons = false;
+
+char scale_degree() {
+  // return the adjustment needed for the degree-th note in the musical_mode scale
+  //
+  // For example, if we're in major and degree is 3, then produce 4 (four half
+  // steps from C -> E).  If we're in minor, this would be 3 (three half steps
+  // from C -> Eb).
+
+  // Degree should be between 1 and 7 inclusive
+
+  // Modes just depend on which scale degree you start on:
+  //
+  //   1st: major        T–T–S–T–T–T–S  0  2  4  5  7  9 11   zero flats
+  //   5th: mixolydian   T–T–S–T–T–S–T  0  2  4  5  7  9 10   one flat
+  //   2nd: dorian       T–S–T–T–T–S–T  0  2  3  5  7  9 10   two flats
+  //   6th: minor        T–S–T–T–S–T–T  0  2  3  5  7  8 10   three flats
+
+  switch (degree) {
+  case 1:
+    return 0;
+  case 2:
+    return 2;
+  case 3:
+    if (musical_mode == MODE_MAJOR ||
+        musical_mode == MODE_MIXO) {
+      return 4;
+    } else {
+      return 3;
+    }
+  case 4:
+    return 5;
+  case 5:
+    return 7;
+  case 6:
+    return musical_mode == MODE_MINOR ? 8 : 9;
+  case 7:
+    return (musical_mode == MODE_MAJOR ? 11 : 10) - 12; // octave down
+  }
+  printf("bad degree %d\n", degree);
+  return 0;
+}
 
 char mapping(unsigned char note_in) {
   if (new_model) {
@@ -291,38 +347,47 @@ void read_midi(const MIDIPacketList *pktlist,
       if (mode == MIDI_OFF || mode == MIDI_ON) {
         // note on or off
 
-        if (note_in == 1 || note_in == 2) {
-          radio_buttons = (note_in == 2);
+        if (note_in == SUSTAIN_STANDARD || note_in == SUSTAIN_RADIO) {
+          radio_buttons = (note_in == SUSTAIN_RADIO);
+          printf("selected sustain mode %d\n", radio_buttons);
           all_notes_off();
-        } else if (note_in >= 3 && note_in < 3 + N_ENDPOINTS) {
+        } else if (note_in >= BEGIN_ENDPOINT_RANGE && note_in < END_ENDPONT_RANGE) {
           // switch default endpoint for switching instruments
-          current_instrument = note_in - 3;
-          printf("switched to endpoint %d\n", current_instrument);
+          instrument = note_in - BEGIN_ENDPOINT_RANGE;
+          printf("switched to endpoint %d\n", instrument);
           all_notes_off();
+        } else if (instrument == JAWHARP &&
+                   note_in >= BEGIN_MODE_RANGE &&
+                   note_in < END_MODE_RANGE) {
+          musical_mode = note_in - BEGIN_MODE_RANGE;
+          printf("seleced mode %d\n", musical_mode);
         } else {
           unsigned char note_out = mapping(note_in) + 12 + 2;
-          int endpoint = current_instrument;
 
-          if (endpoint == SAX) {
+          if (instrument == SAX) {
             note_out += 12;
+          } else if (instrument == JAWHARP) {
+
+            note_out += scale_degree();
+            note_out -= 12;
           }
 
-          if (endpoint == JAWHARP || endpoint == ACCORDION) {
+          if (instrument == JAWHARP || instrument == ACCORDION) {
             val = 127;
           }
 
           if (radio_buttons) {
             if (mode == MIDI_ON) {
-              if (current_note[endpoint] != -1) {
-                send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
+              if (current_note[instrument] != -1) {
+                send_midi(MIDI_OFF, current_note[instrument], 0, instrument);
               }
-              current_note[endpoint] = note_out;
-              send_midi(MIDI_ON, note_out, val, endpoint);
+              current_note[instrument] = note_out;
+              send_midi(MIDI_ON, note_out, val, instrument);
             } else if (mode == MIDI_OFF) {
               // ignore
             }
           } else {
-            send_midi(mode, note_out, val, endpoint);
+            send_midi(mode, note_out, val, instrument);
           }
         }
       } else if (mode == MIDI_CC) {
@@ -395,8 +460,6 @@ void jml_setup() {
   } else {
     die("Couldn't find AXIS-49");
   }
-
-  current_instrument = 0;
 
   MIDIEndpointRef breath_controller;
   bool have_breath_controller = get_endpoint_ref(CFSTR("Breath Controller 5.0-15260BA7"),
