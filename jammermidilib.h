@@ -45,22 +45,62 @@ void attempt(OSStatus result, char* errmsg) {
 #define MIDI_ON 0x90
 #define MIDI_CC 0xb0
 
+#define CC_TILT1 30
+#define CC_TILT2 31
+
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
 
 MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
+MIDIPortRef midiport_tilt_controller;
 
 int instrument = 0;
 int musical_mode = 0;
 int degree = 1;
+int root_note = -1;
 
 bool new_model;
 
 int current_note[N_ENDPOINTS];
 
 bool radio_buttons = false;
+
+int raw_tilt1;
+int raw_tilt2;
+
+int choose_degree() {
+  /*
+   *       30-    15-   0    15+   30+
+   *     +-----------------------------
+   * +15 |  10    11    12    13   14
+   *   0 |  6     7     8     9    10
+   *
+   */
+  float tilt1 = raw_tilt1 * 180.0 / 63.0;   // -180 to 180
+  float tilt2 = raw_tilt2 * 180.0 / 63.0;   // -180 to 180
+
+  int chosen_degree;
+
+  if (tilt1 < -30) {
+    chosen_degree = 6;
+  } else if (tilt1 < -15) {
+    chosen_degree = 7;
+  } else if (tilt1 < 15) {
+    chosen_degree = 8;
+  } else if (tilt1 < 30) {
+    chosen_degree = 9;
+  } else {
+    chosen_degree = 10;
+  }
+
+  if (tilt2 > 15) {
+    chosen_degree += 4;
+  }
+
+  return chosen_degree;
+}
 
 char scale_degree() {
   // return the adjustment needed for the degree-th note in the musical_mode scale
@@ -78,7 +118,7 @@ char scale_degree() {
   //   2nd: dorian       T–S–T–T–T–S–T  0  2  3  5  7  9 10   two flats
   //   6th: minor        T–S–T–T–S–T–T  0  2  3  5  7  8 10   three flats
 
-  switch (degree) {
+  switch (degree % 7 + 1) {
   case 1:
     return 0;
   case 2:
@@ -97,10 +137,18 @@ char scale_degree() {
   case 6:
     return musical_mode == MODE_MINOR ? 8 : 9;
   case 7:
-    return (musical_mode == MODE_MAJOR ? 11 : 10) - 12; // octave down
+    return (musical_mode == MODE_MAJOR ? 11 : 10);
   }
   printf("bad degree %d\n", degree);
   return 0;
+}
+
+char scale_octave() {
+  return (degree / 7) * 12;
+}
+
+char adjusted_note() {
+  return root_note + scale_degree() + scale_octave();
 }
 
 char mapping(unsigned char note_in) {
@@ -367,9 +415,8 @@ void read_midi(const MIDIPacketList *pktlist,
           if (instrument == SAX) {
             note_out += 12;
           } else if (instrument == JAWHARP) {
-
-            note_out += scale_degree();
-            note_out -= 12;
+            root_note = note_out - 12;
+            note_out = adjusted_note();
           }
 
           if (instrument == JAWHARP || instrument == ACCORDION) {
@@ -390,8 +437,26 @@ void read_midi(const MIDIPacketList *pktlist,
             send_midi(mode, note_out, val, instrument);
           }
         }
+      } else if (mode == MIDI_CC &&
+                 (note_in == CC_TILT1 || note_in == CC_TILT2)) {
+        if (note_in == CC_TILT1) {
+          raw_tilt1 = val;
+        } else {
+          raw_tilt2 = val;
+        }
+        int chosen_degree = choose_degree();
+        if (chosen_degree != degree) {
+          degree = chosen_degree;
+          if (instrument == JAWHARP && radio_buttons) {
+            if (current_note[instrument] != -1) {
+              send_midi(MIDI_OFF, current_note[instrument], 0, instrument);
+            }
+            current_note[instrument] = adjusted_note();
+            send_midi(MIDI_ON, current_note[instrument], 127 /*max*/, instrument);
+          }
+        }
       } else if (mode == MIDI_CC) {
-        // pass control change to all synths
+        // pass other control change to all synths
         for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
           if (note_in == 0x02) { // breath controller
             note_in = 0x0b; // send CC-11 instead of CC-2
@@ -467,6 +532,9 @@ void jml_setup() {
   MIDIEndpointRef game_controller;
   bool have_game_controller = get_endpoint_ref(CFSTR("game controller"),
                                                &game_controller);
+  MIDIEndpointRef tilt_controller;
+  bool have_tilt_controller = get_endpoint_ref(CFSTR("yocto 3d v2"),
+                                               &tilt_controller);
   attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
@@ -481,6 +549,10 @@ void jml_setup() {
 
   if (have_game_controller) {
     connect_source(game_controller, midiport_game_controller);
+  }
+
+  if (have_tilt_controller) {
+    connect_source(tilt_controller, midiport_tilt_controller);
   }
 
   create_source(&endpoints[TROMBONE], CFSTR("jammer-trombone"));
