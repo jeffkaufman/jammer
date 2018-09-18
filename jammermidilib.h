@@ -60,10 +60,12 @@
 
  Combinations:
 
- - Jaw Harp with Keyboard, Lead, or Hands (Mandolin / Piano)
+ - Jaw Harp with anything
    - Combining with Accordion or Brass is logically possible, but probably
      sounds weird.  Interface doesn't need to prevent it though.
  - Drums with anything
+   - Don't necessarily want all three drums enabled at once, so need to be able
+     to toggle them individually.
  - Footbass with anything
 
  Interface:
@@ -83,14 +85,14 @@
     - where is Footbass / Jaw Harp based?
   - Scale selector
     - Major
-    - Dorian
     - Mixolydian
+    - Dorian
     - Minor
   - Absolutely all notes off
 
 This looks like:
 
-  Mj   Dr   Mx   Mn
+  Mj   Mx   Dr   Mn
      Rs        J    F   Dl   Dh   Ds
   O    A    Ar   S    T    K    L
 
@@ -152,8 +154,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_DRUM_SPECIAL 14
 
 #define SELECT_MAJOR         15
-#define SELECT_DORIAN        16
-#define SELECT_MIXOLYDIAN    17
+#define SELECT_MIXOLYDIAN    16
+#define SELECT_DORIAN        17
 #define SELECT_MINOR         18
 
 #define N_CONTROLS (SELECT_MINOR+1)
@@ -218,8 +220,6 @@ int musical_mode = MODE_MAJOR;
 int degree = 1;
 int root_note = 26;  // D @ 37Hz
 bool selecting_root = false;
-
-bool new_model;
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
@@ -324,163 +324,107 @@ char active_note() {
 }
 
 char mapping(unsigned char note_in) {
-  if (new_model) {
-    switch(note_in) {
-    case 1: return 1;  // Db
-    case 2: return 3;  // Eb
-    case 3: return 5;  // F
-    case 4: return 7;  // G
-    case 5: return 9;  // A
-    case 6: return 11;  // B
-    case 7: return 13;  // C#
-    case 8: return 8;  // Ab
-    case 9: return 10;  // Bb
-    case 10: return 12;  // C
-    case 11: return 14;  // D
-    case 12: return 16;  // E
-    case 13: return 18;  // F#
-    case 14: return 20;  // G#
-    case 15: return 13;  // Db
-    case 16: return 15;  // Eb
-    case 17: return 17;  // F
-    case 18: return 19;  // G
-    case 19: return 21;  // A
-    case 20: return 23;  // B
-    case 21: return 25;  // C#
-    case 22: return 20;  // Ab
-    case 23: return 22;  // Bb
-    case 24: return 24;  // C
-    case 25: return 26;  // D
-    case 26: return 28;  // E
-    case 27: return 30;  // F#
-    case 28: return 32;  // G#
-    case 29: return 25;  // Db
-    case 30: return 27;  // Eb
-    case 31: return 29;  // F
-    case 32: return 31;  // G
-    case 33: return 33;  // A
-    case 34: return 35;  // B
-    case 35: return 37;  // C#
-    case 36: return 32;  // Ab
-    case 37: return 34;  // Bb
-    case 38: return 36;  // C
-    case 39: return 38;  // D
-    case 40: return 40;  // E
-    case 41: return 42;  // F#
-    case 42: return 44;  // G#
-    case 43: return 37;  // Db
-    case 44: return 39;  // Eb
-    case 45: return 41;  // F
-    case 46: return 43;  // G
-    case 47: return 45;  // A
-    case 48: return 47;  // B
-    case 49: return 49;  // C#
-    case 50: return 44;  // Ab
-    case 51: return 46;  // Bb
-    case 52: return 48;  // C
-    case 53: return 50;  // D
-    case 54: return 52;  // E
-    case 55: return 54;  // F#
-    case 56: return 56;  // G#
-    case 57: return 51;  // Eb
-    case 58: return 53;  // F
-    case 59: return 55;  // G
-    case 60: return 57;  // A
-    case 61: return 59;  // B
-    case 62: return 61;  // C#
-    case 63: return 63;  // D#
-    case 64: return 56;  // Ab
-    case 65: return 58;  // Bb
-    case 66: return 60;  // C
-    case 67: return 62;  // D
-    case 68: return 64;  // E
-    case 69: return 66;  // F#
-    case 70: return 68;  // G#
-    case 71: return 63;  // Eb
-    case 72: return 65;  // F
-    case 73: return 67;  // G
-    case 74: return 69;  // A
-    case 75: return 71;  // B
-    case 76: return 73;  // C#
-    case 77: return 75;  // D#
-    case 78: return 68;  // Ab
-    case 79: return 70;  // Bb
-    case 80: return 72;  // C
-    case 81: return 74;  // D
-    case 82: return 76;  // E
-    case 83: return 78;  // F#
-    case 84: return 80;  // G#
-    case 85: return 75;  // Eb
-    case 86: return 77;  // F
-    case 87: return 79;  // G
-    case 88: return 81;  // A
-    case 89: return 83;  // B
-    case 90: return 85;  // C#
-    case 91: return 87;  // D#
-    case 92: return 80;  // Ab
-    case 93: return 82;  // Bb
-    case 94: return 84;  // C
-    case 95: return 86;  // D
-    case 96: return 88;  // E
-    case 97: return 90;  // F#
-    case 98: return 92;  // G
-    default:
-      return 0;
-    }
-  } else {
-    switch (note_in) {
-    case 25: return 37;  // Db / C#
-    case 32: return 39;  // D# / Eb
-    case 39: return 41;  // F
-    case 46: return 43;  // G
-    case 28: return 44;  // G# / Ab
-    case 53: return 45;  // A
-    case 35: return 46;  // Bb
-    case 60: return 47;  // B
-    case 42: return 48;  // C
-    case 24: return 49;  // C# / Db
-    case 67: return 49;  // C# / Db
-    case 49: return 50;  // D
-    case 31: return 51;  // D# / Eb
-    case 56: return 52;  // E
-    case 38: return 53;  // F
-    case 63: return 54;  // F#
-    case 45: return 55;  // G
-    case 70: return 56;  // G# / Ab
-    case 27: return 56;  // G# / Ab
-    case 52: return 57;  // A
-    case 34: return 58;  // Bb
-    case 59: return 59;  // B
-    case 41: return 60;  // C
-    case 66: return 61;  // C# / Db
-    case 48: return 62;  // D
-    case 30: return 63;  // D# / Eb
-    case 55: return 64;  // E
-    case 37: return 65;  // F
-    case 62: return 66;  // F#
-    case 44: return 67;  // G
-    case 69: return 68;  // G# / Ab
-    case 26: return 68;  // G# / Ab
-    case 51: return 69;  // A
-    case 33: return 70;  // Bb
-    case 58: return 71;  // B
-    case 40: return 72;  // C
-    case 65: return 73;  // C# / Db
-    case 47: return 74;  // D
-    case 72: return 75;  // D# / Eb
-    case 29: return 75;  // D# / Eb
-    case 54: return 76;  // E
-    case 36: return 77;  // F
-    case 61: return 78;  // F#
-    case 43: return 79;  // G
-    case 68: return 80;  // G# / Ab
-    case 50: return 81;  // A
-    case 57: return 83;  // B
-    case 64: return 85;  // C# / Db
-    case 71: return 87;  // D# / Eb
-    default:
-      return 0;
-    }
+  switch(note_in) {
+  case 1: return 1;  // Db
+  case 2: return 3;  // Eb
+  case 3: return 5;  // F
+  case 4: return 7;  // G
+  case 5: return 9;  // A
+  case 6: return 11;  // B
+  case 7: return 13;  // C#
+  case 8: return 8;  // Ab
+  case 9: return 10;  // Bb
+  case 10: return 12;  // C
+  case 11: return 14;  // D
+  case 12: return 16;  // E
+  case 13: return 18;  // F#
+  case 14: return 20;  // G#
+  case 15: return 13;  // Db
+  case 16: return 15;  // Eb
+  case 17: return 17;  // F
+  case 18: return 19;  // G
+  case 19: return 21;  // A
+  case 20: return 23;  // B
+  case 21: return 25;  // C#
+  case 22: return 20;  // Ab
+  case 23: return 22;  // Bb
+  case 24: return 24;  // C
+  case 25: return 26;  // D
+  case 26: return 28;  // E
+  case 27: return 30;  // F#
+  case 28: return 32;  // G#
+  case 29: return 25;  // Db
+  case 30: return 27;  // Eb
+  case 31: return 29;  // F
+  case 32: return 31;  // G
+  case 33: return 33;  // A
+  case 34: return 35;  // B
+  case 35: return 37;  // C#
+  case 36: return 32;  // Ab
+  case 37: return 34;  // Bb
+  case 38: return 36;  // C
+  case 39: return 38;  // D
+  case 40: return 40;  // E
+  case 41: return 42;  // F#
+  case 42: return 44;  // G#
+  case 43: return 37;  // Db
+  case 44: return 39;  // Eb
+  case 45: return 41;  // F
+  case 46: return 43;  // G
+  case 47: return 45;  // A
+  case 48: return 47;  // B
+  case 49: return 49;  // C#
+  case 50: return 44;  // Ab
+  case 51: return 46;  // Bb
+  case 52: return 48;  // C
+  case 53: return 50;  // D
+  case 54: return 52;  // E
+  case 55: return 54;  // F#
+  case 56: return 56;  // G#
+  case 57: return 51;  // Eb
+  case 58: return 53;  // F
+  case 59: return 55;  // G
+  case 60: return 57;  // A
+  case 61: return 59;  // B
+  case 62: return 61;  // C#
+  case 63: return 63;  // D#
+  case 64: return 56;  // Ab
+  case 65: return 58;  // Bb
+  case 66: return 60;  // C
+  case 67: return 62;  // D
+  case 68: return 64;  // E
+  case 69: return 66;  // F#
+  case 70: return 68;  // G#
+  case 71: return 63;  // Eb
+  case 72: return 65;  // F
+  case 73: return 67;  // G
+  case 74: return 69;  // A
+  case 75: return 71;  // B
+  case 76: return 73;  // C#
+  case 77: return 75;  // D#
+  case 78: return 68;  // Ab
+  case 79: return 70;  // Bb
+  case 80: return 72;  // C
+  case 81: return 74;  // D
+  case 82: return 76;  // E
+  case 83: return 78;  // F#
+  case 84: return 80;  // G#
+  case 85: return 75;  // Eb
+  case 86: return 77;  // F
+  case 87: return 79;  // G
+  case 88: return 81;  // A
+  case 89: return 83;  // B
+  case 90: return 85;  // C#
+  case 91: return 87;  // D#
+  case 92: return 80;  // Ab
+  case 93: return 82;  // Bb
+  case 94: return 84;  // C
+  case 95: return 86;  // D
+  case 96: return 88;  // E
+  case 97: return 90;  // F#
+  case 98: return 92;  // G
+  default:
+    return 0;
   }
 }
 
@@ -643,8 +587,8 @@ void read_midi(const MIDIPacketList *pktlist,
           continue;
 
         case SELECT_MAJOR:
-        case SELECT_DORIAN:
         case SELECT_MIXOLYDIAN:
+        case SELECT_DORIAN:
         case SELECT_MINOR:
           musical_mode = note_in - SELECT_MAJOR;
           continue;
@@ -791,49 +735,31 @@ void create_source(MIDIEndpointRef* endpoint_ref, CFStringRef name) {
 }
 
 void jml_setup() {
-  MIDIEndpointRef axis49;
-  if (get_endpoint_ref(CFSTR("AXIS-49 USB Keyboard"), &axis49)) {
-    new_model = false;
-  } else if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
-    new_model = true;
-  } else {
-    die("Couldn't find AXIS-49");
-  }
-
-  MIDIEndpointRef breath_controller;
-  bool have_breath_controller = get_endpoint_ref(CFSTR("Breath Controller 5.0-15260BA7"),
-                                                 &breath_controller);
-  MIDIEndpointRef game_controller;
-  bool have_game_controller = get_endpoint_ref(CFSTR("game controller"),
-                                               &game_controller);
-  MIDIEndpointRef tilt_controller;
-  bool have_tilt_controller = get_endpoint_ref(CFSTR("yocto 3d v2"),
-                                               &tilt_controller);
-  MIDIEndpointRef feet_controller;
-  bool have_feet_controller = get_endpoint_ref(CFSTR("VIEWCON.."),
-                                               &feet_controller);
   attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
      NULL, NULL, &midiclient),
     "creating OS-X MIDI client object." );
 
-  connect_source(axis49, midiport_axis_49);
-
-  if (have_breath_controller) {
+  MIDIEndpointRef axis49, breath_controller, game_controller, tilt_controller, feet_controller;
+  if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
+    connect_source(axis49, midiport_axis_49);
+  }
+  if (get_endpoint_ref(CFSTR("Breath Controller 5.0-15260BA7"), &breath_controller)) {
     connect_source(breath_controller, midiport_breath_controller);
   }
-
-  if (have_game_controller) {
+  if (get_endpoint_ref(CFSTR("game controller"), &game_controller)) {
     connect_source(game_controller, midiport_game_controller);
   }
-
-  if (have_tilt_controller) {
+  if (get_endpoint_ref(CFSTR("yocto 3d v2"), &tilt_controller)) {
     connect_source(tilt_controller, midiport_tilt_controller);
   }
-
-  if (have_feet_controller) {
+  if (get_endpoint_ref(CFSTR("VIEWCON.."), &feet_controller)) {
     connect_source(feet_controller, midiport_feet_controller);
+  }
+
+  for (int i = 0; i < N_ENDPOINTS; i++) {
+    current_note[i] = -1;
   }
 
   create_source(&endpoints[ENDPOINT_ACCORDION], CFSTR("jammer-accordion"));
@@ -844,10 +770,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_FOOTBASS],  CFSTR("jammer-footbass"));
   create_source(&endpoints[ENDPOINT_DRUM],       CFSTR("jammer-drum"));
   create_source(&endpoints[ENDPOINT_JAWHARP],   CFSTR("jammer-jawharp"));
-
-  for (int i = 0; i < N_ENDPOINTS; i++) {
-    current_note[i] = -1;
-  }
 }
 
 #endif
