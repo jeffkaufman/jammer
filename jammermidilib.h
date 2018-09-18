@@ -236,13 +236,22 @@ int choose_degree() {
   /*
    *       30-    15-   0    15+   30+
    *     +-----------------------------
-   * +15 |  10    11    12    13   14
-   *   0 |  6     7     8     9    10
+   * +15 |  3     4     5     6    7
+   *   0 |  6     7     1     2    3
    *
+   *
+   * Everything is really an octave up, though, except for the initial 6 and 7,
+   * so this is really:
+   *
+   *       30-    15-   0    15+   30+
+   *     +-----------------------------
+   * +15 | 10    11    12    13    14
+   *   0 |  6     7     8     9    10
    */
-  // fixme this is wrong
-  float tilt1 = (raw_tilt1 - (MIDI_MAX / 2)) * 90.0 / MIDI_MAX;   // -180 to 180
-  float tilt2 = (raw_tilt2 - (MIDI_MAX / 2)) * 90.0 / MIDI_MAX;   // -180 to 180
+
+  // convert tilts from 0 ... MIDI_MAX to degrees between -180 and 180
+  float tilt1 = (raw_tilt1 - (MIDI_MAX / 2)) * 360.0 / MIDI_MAX;
+  float tilt2 = (raw_tilt2 - (MIDI_MAX / 2)) * 360.0 / MIDI_MAX;
 
   int chosen_degree;
 
