@@ -10,6 +10,119 @@
 // https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
 // https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
 
+
+/*
+ Thinking about different modes I'm likely to want:
+
+ 1. Accordion:
+
+    intensity: breath
+    note: buttons (optionally as radio)
+    attack: none
+
+ 2. Brass (Sax / Trombone):
+
+    intensity: breath
+    note: buttons
+    attack: button velocity
+
+ 3. Jaw Harp
+
+    intensity: breath
+    note: tilt
+    attack: none
+
+ 4. Drums
+
+    intensity: none
+    note: pedals
+    attack: pedal velocity
+
+ 5. Footbass
+
+    intensity: none
+    note: tilt
+    attack: pedal velocity
+
+ 6. Keyboard
+
+    intensity: none
+    note: buttons
+    attack: button velocity
+
+ 7. Lead
+
+    intensity: none
+    note: buttons (as radio)
+    attack: none
+
+ Plus playing Hands (Mandolin or Piano)
+
+ Combinations:
+
+ - Jaw Harp with Keyboard, Lead, or Hands (Mandolin / Piano)
+   - Combining with Accordion or Brass is logically possible, but probably
+     sounds weird.  Interface doesn't need to prevent it though.
+ - Drums with anything
+ - Footbass with anything
+
+ Interface:
+  - Toggle: Jaw harp toggle
+  - Toggle: Drums - Low (Kick)
+  - Toggle: Drums - High (Hihat etc)
+  - Toggle: Drums - Special (Snare etc)
+  - Toggle: Footbass
+  - Buttons selector (includes all notes off for covered endpoints)
+    - Accordion
+    - Accordion radio
+    - Sax
+    - Trombone
+    - Keyboard
+    - Lead
+  - Root note (key) selector
+    - where is Footbass / Jaw Harp based?
+  - Scale selector
+    - Major
+    - Dorian
+    - Mixolydian
+    - Minor
+  - Absolutely all notes off
+
+This looks like:
+
+  Mj   Dr   Mx   Mn
+     Rs        J    F   Dl   Dh   Ds
+  O    A    Ar   S    T    K    L
+
+Which is:
+
+  1 O   All notes off
+  2 A   Accordion
+  3 Ar  Accordion Radio
+  4 S   Sax
+  5 T   Trombone
+  6 K   Keyboard
+  7 L   Lead
+
+  8 Rs  Root select
+  9
+ 10 J   Jawharp (toggle)
+ 11 F   Footbass (toggle)
+ 12 Dl  Drum Low (toggle)
+ 13 Dh  Drum High (toggle)
+ 14 Ds  Drum Special (toggle)
+
+ 15 Mj  Major scale
+ 16 Dr  Dorian scale
+ 17 Mx  Mixolydian scale
+ 18 Mn  Minor scale
+ 19
+ 20
+ 21
+
+ */
+
+
 void die(char *errmsg) {
   printf("%s\n",errmsg);
   exit(-1);
@@ -21,32 +134,66 @@ void attempt(OSStatus result, char* errmsg) {
   }
 }
 
-#define KEYBOARD 0
-#define JAWHARP 1
-#define SAX 2
-#define TROMBONE 3
-#define ACCORDION 4
-#define N_ENDPOINTS 5
+/* controls */
+#define ALL_NOTES_OFF        1
 
+#define SELECT_ACCORDION     2
+#define SELECT_ACCORDION_R   3
+#define SELECT_SAX           4
+#define SELECT_TROMBONE      5
+#define SELECT_KEYBOARD      6
+#define SELECT_LEAD          7
+
+#define SELECT_ROOT          8
+#define TOGGLE_JAWHARP      10
+#define TOGGLE_FOOTBASS     11
+#define TOGGLE_DRUM_LOW     12
+#define TOGGLE_DRUM_HIGH    13
+#define TOGGLE_DRUM_SPECIAL 14
+
+#define SELECT_MAJOR         15
+#define SELECT_DORIAN        16
+#define SELECT_MIXOLYDIAN    17
+#define SELECT_MINOR         18
+
+#define N_CONTROLS (SELECT_MINOR+1)
+
+/* endpoints */
+#define ENDPOINT_ACCORDION 0
+#define ENDPOINT_SAX 1
+#define ENDPOINT_TROMBONE 2
+#define ENDPOINT_KEYBOARD 3
+#define ENDPOINT_LEAD 4
+#define N_BUTTON_ENDPOINTS (ENDPOINT_LEAD + 1)
+#define ENDPOINT_DRUM 5
+#define ENDPOINT_FOOTBASS 6
+#define ENDPOINT_JAWHARP 7
+#define N_ENDPOINTS (ENDPOINT_JAWHARP+1)
+
+/* modes */
+// These need to be in the same order as the selectors, and start from zero.
 #define MODE_MAJOR 0
 #define MODE_MIXO 1
 #define MODE_MINOR 2
 #define MODE_DORIAN 3
-#define N_MODES 4
+#define N_MODES (MODE_DORIAN+1)
 
-#define SUSTAIN_STANDARD 1
-#define SUSTAIN_RADIO 2
-#define BEGIN_ENDPOINT_RANGE (SUSTAIN_RADIO + 1)
-#define END_ENDPONT_RANGE (BEGIN_ENDPOINT_RANGE + N_ENDPOINTS)
-#define BEGIN_MODE_RANGE (END_ENDPONT_RANGE)
-#define END_MODE_RANGE (BEGIN_MODE_RANGE + N_MODES)
-
+/* midi values */
 #define MIDI_OFF 0x80
 #define MIDI_ON 0x90
 #define MIDI_CC 0xb0
 
+#define CC_BREATH 0x02
+#define CC_11 0x0b
+
 #define CC_TILT1 30
 #define CC_TILT2 31
+
+#define MIDI_DRUM_LOW 35  // Acoustic Bass Drum
+#define MIDI_DRUM_HIGH 38  // Acoustic Snare
+#define MIDI_DRUM_SPECIAL 49  // Crash Cymbal 1
+
+#define MIDI_MAX 127
 
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
@@ -55,20 +202,35 @@ MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
+MIDIPortRef midiport_feet_controller;
 
-int instrument = 0;
-int musical_mode = 0;
+
+bool jawharp_on = false;
+bool footbass_on = false;
+bool drum_low_on = false;
+bool drum_high_on = false;
+bool drum_special_on = false;
+
+int button_endpoint = ENDPOINT_ACCORDION;
+bool radio_buttons = false;
+
+int musical_mode = MODE_MAJOR;
 int degree = 1;
-int root_note = -1;
+int root_note = 26;  // D @ 37Hz
+bool selecting_root = false;
 
 bool new_model;
 
+// Only some endpoints use this, and some only use it some of the time:
+//  * Always in use for jawharp
+//  * In use for button endpoints if radio_buttons == true
+//  * Not in use for drums or footbass
 int current_note[N_ENDPOINTS];
 
-bool radio_buttons = false;
+int raw_tilt1 = MIDI_MAX / 2;
+int raw_tilt2 = MIDI_MAX / 2;
 
-int raw_tilt1;
-int raw_tilt2;
+
 
 int choose_degree() {
   /*
@@ -78,8 +240,9 @@ int choose_degree() {
    *   0 |  6     7     8     9    10
    *
    */
-  float tilt1 = raw_tilt1 * 180.0 / 63.0;   // -180 to 180
-  float tilt2 = raw_tilt2 * 180.0 / 63.0;   // -180 to 180
+  // fixme this is wrong
+  float tilt1 = (raw_tilt1 - (MIDI_MAX / 2)) * 90.0 / MIDI_MAX;   // -180 to 180
+  float tilt2 = (raw_tilt2 - (MIDI_MAX / 2)) * 90.0 / MIDI_MAX;   // -180 to 180
 
   int chosen_degree;
 
@@ -147,7 +310,7 @@ char scale_octave() {
   return (degree / 7) * 12;
 }
 
-char adjusted_note() {
+char active_note() {
   return root_note + scale_degree() + scale_octave();
 }
 
@@ -364,13 +527,29 @@ bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
   return false;  // failed to find one
 }
 
-void all_notes_off() {
-  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-    for (int note = 0 ; note < 128; note++) {
-      send_midi(MIDI_OFF, note, 0, endpoint);
+
+void endpoint_notes_off(int endpoint) {
+  for (int note = 0 ; note < 128; note++) {
+    send_midi(MIDI_OFF, note, 0, endpoint);
+  }
+  // send an explicit all notes off as well
+  send_midi(MIDI_CC, 123, 0, endpoint);
+}
+
+void all_notes_off(int max_endpoint) {
+  for (int endpoint = 0; endpoint < max_endpoint; endpoint++) {
+    endpoint_notes_off(endpoint);
+  }
+}
+
+void degree_changed() {
+  if (jawharp_on) {
+    if (current_note[ENDPOINT_JAWHARP] != -1) {
+      send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
     }
-    // send an explicit all notes off as well
-    send_midi(MIDI_CC, 123, 0, endpoint);
+    int note_out = active_note();
+    send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
+    current_note[ENDPOINT_JAWHARP] = note_out;
   }
 }
 
@@ -379,62 +558,151 @@ void read_midi(const MIDIPacketList *pktlist,
                void *srcConnRefCon) {
   const MIDIPacket* packet = pktlist->packet;
   for (int i = 0; i < pktlist->numPackets; i++) {
-    if (packet->length != 3) {
+    if (packet->length == 1) {
+      // foot controller sends timing sync messages we don't care about
+      continue;
+    } else if (packet->length != 3) {
       printf("bad packet len: %d\n", packet->length);
     } else {
       unsigned int mode = packet->data[0];
       unsigned int note_in = packet->data[1];
       unsigned int val = packet->data[2];
 
-      //printf("got packet %x %d %x\n", mode, note_in, val);
+      printf("got packet %u %u %u\n", mode, note_in, val);
 
       if (mode == MIDI_ON && val == 0) {
         mode = MIDI_OFF;
       }
 
-      if (mode == MIDI_OFF || mode == MIDI_ON) {
-        // note on or off
+      if (mode == MIDI_ON) {
+        switch (note_in) {
 
-        if (note_in == SUSTAIN_STANDARD || note_in == SUSTAIN_RADIO) {
-          radio_buttons = (note_in == SUSTAIN_RADIO);
-          printf("selected sustain mode %d\n", radio_buttons);
-          all_notes_off();
-        } else if (note_in >= BEGIN_ENDPOINT_RANGE && note_in < END_ENDPONT_RANGE) {
-          // switch default endpoint for switching instruments
-          instrument = note_in - BEGIN_ENDPOINT_RANGE;
-          printf("switched to endpoint %d\n", instrument);
-          all_notes_off();
-        } else if (instrument == JAWHARP &&
-                   note_in >= BEGIN_MODE_RANGE &&
-                   note_in < END_MODE_RANGE) {
-          musical_mode = note_in - BEGIN_MODE_RANGE;
-          printf("seleced mode %d\n", musical_mode);
-        } else {
-          unsigned char note_out = mapping(note_in) + 12 + 2;
+        case ALL_NOTES_OFF:
+          all_notes_off(N_ENDPOINTS);
+          continue;
 
-          if (instrument == SAX) {
-            note_out += 12;
-          } else if (instrument == JAWHARP) {
-            root_note = note_out - 12;
-            note_out = adjusted_note();
+        case SELECT_ACCORDION:
+        case SELECT_ACCORDION_R:
+        case SELECT_SAX:
+        case SELECT_TROMBONE:
+        case SELECT_KEYBOARD:
+        case SELECT_LEAD:
+          all_notes_off(N_BUTTON_ENDPOINTS);
+
+          radio_buttons = (note_in == SELECT_ACCORDION_R ||
+                           note_in == SELECT_LEAD);
+
+          if (note_in == SELECT_ACCORDION ||
+              note_in == SELECT_ACCORDION_R) {
+            button_endpoint = ENDPOINT_ACCORDION;
+          } else if (note_in == SELECT_SAX) {
+            button_endpoint = ENDPOINT_SAX;
+          } else if (note_in == SELECT_TROMBONE) {
+            button_endpoint = ENDPOINT_TROMBONE;
+          } else if (note_in == SELECT_KEYBOARD) {
+            button_endpoint = ENDPOINT_KEYBOARD;
+          } else if (note_in == SELECT_LEAD) {
+            button_endpoint = ENDPOINT_LEAD;
           }
+          continue;
 
-          if (instrument == JAWHARP || instrument == ACCORDION) {
-            val = 127;
-          }
+        case SELECT_ROOT:
+          selecting_root = true;
+          continue;
 
-          if (radio_buttons) {
-            if (mode == MIDI_ON) {
-              if (current_note[instrument] != -1) {
-                send_midi(MIDI_OFF, current_note[instrument], 0, instrument);
-              }
-              current_note[instrument] = note_out;
-              send_midi(MIDI_ON, note_out, val, instrument);
-            } else if (mode == MIDI_OFF) {
-              // ignore
+        case TOGGLE_JAWHARP:
+          endpoint_notes_off(ENDPOINT_JAWHARP);
+          jawharp_on = !jawharp_on;
+          degree_changed();
+          continue;
+
+        case TOGGLE_FOOTBASS:
+          endpoint_notes_off(ENDPOINT_FOOTBASS);
+          footbass_on = !footbass_on;
+          continue;
+
+        case TOGGLE_DRUM_LOW:
+          drum_low_on = !drum_low_on;
+          continue;
+
+        case TOGGLE_DRUM_HIGH:
+          drum_high_on = !drum_high_on;
+          continue;
+
+        case TOGGLE_DRUM_SPECIAL:
+          drum_special_on = !drum_special_on;
+          continue;
+
+        case SELECT_MAJOR:
+        case SELECT_DORIAN:
+        case SELECT_MIXOLYDIAN:
+        case SELECT_MINOR:
+          musical_mode = note_in - SELECT_MAJOR;
+          continue;
+        }
+      }
+
+      if ((mode == MIDI_ON || mode == MIDI_OFF) && true /* and not pedals */) {
+        if (note_in < N_CONTROLS) {
+          continue;
+        }
+
+        unsigned char note_out = mapping(note_in) + 12 + 2;
+
+        if (selecting_root) {
+          selecting_root = false;
+          root_note = note_out;
+          // There will also be a corresponding MIDI_OFF but we don't care.
+          continue;
+        }
+
+        // At this point, the signal is telling us to play a button instrument.
+
+        if (button_endpoint == ENDPOINT_SAX) {
+          // sax sounds an octave lower than we want
+          note_out += 12;
+        } else if (button_endpoint == ENDPOINT_ACCORDION) {
+          // accordion always uses full volume, and is adjusted via the breath
+          // controller.
+          val = MIDI_MAX;
+        }
+
+        if (radio_buttons) {
+          if (mode == MIDI_ON) {
+            if (current_note[button_endpoint] != -1) {
+              send_midi(MIDI_OFF, current_note[button_endpoint], 0, button_endpoint);
             }
-          } else {
-            send_midi(mode, note_out, val, instrument);
+            current_note[button_endpoint] = note_out;
+            send_midi(MIDI_ON, note_out, val, button_endpoint);
+          } else if (mode == MIDI_OFF) {
+            // ignore
+          }
+        } else {
+          send_midi(mode, note_out, val, button_endpoint);
+        }
+      } else if (false /* pedals */) {
+        if (mode == MIDI_OFF ||
+            (drum_low_on && note_in == MIDI_DRUM_LOW) ||
+            (drum_high_on && note_in == MIDI_DRUM_HIGH) ||
+            (drum_special_on && note_in == MIDI_DRUM_SPECIAL)) {
+          send_midi(mode, note_in, val, ENDPOINT_DRUM);
+        }
+
+        if (footbass_on) {
+          if (current_note[ENDPOINT_FOOTBASS] != -1) {
+            send_midi(MIDI_OFF, current_note[ENDPOINT_FOOTBASS], 0,
+                      ENDPOINT_FOOTBASS);
+            current_note[ENDPOINT_FOOTBASS] = -1;
+          }
+
+          int note_out = active_note();
+          if (mode == MIDI_ON &&
+              (note_in == MIDI_DRUM_LOW || note_in == MIDI_DRUM_HIGH)) {
+            if (note_in == MIDI_DRUM_HIGH) {
+              note_out += 12;
+            }
+            send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
+            current_note[ENDPOINT_FOOTBASS] = note_out;
           }
         }
       } else if (mode == MIDI_CC &&
@@ -447,41 +715,38 @@ void read_midi(const MIDIPacketList *pktlist,
         int chosen_degree = choose_degree();
         if (chosen_degree != degree) {
           degree = chosen_degree;
-          if (instrument == JAWHARP && radio_buttons) {
-            if (current_note[instrument] != -1) {
-              send_midi(MIDI_OFF, current_note[instrument], 0, instrument);
-            }
-            current_note[instrument] = adjusted_note();
-            send_midi(MIDI_ON, current_note[instrument], 127 /*max*/, instrument);
-          }
+          degree_changed();
         }
       } else if (mode == MIDI_CC) {
-        // pass other control change to all synths
+        // pass other control change to all synths that care about it:
+        //  - accordion
+        //  - sax
+        //  - trombone
+        //  - jawharp
         for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-          if (note_in == 0x02) { // breath controller
-            note_in = 0x0b; // send CC-11 instead of CC-2
+          if (endpoint != ENDPOINT_ACCORDION &&
+              endpoint != ENDPOINT_SAX &&
+              endpoint != ENDPOINT_TROMBONE &&
+              endpoint != ENDPOINT_JAWHARP) {
+            continue;
           }
 
-          if (endpoint == ACCORDION && !radio_buttons) {
+          if (note_in != CC_BREATH && note_in != CC_11) {
+            printf("Unknown Control change %d\n", note_in);
+            continue;
+          }
+
+          if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
             val += 18;
-          } else if (endpoint == JAWHARP) {
+          } else if (endpoint == ENDPOINT_JAWHARP) {
             val += 36;
           }
 
-          if (val > 127) {
-            val = 127;
+          if (val > MIDI_MAX) {
+            val = MIDI_MAX;
           }
 
-          if (radio_buttons && endpoint != JAWHARP && val == 0 && current_note[endpoint] != -1) {
-            send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
-            current_note[endpoint] = -1;
-          }
-
-          if (endpoint == KEYBOARD) {
-            // skip breath
-          } else {
-            send_midi(MIDI_CC, note_in, val, endpoint);
-          }
+          send_midi(MIDI_CC, CC_11, val, endpoint);
         }
       }
     }
@@ -535,6 +800,9 @@ void jml_setup() {
   MIDIEndpointRef tilt_controller;
   bool have_tilt_controller = get_endpoint_ref(CFSTR("yocto 3d v2"),
                                                &tilt_controller);
+  MIDIEndpointRef feet_controller;
+  bool have_feet_controller = get_endpoint_ref(CFSTR("VIEWCON.."),
+                                               &feet_controller);
   attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
@@ -555,11 +823,18 @@ void jml_setup() {
     connect_source(tilt_controller, midiport_tilt_controller);
   }
 
-  create_source(&endpoints[TROMBONE], CFSTR("jammer-trombone"));
-  create_source(&endpoints[SAX], CFSTR("jammer-sax"));
-  create_source(&endpoints[JAWHARP], CFSTR("jammer-jawharp"));
-  create_source(&endpoints[KEYBOARD], CFSTR("jammer-keyboard"));
-  create_source(&endpoints[ACCORDION], CFSTR("jammer-accordion"));
+  if (have_feet_controller) {
+    connect_source(feet_controller, midiport_feet_controller);
+  }
+
+  create_source(&endpoints[ENDPOINT_ACCORDION], CFSTR("jammer-accordion"));
+  create_source(&endpoints[ENDPOINT_SAX],       CFSTR("jammer-sax"));
+  create_source(&endpoints[ENDPOINT_TROMBONE],  CFSTR("jammer-trombone"));
+  create_source(&endpoints[ENDPOINT_KEYBOARD],  CFSTR("jammer-keyboard"));
+  create_source(&endpoints[ENDPOINT_LEAD],      CFSTR("jammer-lead"));
+  create_source(&endpoints[ENDPOINT_FOOTBASS],  CFSTR("jammer-footbass"));
+  create_source(&endpoints[ENDPOINT_DRUM],       CFSTR("jammer-drum"));
+  create_source(&endpoints[ENDPOINT_JAWHARP],   CFSTR("jammer-jawharp"));
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
     current_note[i] = -1;
