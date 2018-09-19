@@ -255,13 +255,13 @@ int choose_degree() {
 
   int chosen_degree;
 
-  if (tilt1 < -30) {
+  if (tilt1 > 45) {
     chosen_degree = 6;
-  } else if (tilt1 < -15) {
+  } else if (tilt1 > 10) {
     chosen_degree = 7;
-  } else if (tilt1 < 15) {
+  } else if (tilt1 > -10) {
     chosen_degree = 8;
-  } else if (tilt1 < 30) {
+  } else if (tilt1 > -45) {
     chosen_degree = 9;
   } else {
     chosen_degree = 10;
@@ -271,6 +271,7 @@ int choose_degree() {
     chosen_degree += 4;
   }
 
+  //printf("Degree: %d\n", chosen_degree);
   return chosen_degree;
 }
 
@@ -290,7 +291,7 @@ char scale_degree() {
   //   2nd: dorian       T–S–T–T–T–S–T  0  2  3  5  7  9 10   two flats
   //   6th: minor        T–S–T–T–S–T–T  0  2  3  5  7  8 10   three flats
 
-  switch (degree % 7 + 1) {
+  switch ((degree-1) % 7 + 1) {
   case 1:
     return 0;
   case 2:
@@ -316,10 +317,14 @@ char scale_degree() {
 }
 
 char scale_octave() {
-  return (degree / 7) * 12;
+  return ((degree-1) / 7) * 12;
 }
 
 char active_note() {
+  printf("root: %d, degree: %d, scale_degree: %d, octave: %d, delta: %d\n",
+         root_note, degree, scale_degree(), scale_octave(), root_note +
+         scale_degree() + scale_octave());
+
   return root_note + scale_degree() + scale_octave();
 }
 
@@ -560,6 +565,7 @@ void read_midi(const MIDIPacketList *pktlist,
           continue;
 
         case SELECT_ROOT:
+          printf("selecting root\n");
           selecting_root = true;
           continue;
 
@@ -591,6 +597,7 @@ void read_midi(const MIDIPacketList *pktlist,
         case SELECT_DORIAN:
         case SELECT_MINOR:
           musical_mode = note_in - SELECT_MAJOR;
+          printf("mode: %d\n", musical_mode);
           continue;
         }
       }
@@ -604,7 +611,9 @@ void read_midi(const MIDIPacketList *pktlist,
 
         if (selecting_root) {
           selecting_root = false;
-          root_note = note_out;
+          root_note = note_out - (12*3);
+          printf("selected %d", root_note);
+          degree_changed();
           // There will also be a corresponding MIDI_OFF but we don't care.
           continue;
         }
