@@ -500,7 +500,7 @@ void all_notes_off(int max_endpoint) {
   }
 }
 
-void degree_changed() {
+void update_bass() {
   if (jawharp_on) {
     if (current_note[ENDPOINT_JAWHARP] != -1) {
       send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
@@ -517,7 +517,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     if (new_root != root_note) {
       root_note = new_root;
       printf("selected %d\n", root_note);
-      degree_changed();
+      update_bass();
     }
   }
 }
@@ -563,7 +563,7 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case TOGGLE_JAWHARP:
       endpoint_notes_off(ENDPOINT_JAWHARP);
       jawharp_on = !jawharp_on;
-      degree_changed();
+      update_bass();
       return;
 
     case TOGGLE_FOOTBASS:
@@ -601,7 +601,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     selecting_root = false;
     root_note = note_out - (12*3);
     printf("selected %d", root_note);
-    degree_changed();
+    update_bass();
     // There will also be a corresponding MIDI_OFF but we don't care.
     return;
   }
@@ -668,7 +668,7 @@ void handle_tilt(unsigned int mode, unsigned int note_in, unsigned int val) {
   int chosen_degree = choose_degree();
   if (chosen_degree != degree) {
     degree = chosen_degree;
-    degree_changed();
+    update_bass();
   }
 }
 
