@@ -511,16 +511,203 @@ void degree_changed() {
   }
 }
 
+void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (mode == MIDI_ON && note_in < 51) {
+    int new_root = (note_in - 2) % 12 + 26 + 12;
+    if (new_root != root_note) {
+      root_note = new_root;
+      printf("selected %d\n", root_note);
+      degree_changed();
+    }
+  }
+}
+
+void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (mode == MIDI_ON) {
+    switch (note_in) {
+
+    case ALL_NOTES_OFF:
+      all_notes_off(N_ENDPOINTS);
+      return;
+
+    case SELECT_ACCORDION:
+    case SELECT_ACCORDION_R:
+    case SELECT_SAX:
+    case SELECT_TROMBONE:
+    case SELECT_KEYBOARD:
+    case SELECT_LEAD:
+      all_notes_off(N_BUTTON_ENDPOINTS);
+
+      radio_buttons = (note_in == SELECT_ACCORDION_R ||
+                       note_in == SELECT_LEAD);
+
+      if (note_in == SELECT_ACCORDION ||
+          note_in == SELECT_ACCORDION_R) {
+        button_endpoint = ENDPOINT_ACCORDION;
+      } else if (note_in == SELECT_SAX) {
+        button_endpoint = ENDPOINT_SAX;
+      } else if (note_in == SELECT_TROMBONE) {
+        button_endpoint = ENDPOINT_TROMBONE;
+      } else if (note_in == SELECT_KEYBOARD) {
+        button_endpoint = ENDPOINT_KEYBOARD;
+      } else if (note_in == SELECT_LEAD) {
+        button_endpoint = ENDPOINT_LEAD;
+      }
+      return;
+
+    case SELECT_ROOT:
+      printf("selecting root\n");
+      selecting_root = true;
+      return;
+
+    case TOGGLE_JAWHARP:
+      endpoint_notes_off(ENDPOINT_JAWHARP);
+      jawharp_on = !jawharp_on;
+      degree_changed();
+      return;
+
+    case TOGGLE_FOOTBASS:
+      endpoint_notes_off(ENDPOINT_FOOTBASS);
+      footbass_on = !footbass_on;
+      return;
+
+    case TOGGLE_DRUM_LOW:
+      drum_low_on = !drum_low_on;
+      return;
+
+    case TOGGLE_DRUM_HIGH:
+      drum_high_on = !drum_high_on;
+      return;
+
+    case TOGGLE_DRUM_SPECIAL:
+      drum_special_on = !drum_special_on;
+      return;
+
+    case SELECT_MAJOR:
+    case SELECT_MIXOLYDIAN:
+    case SELECT_DORIAN:
+    case SELECT_MINOR:
+      musical_mode = note_in - SELECT_MAJOR;
+      printf("mode: %d\n", musical_mode);
+      return;
+    }
+  }
+}
+
+void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
+  unsigned char note_out = mapping(note_in) + 12 + 2;
+
+  if (selecting_root) {
+    selecting_root = false;
+    root_note = note_out - (12*3);
+    printf("selected %d", root_note);
+    degree_changed();
+    // There will also be a corresponding MIDI_OFF but we don't care.
+    return;
+  }
+
+  // At this point, the signal is telling us to play a button instrument.
+
+  if (button_endpoint == ENDPOINT_SAX) {
+    // sax sounds an octave lower than we want
+    note_out += 12;
+  } else if (button_endpoint == ENDPOINT_ACCORDION) {
+    // accordion always uses full volume, and is adjusted via the breath
+    // controller.
+    val = MIDI_MAX;
+  }
+
+  if (radio_buttons) {
+    if (mode == MIDI_ON) {
+      if (current_note[button_endpoint] != -1) {
+        send_midi(MIDI_OFF, current_note[button_endpoint], 0, button_endpoint);
+      }
+      current_note[button_endpoint] = note_out;
+      send_midi(MIDI_ON, note_out, val, button_endpoint);
+    } else if (mode == MIDI_OFF) {
+      // ignore
+    }
+  } else {
+    send_midi(mode, note_out, val, button_endpoint);
+  }
+}
+
+void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (mode == MIDI_OFF ||
+      (drum_low_on && note_in == MIDI_DRUM_LOW) ||
+      (drum_high_on && note_in == MIDI_DRUM_HIGH) ||
+      (drum_special_on && note_in == MIDI_DRUM_SPECIAL)) {
+    send_midi(mode, note_in, val, ENDPOINT_DRUM);
+  }
+
+  if (footbass_on) {
+    if (current_note[ENDPOINT_FOOTBASS] != -1) {
+      send_midi(MIDI_OFF, current_note[ENDPOINT_FOOTBASS], 0,
+                ENDPOINT_FOOTBASS);
+      current_note[ENDPOINT_FOOTBASS] = -1;
+    }
+
+    int note_out = active_note();
+    if (mode == MIDI_ON &&
+        (note_in == MIDI_DRUM_LOW || note_in == MIDI_DRUM_HIGH)) {
+      if (note_in == MIDI_DRUM_HIGH) {
+        note_out += 12;
+      }
+      send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
+      current_note[ENDPOINT_FOOTBASS] = note_out;
+    }
+  }
+}
+
+void handle_tilt(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (note_in == CC_TILT1) {
+    raw_tilt1 = val;
+  } else if (note_in == CC_TILT2) {
+    raw_tilt2 = val;
+  }
+  int chosen_degree = choose_degree();
+  if (chosen_degree != degree) {
+    degree = chosen_degree;
+    degree_changed();
+  }
+}
+
+void handle_cc(unsigned int cc, unsigned int val) {
+  if (cc != CC_BREATH && cc != CC_11) {
+    printf("Unknown Control change %d\n", cc);
+    return;
+  }
+
+  // pass other control change to all synths that care about it:
+  //  - accordion
+  //  - sax
+  //  - trombone
+  //  - jawharp
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    if (endpoint != ENDPOINT_ACCORDION &&
+        endpoint != ENDPOINT_SAX &&
+        endpoint != ENDPOINT_TROMBONE &&
+        endpoint != ENDPOINT_JAWHARP) {
+      continue;
+    }
+    if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
+      val += 18;
+    } else if (endpoint == ENDPOINT_JAWHARP) {
+      val += 36;
+    }
+
+    if (val > MIDI_MAX) {
+      val = MIDI_MAX;
+    }
+
+    send_midi(MIDI_CC, CC_11, val, endpoint);
+  }
+}
+
+
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
-  /*
-  if (srcConnRefCon == &midiport_piano) {
-    printf("piano\n");
-  } else if (srcConnRefCon == &midiport_breath_controller) {
-    printf("breath\n");
-    } */
-
   const MIDIPacket* packet = pktlist->packet;
   for (int i = 0; i < pktlist->numPackets; i++) {
     if (packet->length == 1) {
@@ -540,195 +727,21 @@ void read_midi(const MIDIPacketList *pktlist,
       }
 
       if (srcConnRefCon == &midiport_piano) {
-        if (mode == MIDI_ON && note_in < 51) {
-          int new_root = (note_in - 2) % 12 + 26 + 12;
-          if (new_root != root_note) {
-            root_note = new_root;
-            printf("selected %d\n", root_note);
-            degree_changed();
-          }
-        }
-        continue;
-      }
-
-      if (mode == MIDI_ON) {
-        switch (note_in) {
-
-        case ALL_NOTES_OFF:
-          all_notes_off(N_ENDPOINTS);
-          continue;
-
-        case SELECT_ACCORDION:
-        case SELECT_ACCORDION_R:
-        case SELECT_SAX:
-        case SELECT_TROMBONE:
-        case SELECT_KEYBOARD:
-        case SELECT_LEAD:
-          all_notes_off(N_BUTTON_ENDPOINTS);
-
-          radio_buttons = (note_in == SELECT_ACCORDION_R ||
-                           note_in == SELECT_LEAD);
-
-          if (note_in == SELECT_ACCORDION ||
-              note_in == SELECT_ACCORDION_R) {
-            button_endpoint = ENDPOINT_ACCORDION;
-          } else if (note_in == SELECT_SAX) {
-            button_endpoint = ENDPOINT_SAX;
-          } else if (note_in == SELECT_TROMBONE) {
-            button_endpoint = ENDPOINT_TROMBONE;
-          } else if (note_in == SELECT_KEYBOARD) {
-            button_endpoint = ENDPOINT_KEYBOARD;
-          } else if (note_in == SELECT_LEAD) {
-            button_endpoint = ENDPOINT_LEAD;
-          }
-          continue;
-
-        case SELECT_ROOT:
-          printf("selecting root\n");
-          selecting_root = true;
-          continue;
-
-        case TOGGLE_JAWHARP:
-          endpoint_notes_off(ENDPOINT_JAWHARP);
-          jawharp_on = !jawharp_on;
-          degree_changed();
-          continue;
-
-        case TOGGLE_FOOTBASS:
-          endpoint_notes_off(ENDPOINT_FOOTBASS);
-          footbass_on = !footbass_on;
-          continue;
-
-        case TOGGLE_DRUM_LOW:
-          drum_low_on = !drum_low_on;
-          continue;
-
-        case TOGGLE_DRUM_HIGH:
-          drum_high_on = !drum_high_on;
-          continue;
-
-        case TOGGLE_DRUM_SPECIAL:
-          drum_special_on = !drum_special_on;
-          continue;
-
-        case SELECT_MAJOR:
-        case SELECT_MIXOLYDIAN:
-        case SELECT_DORIAN:
-        case SELECT_MINOR:
-          musical_mode = note_in - SELECT_MAJOR;
-          printf("mode: %d\n", musical_mode);
-          continue;
-        }
-      }
-
-      if ((mode == MIDI_ON || mode == MIDI_OFF) && true /* and not pedals */) {
+        handle_piano(mode, note_in, val);
+      } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in < N_CONTROLS) {
-          continue;
-        }
-
-        unsigned char note_out = mapping(note_in) + 12 + 2;
-
-        if (selecting_root) {
-          selecting_root = false;
-          root_note = note_out - (12*3);
-          printf("selected %d", root_note);
-          degree_changed();
-          // There will also be a corresponding MIDI_OFF but we don't care.
-          continue;
-        }
-
-        // At this point, the signal is telling us to play a button instrument.
-
-        if (button_endpoint == ENDPOINT_SAX) {
-          // sax sounds an octave lower than we want
-          note_out += 12;
-        } else if (button_endpoint == ENDPOINT_ACCORDION) {
-          // accordion always uses full volume, and is adjusted via the breath
-          // controller.
-          val = MIDI_MAX;
-        }
-
-        if (radio_buttons) {
-          if (mode == MIDI_ON) {
-            if (current_note[button_endpoint] != -1) {
-              send_midi(MIDI_OFF, current_note[button_endpoint], 0, button_endpoint);
-            }
-            current_note[button_endpoint] = note_out;
-            send_midi(MIDI_ON, note_out, val, button_endpoint);
-          } else if (mode == MIDI_OFF) {
-            // ignore
-          }
+          handle_control(mode, note_in, val);
         } else {
-          send_midi(mode, note_out, val, button_endpoint);
+          handle_button(mode, note_in, val);
         }
-      } else if (false /* pedals */) {
-        if (mode == MIDI_OFF ||
-            (drum_low_on && note_in == MIDI_DRUM_LOW) ||
-            (drum_high_on && note_in == MIDI_DRUM_HIGH) ||
-            (drum_special_on && note_in == MIDI_DRUM_SPECIAL)) {
-          send_midi(mode, note_in, val, ENDPOINT_DRUM);
-        }
-
-        if (footbass_on) {
-          if (current_note[ENDPOINT_FOOTBASS] != -1) {
-            send_midi(MIDI_OFF, current_note[ENDPOINT_FOOTBASS], 0,
-                      ENDPOINT_FOOTBASS);
-            current_note[ENDPOINT_FOOTBASS] = -1;
-          }
-
-          int note_out = active_note();
-          if (mode == MIDI_ON &&
-              (note_in == MIDI_DRUM_LOW || note_in == MIDI_DRUM_HIGH)) {
-            if (note_in == MIDI_DRUM_HIGH) {
-              note_out += 12;
-            }
-            send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
-            current_note[ENDPOINT_FOOTBASS] = note_out;
-          }
-        }
-      } else if (mode == MIDI_CC &&
-                 (note_in == CC_TILT1 || note_in == CC_TILT2)) {
-        if (note_in == CC_TILT1) {
-          raw_tilt1 = val;
-        } else {
-          raw_tilt2 = val;
-        }
-        int chosen_degree = choose_degree();
-        if (chosen_degree != degree) {
-          degree = chosen_degree;
-          degree_changed();
-        }
+      } else if (srcConnRefCon == &midiport_feet_controller) {
+        handle_feet(mode, note_in, val);
+      } else if (srcConnRefCon == &midiport_tilt_controller) {
+        handle_tilt(mode, note_in, val);
       } else if (mode == MIDI_CC) {
-        // pass other control change to all synths that care about it:
-        //  - accordion
-        //  - sax
-        //  - trombone
-        //  - jawharp
-        for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-          if (endpoint != ENDPOINT_ACCORDION &&
-              endpoint != ENDPOINT_SAX &&
-              endpoint != ENDPOINT_TROMBONE &&
-              endpoint != ENDPOINT_JAWHARP) {
-            continue;
-          }
-
-          if (note_in != CC_BREATH && note_in != CC_11) {
-            printf("Unknown Control change %d\n", note_in);
-            continue;
-          }
-
-          if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
-            val += 18;
-          } else if (endpoint == ENDPOINT_JAWHARP) {
-            val += 36;
-          }
-
-          if (val > MIDI_MAX) {
-            val = MIDI_MAX;
-          }
-
-          send_midi(MIDI_CC, CC_11, val, endpoint);
-        }
+        handle_cc(note_in, val);
+      } else {
+        printf("ignored\n");
       }
     }
     packet = MIDIPacketNext(packet);
