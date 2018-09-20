@@ -205,7 +205,7 @@ MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_feet_controller;
-
+MIDIPortRef midiport_piano;
 
 bool jawharp_on = false;
 bool footbass_on = false;
@@ -514,6 +514,13 @@ void degree_changed() {
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
+  /*
+  if (srcConnRefCon == &midiport_piano) {
+    printf("piano\n");
+  } else if (srcConnRefCon == &midiport_breath_controller) {
+    printf("breath\n");
+    } */
+
   const MIDIPacket* packet = pktlist->packet;
   for (int i = 0; i < pktlist->numPackets; i++) {
     if (packet->length == 1) {
@@ -530,6 +537,18 @@ void read_midi(const MIDIPacketList *pktlist,
 
       if (mode == MIDI_ON && val == 0) {
         mode = MIDI_OFF;
+      }
+
+      if (srcConnRefCon == &midiport_piano) {
+        if (mode == MIDI_ON && note_in < 51) {
+          int new_root = (note_in - 2) % 12 + 26 + 12;
+          if (new_root != root_note) {
+            root_note = new_root;
+            printf("selected %d\n", root_note);
+            degree_changed();
+          }
+        }
+        continue;
       }
 
       if (mode == MIDI_ON) {
@@ -716,21 +735,21 @@ void read_midi(const MIDIPacketList *pktlist,
   }
 }
 
-void connect_source(MIDIEndpointRef endpoint_ref, MIDIPortRef port_ref) {
+void connect_source(MIDIEndpointRef endpoint_ref, MIDIPortRef* port_ref) {
   attempt(
     MIDIInputPortCreate(
       midiclient,
       CFSTR("input port"),
       &read_midi,
       NULL /* refCon */,
-      &port_ref),
+      port_ref),
    "creating input port");
 
   attempt(
     MIDIPortConnectSource(
-      port_ref,
+      *port_ref,
       endpoint_ref,
-      NULL /* connRefCon */),
+      port_ref /* connRefCon */),
     "connecting to device");
 }
 
@@ -750,21 +769,29 @@ void jml_setup() {
      NULL, NULL, &midiclient),
     "creating OS-X MIDI client object." );
 
-  MIDIEndpointRef axis49, breath_controller, game_controller, tilt_controller, feet_controller;
+  MIDIEndpointRef axis49,
+    breath_controller,
+    game_controller,
+    tilt_controller,
+    feet_controller,
+    piano_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
-    connect_source(axis49, midiport_axis_49);
+    connect_source(axis49, &midiport_axis_49);
   }
   if (get_endpoint_ref(CFSTR("Breath Controller 5.0-15260BA7"), &breath_controller)) {
-    connect_source(breath_controller, midiport_breath_controller);
+    connect_source(breath_controller, &midiport_breath_controller);
   }
   if (get_endpoint_ref(CFSTR("game controller"), &game_controller)) {
-    connect_source(game_controller, midiport_game_controller);
+    connect_source(game_controller, &midiport_game_controller);
   }
   if (get_endpoint_ref(CFSTR("yocto 3d v2"), &tilt_controller)) {
-    connect_source(tilt_controller, midiport_tilt_controller);
+    connect_source(tilt_controller, &midiport_tilt_controller);
   }
   if (get_endpoint_ref(CFSTR("VIEWCON.."), &feet_controller)) {
-    connect_source(feet_controller, midiport_feet_controller);
+    connect_source(feet_controller, &midiport_feet_controller);
+  }
+  if (get_endpoint_ref(CFSTR("mio"), &piano_controller)) {
+    connect_source(piano_controller, &midiport_piano);
   }
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
