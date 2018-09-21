@@ -282,7 +282,7 @@ int  scale_degree(int degree) {
 
   int octave = ((degree-1) / 7);
   int delta;
-  switch ((degree+6) % 7 + 1) {
+  switch ((degree-1) % 7 + 1) {
   case 1:
     delta = 0;
     break;
@@ -337,10 +337,10 @@ char active_note() {
   //    4 1 5
   switch (position) {
   case 0:
-    degree = (musical_mode == MODE_MAJOR) ? 2 : (6-7);
+    degree = (musical_mode == MODE_MAJOR) ? 2 : 6;
     break;
   case 1:
-    degree = (musical_mode == MODE_MAJOR) ? 6 : (7-7);
+    degree = (musical_mode == MODE_MAJOR) ? 6 : 7;
     break;
   case 2:
     degree = 4;
@@ -353,7 +353,11 @@ char active_note() {
     break;
   }
 
-  int note = root_note + scale_degree(degree);
+  if (musical_mode == MODE_MAJOR || degree < 6) {
+    degree += 7;
+  }
+
+  int note = root_note + scale_degree(degree) - 12;
   printf("root: %d, position: %d, degree: %d, scale_degree: %d, note: %d\n",
          root_note, position, degree, scale_degree(degree), note);
 
@@ -382,8 +386,8 @@ int dist_sq(int x1, int x2, int y1, int y2) {
 //    0  1
 //  2  3  4
 //               0   1   2   3   4
-int rolls[]   = {59, 54, 64, 61, 58};
-int pitches[] = {62, 53, 60, 56, 51};
+int rolls[]   = {56, 48, 66, 63, 58};
+int pitches[] = {69, 61, 67, 60, 55};
 #define N_POSITIONS 5
 
 void choose_position() {
