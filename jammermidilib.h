@@ -74,6 +74,7 @@
   - Toggle: Drums - High (Hihat etc)
   - Toggle: Drums - Special (Snare etc)
   - Toggle: Footbass
+  - Toggle: Tilt active
   - Buttons selector (includes all notes off for covered endpoints)
     - Accordion
     - Accordion radio
@@ -93,7 +94,7 @@
 This looks like:
 
   Mj   Mx   Dr   Mn
-     Rs        J    F   Dl   Dh   Ds
+     Rs   Tl   J    F   Dl   Dh   Ds
   O    A    Ar   S    T    K    L
 
 Which is:
@@ -147,6 +148,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define SELECT_LEAD          7
 
 #define SELECT_ROOT          8
+#define TOGGLE_TILT          9
 #define TOGGLE_JAWHARP      10
 #define TOGGLE_FOOTBASS     11
 #define TOGGLE_DRUM_LOW     12
@@ -188,8 +190,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define CC_BREATH 0x02
 #define CC_11 0x0b
 
-#define CC_TILT1 30
-#define CC_TILT2 31
+#define CC_ROLL 30
+#define CC_PITCH 31
 
 #define MIDI_DRUM_LOW 35  // Acoustic Bass Drum
 #define MIDI_DRUM_HIGH 38  // Acoustic Snare
@@ -207,6 +209,7 @@ MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_feet_controller;
 MIDIPortRef midiport_piano;
 
+bool tilt_on = false;
 bool jawharp_on = false;
 bool footbass_on = false;
 bool drum_low_on = false;
@@ -217,7 +220,7 @@ int button_endpoint = ENDPOINT_ACCORDION;
 bool radio_buttons = false;
 
 int musical_mode = MODE_MAJOR;
-int degree = 1;
+int position = 3;
 int root_note = 26;  // D @ 37Hz
 bool selecting_root = false;
 
@@ -227,55 +230,41 @@ bool selecting_root = false;
 //  * Not in use for drums or footbass
 int current_note[N_ENDPOINTS];
 
-int raw_tilt1 = MIDI_MAX / 2;
-int raw_tilt2 = MIDI_MAX / 2;
+int roll = MIDI_MAX / 2;
+int pitch = MIDI_MAX / 2;
 
 
+#define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
+void send_midi(char actionType, int noteNo, int v, int endpoint) {
+  //printf("sending %d %x:%d = %d\n",
+  //       endpoint,
+  //       (unsigned char) actionType,
+  //       noteNo,
+  //      v);
 
-int choose_degree() {
-  /*
-   *       30-    15-   0    15+   30+
-   *     +-----------------------------
-   * +15 |  3     4     5     6    7
-   *   0 |  6     7     1     2    3
-   *
-   *
-   * Everything is really an octave up, though, except for the initial 6 and 7,
-   * so this is really:
-   *
-   *       30-    15-   0    15+   30+
-   *     +-----------------------------
-   * +15 | 10    11    12    13    14
-   *   0 |  6     7     8     9    10
-   */
+  Byte buffer[PACKET_BUF_SIZE];
+  Byte msg[3];
+  msg[0] = actionType;
+  msg[1] = noteNo;
+  msg[2] = v;
 
-  // convert tilts from 0 ... MIDI_MAX to degrees between -180 and 180
-  float tilt1 = (raw_tilt1 - (MIDI_MAX / 2)) * 360.0 / MIDI_MAX;
-  float tilt2 = (raw_tilt2 - (MIDI_MAX / 2)) * 360.0 / MIDI_MAX;
+  MIDIPacketList *packetList = (MIDIPacketList*) buffer;
+  MIDIPacket *curPacket = MIDIPacketListInit(packetList);
 
-  int chosen_degree;
-
-  if (tilt1 > 45) {
-    chosen_degree = 6;
-  } else if (tilt1 > 10) {
-    chosen_degree = 7;
-  } else if (tilt1 > -10) {
-    chosen_degree = 8;
-  } else if (tilt1 > -45) {
-    chosen_degree = 9;
-  } else {
-    chosen_degree = 10;
+  curPacket = MIDIPacketListAdd(packetList,
+				PACKET_BUF_SIZE,
+				curPacket,
+				AudioGetCurrentHostTime(),
+				3,
+				msg);
+  if (!curPacket) {
+      die("packet list allocation failed");
   }
 
-  if (tilt2 > 15) {
-    chosen_degree += 4;
-  }
-
-  //printf("Degree: %d\n", chosen_degree);
-  return chosen_degree;
+  attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
 }
 
-char scale_degree() {
+int  scale_degree(int degree) {
   // return the adjustment needed for the degree-th note in the musical_mode scale
   //
   // For example, if we're in major and degree is 3, then produce 4 (four half
@@ -291,41 +280,129 @@ char scale_degree() {
   //   2nd: dorian       T–S–T–T–T–S–T  0  2  3  5  7  9 10   two flats
   //   6th: minor        T–S–T–T–S–T–T  0  2  3  5  7  8 10   three flats
 
-  switch ((degree-1) % 7 + 1) {
+  int octave = ((degree-1) / 7);
+  int delta;
+  switch ((degree+6) % 7 + 1) {
   case 1:
-    return 0;
+    delta = 0;
+    break;
   case 2:
-    return 2;
+    delta = 2;
+    break;
   case 3:
     if (musical_mode == MODE_MAJOR ||
         musical_mode == MODE_MIXO) {
-      return 4;
+      delta = 4;
     } else {
-      return 3;
+      delta = 3;
     }
+    break;
   case 4:
-    return 5;
+    delta = 5;
+    break;
   case 5:
-    return 7;
+    delta = 7;
+    break;
   case 6:
-    return musical_mode == MODE_MINOR ? 8 : 9;
+    delta = musical_mode == MODE_MINOR ? 8 : 9;
+    break;
   case 7:
-    return (musical_mode == MODE_MAJOR ? 11 : 10);
+    delta = (musical_mode == MODE_MAJOR ? 11 : 10);
+    break;
   }
-  printf("bad degree %d\n", degree);
-  return 0;
-}
-
-char scale_octave() {
-  return ((degree-1) / 7) * 12;
+  return delta + octave * 12;
 }
 
 char active_note() {
-  printf("root: %d, degree: %d, scale_degree: %d, octave: %d, delta: %d\n",
-         root_note, degree, scale_degree(), scale_octave(), root_note +
-         scale_degree() + scale_octave());
+  if (!tilt_on) {
+    return root_note;
+  }
 
-  return root_note + scale_degree() + scale_octave();
+  int degree;
+  // position is:
+  //
+  //    0 1
+  //   2 3 4
+  //
+  // degree is:
+  //
+  //   major:
+  //
+  //     2 6
+  //    4 1 5
+  //    
+  //   otherwise:
+  //
+  //     6 7    <- (low)
+  //    4 1 5
+  switch (position) {
+  case 0:
+    degree = (musical_mode == MODE_MAJOR) ? 2 : (6-7);
+    break;
+  case 1:
+    degree = (musical_mode == MODE_MAJOR) ? 6 : (7-7);
+    break;
+  case 2:
+    degree = 4;
+    break;
+  case 3:
+    degree = 1;
+    break;
+  case 4:
+    degree = 5;
+    break;
+  }
+
+  int note = root_note + scale_degree(degree);
+  printf("root: %d, position: %d, degree: %d, scale_degree: %d, note: %d\n",
+         root_note, position, degree, scale_degree(degree), note);
+
+  return note;
+}
+
+void update_bass() {
+  if (jawharp_on) {
+    int note_out = active_note();
+    if (current_note[ENDPOINT_JAWHARP] == note_out) {
+      return;
+    }
+
+    if (current_note[ENDPOINT_JAWHARP] != -1) {
+      send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
+    }
+    send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
+    current_note[ENDPOINT_JAWHARP] = note_out;
+  }
+}
+
+int dist_sq(int x1, int x2, int y1, int y2) {
+  return (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
+}
+
+//    0  1
+//  2  3  4
+//               0   1   2   3   4
+int rolls[]   = {59, 54, 64, 61, 58};
+int pitches[] = {62, 53, 60, 56, 51};
+#define N_POSITIONS 5
+
+void choose_position() {
+  int best_position = -1;
+  int best_distance = -1;
+
+  for (int i = 0; i < N_POSITIONS; i++) {
+    int distance = dist_sq(roll, rolls[i], pitch, pitches[i]);
+    if (best_position == -1 || distance < best_distance) {
+      best_position = i;
+      best_distance = distance;
+    }
+  }
+
+  if (best_position != position) {
+    position = best_position;
+    printf("chose position %d\n", position);
+    update_bass();
+  }
 }
 
 char mapping(unsigned char note_in) {
@@ -433,36 +510,6 @@ char mapping(unsigned char note_in) {
   }
 }
 
-#define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
-void send_midi(char actionType, int noteNo, int v, int endpoint) {
-  //printf("sending %d %x:%d = %d\n",
-  //       endpoint,
-  //       (unsigned char) actionType,
-  //       noteNo,
-  //      v);
-
-  Byte buffer[PACKET_BUF_SIZE];
-  Byte msg[3];
-  msg[0] = actionType;
-  msg[1] = noteNo;
-  msg[2] = v;
-
-  MIDIPacketList *packetList = (MIDIPacketList*) buffer;
-  MIDIPacket *curPacket = MIDIPacketListInit(packetList);
-
-  curPacket = MIDIPacketListAdd(packetList,
-				PACKET_BUF_SIZE,
-				curPacket,
-				AudioGetCurrentHostTime(),
-				3,
-				msg);
-  if (!curPacket) {
-      die("packet list allocation failed");
-  }
-
-  attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
-}
-
 bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
   int n_sources = MIDIGetNumberOfSources();
   if (!n_sources) {
@@ -497,17 +544,6 @@ void endpoint_notes_off(int endpoint) {
 void all_notes_off(int max_endpoint) {
   for (int endpoint = 0; endpoint < max_endpoint; endpoint++) {
     endpoint_notes_off(endpoint);
-  }
-}
-
-void update_bass() {
-  if (jawharp_on) {
-    if (current_note[ENDPOINT_JAWHARP] != -1) {
-      send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
-    }
-    int note_out = active_note();
-    send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
-    current_note[ENDPOINT_JAWHARP] = note_out;
   }
 }
 
@@ -558,6 +594,11 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case SELECT_ROOT:
       printf("selecting root\n");
       selecting_root = true;
+      return;
+
+    case TOGGLE_TILT:
+      tilt_on = !tilt_on;
+      update_bass();
       return;
 
     case TOGGLE_JAWHARP:
@@ -660,16 +701,12 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void handle_tilt(unsigned int mode, unsigned int note_in, unsigned int val) {
-  if (note_in == CC_TILT1) {
-    raw_tilt1 = val;
-  } else if (note_in == CC_TILT2) {
-    raw_tilt2 = val;
+  if (note_in == CC_ROLL) {
+    roll = val;
+  } else if (note_in == CC_PITCH) {
+    pitch = val;
   }
-  int chosen_degree = choose_degree();
-  if (chosen_degree != degree) {
-    degree = chosen_degree;
-    update_bass();
-  }
+  choose_position();
 }
 
 void handle_cc(unsigned int cc, unsigned int val) {
@@ -720,7 +757,7 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned int note_in = packet->data[1];
       unsigned int val = packet->data[2];
 
-      printf("got packet %u %u %u\n", mode, note_in, val);
+      //printf("got packet %u %u %u\n", mode, note_in, val);
 
       if (mode == MIDI_ON && val == 0) {
         mode = MIDI_OFF;
