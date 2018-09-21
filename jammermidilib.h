@@ -193,9 +193,9 @@ void attempt(OSStatus result, char* errmsg) {
 #define CC_ROLL 30
 #define CC_PITCH 31
 
-#define MIDI_DRUM_LOW 35  // Acoustic Bass Drum
-#define MIDI_DRUM_HIGH 38  // Acoustic Snare
-#define MIDI_DRUM_SPECIAL 49  // Crash Cymbal 1
+#define MIDI_DRUM_LOW 36  // Acoustic Bass Drum
+#define MIDI_DRUM_HIGH 42  // Closed Hi-Hat
+#define MIDI_DRUM_SPECIAL 59  // Crash Cymbal 1
 
 #define MIDI_MAX 127
 
@@ -598,30 +598,36 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
 
     case TOGGLE_TILT:
       tilt_on = !tilt_on;
+      printf("toggled tilt -> %d\n", tilt_on);
       update_bass();
       return;
 
     case TOGGLE_JAWHARP:
       endpoint_notes_off(ENDPOINT_JAWHARP);
       jawharp_on = !jawharp_on;
+      printf("toggled jawharp -> %d\n", jawharp_on);
       update_bass();
       return;
 
     case TOGGLE_FOOTBASS:
       endpoint_notes_off(ENDPOINT_FOOTBASS);
       footbass_on = !footbass_on;
+      printf("toggled footbass -> %d\n", footbass_on);
       return;
 
     case TOGGLE_DRUM_LOW:
       drum_low_on = !drum_low_on;
+      printf("toggled drum_low -> %d\n", drum_low_on);
       return;
 
     case TOGGLE_DRUM_HIGH:
       drum_high_on = !drum_high_on;
+      printf("toggled drum_high -> %d\n", drum_high_on);
       return;
 
     case TOGGLE_DRUM_SPECIAL:
       drum_special_on = !drum_special_on;
+      printf("toggled drum_special -> %d\n", drum_special_on);
       return;
 
     case SELECT_MAJOR:
@@ -682,18 +688,23 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   if (footbass_on) {
-    if (current_note[ENDPOINT_FOOTBASS] != -1) {
-      send_midi(MIDI_OFF, current_note[ENDPOINT_FOOTBASS], 0,
-                ENDPOINT_FOOTBASS);
-      current_note[ENDPOINT_FOOTBASS] = -1;
-    }
-
-    int note_out = active_note();
     if (mode == MIDI_ON &&
         (note_in == MIDI_DRUM_LOW || note_in == MIDI_DRUM_HIGH)) {
+
+      if (current_note[ENDPOINT_FOOTBASS] != -1) {
+        send_midi(MIDI_OFF, current_note[ENDPOINT_FOOTBASS], 0,
+                  ENDPOINT_FOOTBASS);
+        current_note[ENDPOINT_FOOTBASS] = -1;
+      }
+
+      int note_out = active_note();
+
+      val = 100;
       if (note_in == MIDI_DRUM_HIGH) {
         note_out += 12;
+        val -= 30;
       }
+      printf("sent %d %d %d -> footbass\n", mode, note_out, val);
       send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
       current_note[ENDPOINT_FOOTBASS] = note_out;
     }
@@ -758,6 +769,9 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned int val = packet->data[2];
 
       //printf("got packet %u %u %u\n", mode, note_in, val);
+
+      unsigned int channel = mode & 0x0F;
+      mode = mode & 0xF0;
 
       if (mode == MIDI_ON && val == 0) {
         mode = MIDI_OFF;
@@ -837,10 +851,10 @@ void jml_setup() {
   if (get_endpoint_ref(CFSTR("yocto 3d v2"), &tilt_controller)) {
     connect_source(tilt_controller, &midiport_tilt_controller);
   }
-  if (get_endpoint_ref(CFSTR("VIEWCON.."), &feet_controller)) {
+  if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
     connect_source(feet_controller, &midiport_feet_controller);
   }
-  if (get_endpoint_ref(CFSTR("mio"), &piano_controller)) {
+  if (get_endpoint_ref(CFSTR("mio-ignored"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
   }
 
