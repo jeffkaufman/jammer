@@ -553,7 +553,7 @@ void all_notes_off(int max_endpoint) {
 
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (mode == MIDI_ON && note_in < 51) {
-    int new_root = (note_in - 2) % 12 + 26 + 12;
+    int new_root = (note_in - 2) % 12 + 26;
     if (new_root != root_note) {
       root_note = new_root;
       printf("selected %d\n", root_note);
@@ -858,7 +858,7 @@ void jml_setup() {
   if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
     connect_source(feet_controller, &midiport_feet_controller);
   }
-  if (get_endpoint_ref(CFSTR("mio-ignored"), &piano_controller)) {
+  if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
   }
 
