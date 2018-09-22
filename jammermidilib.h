@@ -358,8 +358,8 @@ char active_note() {
   }
 
   int note = root_note + scale_degree(degree) - 12;
-  printf("root: %d, position: %d, degree: %d, scale_degree: %d, note: %d\n",
-         root_note, position, degree, scale_degree(degree), note);
+  //printf("root: %d, position: %d, degree: %d, scale_degree: %d, note: %d\n",
+  //       root_note, position, degree, scale_degree(degree), note);
 
   return note;
 }
@@ -409,7 +409,7 @@ void choose_position() {
 
   if (best_position != position) {
     position = best_position;
-    printf("chose position %d\n", position);
+    //printf("chose position %d\n", position);
     update_bass();
   }
 }
@@ -561,7 +561,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     int new_root = (note_in - 2) % 12 + 26;
     if (new_root != root_note) {
       root_note = new_root;
-      printf("selected %d\n", root_note);
+      //printf("selected %d\n", root_note);
       update_bass();
     }
   }
@@ -601,20 +601,20 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       return;
 
     case SELECT_ROOT:
-      printf("selecting root\n");
+      //printf("selecting root\n");
       selecting_root = true;
       return;
 
     case TOGGLE_TILT:
       tilt_on = !tilt_on;
-      printf("toggled tilt -> %d\n", tilt_on);
+      //printf("toggled tilt -> %d\n", tilt_on);
       update_bass();
       return;
 
     case TOGGLE_JAWHARP:
       endpoint_notes_off(ENDPOINT_JAWHARP);
       jawharp_on = !jawharp_on;
-      printf("toggled jawharp -> %d\n", jawharp_on);
+      //printf("toggled jawharp -> %d\n", jawharp_on);
       if (jawharp_on) {
         update_bass();
       } else {
@@ -625,22 +625,22 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case TOGGLE_FOOTBASS:
       endpoint_notes_off(ENDPOINT_FOOTBASS);
       footbass_on = !footbass_on;
-      printf("toggled footbass -> %d\n", footbass_on);
+      //printf("toggled footbass -> %d\n", footbass_on);
       return;
 
     case TOGGLE_DRUM_LOW:
       drum_low_on = !drum_low_on;
-      printf("toggled drum_low -> %d\n", drum_low_on);
+      //printf("toggled drum_low -> %d\n", drum_low_on);
       return;
 
     case TOGGLE_DRUM_HIGH:
       drum_high_on = !drum_high_on;
-      printf("toggled drum_high -> %d\n", drum_high_on);
+      //printf("toggled drum_high -> %d\n", drum_high_on);
       return;
 
     case TOGGLE_DRUM_SPECIAL:
       drum_special_on = !drum_special_on;
-      printf("toggled drum_special -> %d\n", drum_special_on);
+      //printf("toggled drum_special -> %d\n", drum_special_on);
       return;
 
     case SELECT_MAJOR:
@@ -648,7 +648,7 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case SELECT_DORIAN:
     case SELECT_MINOR:
       musical_mode = note_in - SELECT_MAJOR;
-      printf("mode: %d\n", musical_mode);
+      //printf("mode: %d\n", musical_mode);
       return;
     }
   }
@@ -660,7 +660,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (selecting_root) {
     selecting_root = false;
     root_note = note_out - (12*3);
-    printf("selected %d", root_note);
+    //printf("selected %d", root_note);
     update_bass();
     // There will also be a corresponding MIDI_OFF but we don't care.
     return;
@@ -717,7 +717,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
         note_out += 12;
         val -= 30;
       }
-      printf("sent %d %d %d -> footbass\n", mode, note_out, val);
+      //printf("sent %d %d %d -> footbass\n", mode, note_out, val);
       send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
       current_note[ENDPOINT_FOOTBASS] = note_out;
     }
@@ -765,6 +765,88 @@ void handle_cc(unsigned int cc, unsigned int val) {
   }
 }
 
+const char* button_endpoint_str() {
+  switch (button_endpoint) {
+  case ENDPOINT_ACCORDION:
+    return "acc";
+  case ENDPOINT_SAX:
+    return "sax";
+    break;
+  case ENDPOINT_TROMBONE:
+    return "trm";
+  case ENDPOINT_KEYBOARD:
+    return "key";
+  case ENDPOINT_LEAD:
+    return "lea";
+  default:
+    return "???";
+  }
+}
+
+const char* musical_mode_str() {
+  switch (musical_mode) {
+  case MODE_MAJOR:
+    return "MJ";
+  case MODE_MIXO:
+    return "MX";
+  case MODE_DORIAN:
+    return "DR";
+  case MODE_MINOR:
+    return "MN";
+  default:
+    return "??";
+  }
+}
+
+const char* note_str(int note) {
+  switch (note % 12) {
+  case 0:
+    return "C ";
+  case 1:
+    return "Db";
+  case 2:
+    return "D ";
+  case 3:
+    return "Eb";
+  case 4:
+    return "E ";
+  case 5:
+    return "F ";
+  case 6:
+    return "F#";
+  case 7:
+    return "G ";
+  case 8:
+    return "G#";
+  case 9:
+    return "A ";
+  case 10:
+    return "Bb";
+  case 11:
+    return "B ";
+  default:
+    return "??";
+  }
+}
+
+void print_status() {
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d\n",
+         (tilt_on ? "T" : " "),
+         (jawharp_on ? "J" : " "),
+         (footbass_on ? "B" : " "),
+         (drum_low_on ? "dL" : "  "),
+         (drum_high_on ? "dH" : "  "),
+         (drum_special_on ? "dS" : "  "),
+         (radio_buttons ? "R" : " "),
+         (selecting_root ? "RS" : "  "),
+         button_endpoint_str(),
+         musical_mode_str(),
+         note_str(root_note),
+         note_str(active_note()),
+         position,
+         roll,
+         pitch);
+}
 
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
@@ -783,7 +865,7 @@ void read_midi(const MIDIPacketList *pktlist,
 
       //printf("got packet %u %u %u\n", mode, note_in, val);
 
-      unsigned int channel = mode & 0x0F;
+      //unsigned int channel = mode & 0x0F;
       mode = mode & 0xF0;
 
       if (mode == MIDI_ON && val == 0) {
@@ -807,6 +889,7 @@ void read_midi(const MIDIPacketList *pktlist,
       } else {
         printf("ignored\n");
       }
+      print_status();
     }
     packet = MIDIPacketNext(packet);
   }
