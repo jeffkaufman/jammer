@@ -330,7 +330,7 @@ char active_note() {
   //
   //     2 6
   //    4 1 5
-  //    
+  //
   //   otherwise:
   //
   //     6 7    <- (low)
@@ -364,6 +364,13 @@ char active_note() {
   return note;
 }
 
+void jawharp_off() {
+  if (current_note[ENDPOINT_JAWHARP] != -1) {
+    send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
+    current_note[ENDPOINT_JAWHARP] = -1;
+  }
+}
+
 void update_bass() {
   if (jawharp_on) {
     int note_out = active_note();
@@ -371,9 +378,7 @@ void update_bass() {
       return;
     }
 
-    if (current_note[ENDPOINT_JAWHARP] != -1) {
-      send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
-    }
+    jawharp_off();
     send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = note_out;
   }
@@ -610,7 +615,11 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       endpoint_notes_off(ENDPOINT_JAWHARP);
       jawharp_on = !jawharp_on;
       printf("toggled jawharp -> %d\n", jawharp_on);
-      update_bass();
+      if (jawharp_on) {
+        update_bass();
+      } else {
+        jawharp_off();
+      }
       return;
 
     case TOGGLE_FOOTBASS:
