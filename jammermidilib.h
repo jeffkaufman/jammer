@@ -108,7 +108,7 @@ Which is:
   7 L   Lead
 
   8 Rs  Root select
-  9
+  9 T   Tilt (toggle)
  10 J   Jawharp (toggle)
  11 F   Footbass (toggle)
  12 Dl  Drum Low (toggle)
@@ -119,7 +119,7 @@ Which is:
  16 Dr  Dorian scale
  17 Mx  Mixolydian scale
  18 Mn  Minor scale
- 19
+ 19 P   Piano (toggle)
  20
  21
 
@@ -159,8 +159,9 @@ void attempt(OSStatus result, char* errmsg) {
 #define SELECT_MIXOLYDIAN    16
 #define SELECT_DORIAN        17
 #define SELECT_MINOR         18
+#define TOGGLE_PIANO         19
 
-#define N_CONTROLS (SELECT_MINOR+1)
+#define N_CONTROLS (TOGGLE_PIANO+1)
 
 /* endpoints */
 #define ENDPOINT_ACCORDION 0
@@ -215,6 +216,7 @@ bool footbass_on = false;
 bool drum_low_on = false;
 bool drum_high_on = false;
 bool drum_special_on = false;
+bool piano_on = false;
 
 int button_endpoint = ENDPOINT_ACCORDION;
 bool radio_buttons = false;
@@ -229,6 +231,11 @@ bool selecting_root = false;
 //  * In use for button endpoints if radio_buttons == true
 //  * Not in use for drums or footbass
 int current_note[N_ENDPOINTS];
+
+// Footbass needs to track two notes, because each pedal stays on either until
+// we receive MIDI_OFF for it or we get a new MIDI_ON from it.
+int footbass_low_note = -1;
+int footbass_high_note = -1;
 
 int roll = MIDI_MAX / 2;
 int pitch = MIDI_MAX / 2;
@@ -333,17 +340,17 @@ char active_note() {
   //
   //   otherwise:
   //
-  //     6 7    <- (low)
-  //    4 1 5
+  //     6 4
+  //    7 1 5
   switch (position) {
   case 0:
     degree = (musical_mode == MODE_MAJOR) ? 2 : 6;
     break;
   case 1:
-    degree = (musical_mode == MODE_MAJOR) ? 6 : 7;
+    degree = (musical_mode == MODE_MAJOR) ? 6 : 4;
     break;
   case 2:
-    degree = 4;
+    degree = (musical_mode == MODE_MAJOR) ? 4 : 7;
     break;
   case 3:
     degree = 1;
@@ -362,6 +369,17 @@ char active_note() {
   //       root_note, position, degree, scale_degree(degree), note);
 
   return note;
+}
+
+void footbass_off() {
+  if (footbass_low_note != -1) {
+    send_midi(MIDI_OFF, footbass_low_note, 0, ENDPOINT_FOOTBASS);
+    footbass_low_note = -1;
+  }
+  if (footbass_high_note != -1) {
+    send_midi(MIDI_OFF, footbass_high_note, 0, ENDPOINT_FOOTBASS);
+    footbass_high_note = -1;
+  }
 }
 
 void jawharp_off() {
@@ -565,6 +583,9 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       update_bass();
     }
   }
+  if (piano_on || mode == MIDI_OFF) {
+    send_midi(mode, note_in, val, ENDPOINT_KEYBOARD);
+  }
 }
 
 void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -602,7 +623,7 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
 
     case SELECT_ROOT:
       //printf("selecting root\n");
-      selecting_root = true;
+      selecting_root = !selecting_root;
       return;
 
     case TOGGLE_TILT:
@@ -623,7 +644,7 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       return;
 
     case TOGGLE_FOOTBASS:
-      endpoint_notes_off(ENDPOINT_FOOTBASS);
+      footbass_off();
       footbass_on = !footbass_on;
       //printf("toggled footbass -> %d\n", footbass_on);
       return;
@@ -641,6 +662,10 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case TOGGLE_DRUM_SPECIAL:
       drum_special_on = !drum_special_on;
       //printf("toggled drum_special -> %d\n", drum_special_on);
+      return;
+
+    case TOGGLE_PIANO:
+      piano_on = !piano_on;
       return;
 
     case SELECT_MAJOR:
@@ -701,25 +726,27 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   if (footbass_on) {
-    if (mode == MIDI_ON &&
-        (note_in == MIDI_DRUM_LOW || note_in == MIDI_DRUM_HIGH)) {
-
-      if (current_note[ENDPOINT_FOOTBASS] != -1) {
-        send_midi(MIDI_OFF, current_note[ENDPOINT_FOOTBASS], 0,
-                  ENDPOINT_FOOTBASS);
-        current_note[ENDPOINT_FOOTBASS] = -1;
-      }
+    if (note_in == MIDI_DRUM_LOW ||
+        note_in == MIDI_DRUM_HIGH) {
+      int* footbass_note =
+        (note_in == MIDI_DRUM_LOW) ? &footbass_low_note :
+                                     &footbass_high_note;
 
       int note_out = active_note();
-
       val = 100;
       if (note_in == MIDI_DRUM_HIGH) {
         note_out += 12;
         val -= 30;
       }
-      //printf("sent %d %d %d -> footbass\n", mode, note_out, val);
-      send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
-      current_note[ENDPOINT_FOOTBASS] = note_out;
+
+      if (*footbass_note != -1) {
+        send_midi(MIDI_OFF, *footbass_note, 0, ENDPOINT_FOOTBASS);
+        *footbass_note = -1;
+      }
+      if (mode == MIDI_ON) {
+        send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
+        *footbass_note = note_out;
+      }
     }
   }
 }
@@ -754,7 +781,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
       val += 18;
     } else if (endpoint == ENDPOINT_JAWHARP) {
-      val += 36;
+      val += 8;
     }
 
     if (val > MIDI_MAX) {
@@ -830,13 +857,14 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d\n",
          (tilt_on ? "T" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_on ? "B" : " "),
          (drum_low_on ? "dL" : "  "),
          (drum_high_on ? "dH" : "  "),
          (drum_special_on ? "dS" : "  "),
+         (piano_on ? "P" : " "),
          (radio_buttons ? "R" : " "),
          (selecting_root ? "RS" : "  "),
          button_endpoint_str(),
