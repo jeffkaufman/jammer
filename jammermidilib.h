@@ -93,8 +93,8 @@
 
 This looks like:
 
-  Mj   Mx   Dr   Mn
-     Rs   Tl   J    F   Dl   Dh   Ds
+  Mj   Mx   Dr   Mn   P   Fh   Fo
+     Rs   Tl   J    Fl  Dl   Dh   Ds
   O    A    Ar   S    T    K    L
 
 Which is:
@@ -110,7 +110,7 @@ Which is:
   8 Rs  Root select
   9 T   Tilt (toggle)
  10 J   Jawharp (toggle)
- 11 F   Footbass (toggle)
+ 11 Fl  Footbass low (toggle)
  12 Dl  Drum Low (toggle)
  13 Dh  Drum High (toggle)
  14 Ds  Drum Special (toggle)
@@ -120,8 +120,8 @@ Which is:
  17 Mx  Mixolydian scale
  18 Mn  Minor scale
  19 P   Piano (toggle)
- 20
- 21
+ 20 Fh  Footbass high (toggle)
+ 21 Fh  Footbass high octave (toggle)
 
  */
 
@@ -138,30 +138,32 @@ void attempt(OSStatus result, char* errmsg) {
 }
 
 /* controls */
-#define ALL_NOTES_OFF        1
+#define ALL_NOTES_OFF           1
 
-#define SELECT_ACCORDION     2
-#define SELECT_ACCORDION_R   3
-#define SELECT_SAX           4
-#define SELECT_TROMBONE      5
-#define SELECT_KEYBOARD      6
-#define SELECT_LEAD          7
+#define SELECT_ACCORDION        2
+#define SELECT_ACCORDION_R      3
+#define SELECT_SAX              4
+#define SELECT_TROMBONE         5
+#define SELECT_KEYBOARD         6
+#define SELECT_LEAD             7
 
-#define SELECT_ROOT          8
-#define TOGGLE_TILT          9
-#define TOGGLE_JAWHARP      10
-#define TOGGLE_FOOTBASS     11
-#define TOGGLE_DRUM_LOW     12
-#define TOGGLE_DRUM_HIGH    13
-#define TOGGLE_DRUM_SPECIAL 14
+#define SELECT_ROOT             8
+#define TOGGLE_TILT             9
+#define TOGGLE_JAWHARP         10
+#define TOGGLE_FOOTBASS_LOW    11
+#define TOGGLE_DRUM_LOW        12
+#define TOGGLE_DRUM_HIGH       13
+#define TOGGLE_DRUM_SPECIAL    14
 
-#define SELECT_MAJOR         15
-#define SELECT_MIXOLYDIAN    16
-#define SELECT_DORIAN        17
-#define SELECT_MINOR         18
-#define TOGGLE_PIANO         19
+#define SELECT_MAJOR           15
+#define SELECT_MIXOLYDIAN      16
+#define SELECT_DORIAN          17
+#define SELECT_MINOR           18
+#define TOGGLE_PIANO           19
+#define TOGGLE_FOOTBASS_HIGH   20
+#define TOGGLE_FOOTBASS_OCTAVE 21
 
-#define N_CONTROLS (TOGGLE_PIANO+1)
+#define N_CONTROLS (TOGGLE_FOOTBASS_OCTAVE+1)
 
 /* endpoints */
 #define ENDPOINT_ACCORDION 0
@@ -179,9 +181,9 @@ void attempt(OSStatus result, char* errmsg) {
 // These need to be in the same order as the selectors, and start from zero.
 #define MODE_MAJOR 0
 #define MODE_MIXO 1
-#define MODE_MINOR 2
-#define MODE_DORIAN 3
-#define N_MODES (MODE_DORIAN+1)
+#define MODE_DORIAN 2
+#define MODE_MINOR 3
+#define N_MODES (MODE_MINOR+1)
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -212,7 +214,9 @@ MIDIPortRef midiport_piano;
 
 bool tilt_on = false;
 bool jawharp_on = false;
-bool footbass_on = false;
+bool footbass_low_on = false;
+bool footbass_high_on = false;
+bool footbass_octave = true;
 bool drum_low_on = false;
 bool drum_high_on = false;
 bool drum_special_on = false;
@@ -643,10 +647,18 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       }
       return;
 
-    case TOGGLE_FOOTBASS:
+    case TOGGLE_FOOTBASS_LOW:
       footbass_off();
-      footbass_on = !footbass_on;
-      //printf("toggled footbass -> %d\n", footbass_on);
+      footbass_low_on = !footbass_low_on;
+      return;
+
+    case TOGGLE_FOOTBASS_HIGH:
+      footbass_off();
+      footbass_high_on = !footbass_high_on;
+      return;
+
+    case TOGGLE_FOOTBASS_OCTAVE:
+      footbass_octave = !footbass_octave;
       return;
 
     case TOGGLE_DRUM_LOW:
@@ -725,29 +737,29 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     send_midi(mode, note_in, val, ENDPOINT_DRUM);
   }
 
-  if (footbass_on) {
-    if (note_in == MIDI_DRUM_LOW ||
-        note_in == MIDI_DRUM_HIGH) {
-      int* footbass_note =
-        (note_in == MIDI_DRUM_LOW) ? &footbass_low_note :
-                                     &footbass_high_note;
+  int* footbass_note;
+  if (footbass_low_on && note_in == MIDI_DRUM_LOW) {
+    footbass_note = &footbass_low_note;
+  } else if (footbass_high_on && note_in == MIDI_DRUM_HIGH) {
+    footbass_note = &footbass_high_note;
+  } else {
+    return;
+  }
+  
+  int note_out = active_note();
+  val = 100;
+  if (note_in == MIDI_DRUM_HIGH && footbass_octave) {
+    note_out += 12;
+    val -= 30;
+  }
 
-      int note_out = active_note();
-      val = 100;
-      if (note_in == MIDI_DRUM_HIGH) {
-        note_out += 12;
-        val -= 30;
-      }
-
-      if (*footbass_note != -1) {
-        send_midi(MIDI_OFF, *footbass_note, 0, ENDPOINT_FOOTBASS);
-        *footbass_note = -1;
-      }
-      if (mode == MIDI_ON) {
-        send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
-        *footbass_note = note_out;
-      }
-    }
+  if (*footbass_note != -1) {
+    send_midi(MIDI_OFF, *footbass_note, 0, ENDPOINT_FOOTBASS);
+    *footbass_note = -1;
+  }
+  if (mode == MIDI_ON) {
+    send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
+    *footbass_note = note_out;
   }
 }
 
@@ -857,10 +869,12 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d\n",
          (tilt_on ? "T" : " "),
          (jawharp_on ? "J" : " "),
-         (footbass_on ? "B" : " "),
+         (footbass_low_on ? "Bl" : "  "),
+         (footbass_high_on ? "Bh" : "  "),
+         (footbass_octave ? "Bo" : "  "),
          (drum_low_on ? "dL" : "  "),
          (drum_high_on ? "dH" : "  "),
          (drum_special_on ? "dS" : "  "),
