@@ -738,10 +738,13 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   int* footbass_note;
+  int* other_footbass_note;
   if (footbass_low_on && note_in == MIDI_DRUM_LOW) {
     footbass_note = &footbass_low_note;
+    other_footbass_note = &footbass_high_note;
   } else if (footbass_high_on && note_in == MIDI_DRUM_HIGH) {
     footbass_note = &footbass_high_note;
+    other_footbass_note = &footbass_low_note;
   } else {
     return;
   }
@@ -760,6 +763,11 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (mode == MIDI_ON) {
     send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
     *footbass_note = note_out;
+    if (*footbass_note == *other_footbass_note) {
+      // take ownership of this note, so the MIDI_OFF from the other bass
+      // doesn't end this note early.
+      *other_footbass_note = -1;
+    }
   }
 }
 
