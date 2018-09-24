@@ -244,6 +244,7 @@ int footbass_high_note = -1;
 int roll = MIDI_MAX / 2;
 int pitch = MIDI_MAX / 2;
 
+int breath = 0;
 
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
@@ -369,9 +370,6 @@ char active_note() {
   }
 
   int note = root_note + scale_degree(degree) - 12;
-  //printf("root: %d, position: %d, degree: %d, scale_degree: %d, note: %d\n",
-  //       root_note, position, degree, scale_degree(degree), note);
-
   return note;
 }
 
@@ -431,7 +429,6 @@ void choose_position() {
 
   if (best_position != position) {
     position = best_position;
-    //printf("chose position %d\n", position);
     update_bass();
   }
 }
@@ -583,7 +580,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     int new_root = (note_in - 2) % 12 + 26;
     if (new_root != root_note) {
       root_note = new_root;
-      //printf("selected %d\n", root_note);
       update_bass();
     }
   }
@@ -626,20 +622,17 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       return;
 
     case SELECT_ROOT:
-      //printf("selecting root\n");
       selecting_root = !selecting_root;
       return;
 
     case TOGGLE_TILT:
       tilt_on = !tilt_on;
-      //printf("toggled tilt -> %d\n", tilt_on);
       update_bass();
       return;
 
     case TOGGLE_JAWHARP:
       endpoint_notes_off(ENDPOINT_JAWHARP);
       jawharp_on = !jawharp_on;
-      //printf("toggled jawharp -> %d\n", jawharp_on);
       if (jawharp_on) {
         update_bass();
       } else {
@@ -663,17 +656,14 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
 
     case TOGGLE_DRUM_LOW:
       drum_low_on = !drum_low_on;
-      //printf("toggled drum_low -> %d\n", drum_low_on);
       return;
 
     case TOGGLE_DRUM_HIGH:
       drum_high_on = !drum_high_on;
-      //printf("toggled drum_high -> %d\n", drum_high_on);
       return;
 
     case TOGGLE_DRUM_SPECIAL:
       drum_special_on = !drum_special_on;
-      //printf("toggled drum_special -> %d\n", drum_special_on);
       return;
 
     case TOGGLE_PIANO:
@@ -685,7 +675,6 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case SELECT_DORIAN:
     case SELECT_MINOR:
       musical_mode = note_in - SELECT_MAJOR;
-      //printf("mode: %d\n", musical_mode);
       return;
     }
   }
@@ -697,7 +686,6 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (selecting_root) {
     selecting_root = false;
     root_note = note_out - (12*3);
-    //printf("selected %d", root_note);
     update_bass();
     // There will also be a corresponding MIDI_OFF but we don't care.
     return;
@@ -786,6 +774,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
+  breath = val;
+
   // pass other control change to all synths that care about it:
   //  - accordion
   //  - sax
@@ -798,17 +788,26 @@ void handle_cc(unsigned int cc, unsigned int val) {
         endpoint != ENDPOINT_JAWHARP) {
       continue;
     }
+    int use_val = val;
     if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
-      val += 18;
-    } else if (endpoint == ENDPOINT_JAWHARP) {
-      val += 8;
+      use_val += 18;
     }
 
-    if (val > MIDI_MAX) {
-      val = MIDI_MAX;
+    if (use_val > MIDI_MAX) {
+      use_val = MIDI_MAX;
+    }
+    if (endpoint == ENDPOINT_JAWHARP) {
+      if (breath == 0 &&
+          current_note[ENDPOINT_JAWHARP] != -1) {
+        send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
+                  ENDPOINT_JAWHARP);
+        current_note[ENDPOINT_JAWHARP] = -1;
+      } else if (breath > 20) {
+        update_bass();
+      }
     }
 
-    send_midi(MIDI_CC, CC_11, val, endpoint);
+    send_midi(MIDI_CC, CC_11, use_val, endpoint);
   }
 }
 
@@ -877,7 +876,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d\n",
          (tilt_on ? "T" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "Bl" : "  "),
@@ -895,7 +894,8 @@ void print_status() {
          note_str(active_note()),
          position,
          roll,
-         pitch);
+         pitch,
+         breath);
 }
 
 void read_midi(const MIDIPacketList *pktlist,
