@@ -797,7 +797,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
       use_val = MIDI_MAX;
     }
     if (endpoint == ENDPOINT_JAWHARP) {
-      if (breath == 0 &&
+      if (breath < 10 &&
           current_note[ENDPOINT_JAWHARP] != -1) {
         send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
                   ENDPOINT_JAWHARP);
@@ -1000,6 +1000,7 @@ void jml_setup() {
   if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
     connect_source(feet_controller, &midiport_feet_controller);
   }
+  // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
   }
