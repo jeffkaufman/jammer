@@ -599,6 +599,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       update_bass();
     }
   }
+  note_in += 12;  // using a patch that's confused about location
   if (piano_on || mode == MIDI_OFF) {
     send_midi(mode, note_in, val, ENDPOINT_KEYBOARD);
   }
@@ -782,10 +783,9 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
   
   int note_out = active_note();
-  //val = 100;
   if (note_in == MIDI_DRUM_HIGH && footbass_octave) {
     note_out += 12;
-    //val -= 30;
+    val -= 10;
   }
 
   if (*footbass_note != -1) {
