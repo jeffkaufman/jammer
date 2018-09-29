@@ -246,6 +246,22 @@ int pitch = MIDI_MAX / 2;
 
 int breath = 0;
 
+#define HISTORY_LENGTH 8
+int drum_left_history[HISTORY_LENGTH];
+int drum_right_history[HISTORY_LENGTH];
+int drum_left_pos = 0;
+int drum_right_pos = 0;
+int drum_left_sum = 0;
+int drum_right_sum = 0;
+
+void push_history(int val, int* drum_history, int* drum_pos, int* drum_sum) {
+  int adj_pos = (*drum_pos) % HISTORY_LENGTH;
+  *drum_sum -= drum_history[adj_pos];
+  *drum_sum += val;
+  drum_history[adj_pos] = val;
+  (*drum_pos)++;
+}
+
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
   //printf("sending %d %x:%d = %d\n",
@@ -717,12 +733,40 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
+int scale_drum(int val_sum) {
+  // highest value I can consistently get is 90, lowest is 27
+  // for now, just scale so highest value is 127, which means adding 127-90=37
+  int val = val_sum / HISTORY_LENGTH + 37;
+  return val > MIDI_MAX ? MIDI_MAX : val;
+}  
+
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (mode == MIDI_ON) {
+    char* lr;
+    if (note_in == MIDI_DRUM_LOW) {
+      push_history(val, drum_left_history, &drum_left_pos, &drum_left_sum);
+      val = scale_drum(drum_left_sum);
+      lr = "L";
+    } else {
+      push_history(val, drum_right_history, &drum_right_pos, &drum_right_sum);
+      val = scale_drum(drum_right_sum);
+      lr = "R";
+    }
+    //printf("%s %3d    L:%3d    R:%3d\n",
+    //       lr, val,
+    //       drum_left_sum / HISTORY_LENGTH,
+    //       drum_right_sum / HISTORY_LENGTH);
+  }
+
   if (mode == MIDI_OFF ||
       (drum_low_on && note_in == MIDI_DRUM_LOW) ||
       (drum_high_on && note_in == MIDI_DRUM_HIGH) ||
       (drum_special_on && note_in == MIDI_DRUM_SPECIAL)) {
-    send_midi(mode, note_in, val, ENDPOINT_DRUM);
+    int drum_val = val;
+    if (mode == MIDI_ON && note_in != MIDI_DRUM_LOW) {
+      drum_val -= 30;
+    }
+    send_midi(mode, note_in, drum_val, ENDPOINT_DRUM);
   }
 
   int* footbass_note;
@@ -738,10 +782,10 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
   
   int note_out = active_note();
-  val = 100;
+  //val = 100;
   if (note_in == MIDI_DRUM_HIGH && footbass_octave) {
     note_out += 12;
-    val -= 30;
+    //val -= 30;
   }
 
   if (*footbass_note != -1) {
@@ -876,7 +920,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
          (tilt_on ? "T" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "Bl" : "  "),
@@ -895,13 +939,16 @@ void print_status() {
          position,
          roll,
          pitch,
-         breath);
+         breath,
+         scale_drum(drum_left_sum),
+         scale_drum(drum_right_sum));
 }
 
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
   const MIDIPacket* packet = pktlist->packet;
+
   for (int i = 0; i < pktlist->numPackets; i++) {
     if (packet->length == 1) {
       // foot controller sends timing sync messages we don't care about
@@ -913,7 +960,9 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned int note_in = packet->data[1];
       unsigned int val = packet->data[2];
 
-      //printf("got packet %u %u %u\n", mode, note_in, val);
+      //if (val > 0) {
+      //  printf("got packet %u %u %u\n", mode, note_in, val);
+      //}
 
       //unsigned int channel = mode & 0x0F;
       mode = mode & 0xF0;
@@ -1008,7 +1057,14 @@ void jml_setup() {
   for (int i = 0; i < N_ENDPOINTS; i++) {
     current_note[i] = -1;
   }
-
+  
+  for (int i = 0 ; i < HISTORY_LENGTH; i++) {
+    drum_left_history[i] = 40;
+    drum_right_history[i] = 40;
+    drum_left_sum += 40;
+    drum_right_sum += 40;
+  }
+  
   create_source(&endpoints[ENDPOINT_ACCORDION], CFSTR("jammer-accordion"));
   create_source(&endpoints[ENDPOINT_SAX],       CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],  CFSTR("jammer-trombone"));
