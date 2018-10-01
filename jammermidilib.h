@@ -72,7 +72,6 @@
   - Toggle: Jaw harp toggle
   - Toggle: Drums - Low (Kick)
   - Toggle: Drums - High (Hihat etc)
-  - Toggle: Drums - Special (Snare etc)
   - Toggle: Footbass
   - Toggle: Tilt active
   - Buttons selector (includes all notes off for covered endpoints)
@@ -113,7 +112,6 @@ Which is:
  11 Fl  Footbass low (toggle)
  12 Dl  Drum Low (toggle)
  13 Dh  Drum High (toggle)
- 14 Ds  Drum Special (toggle)
 
  15 Mj  Major scale
  16 Dr  Dorian scale
@@ -153,7 +151,6 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_FOOTBASS_LOW    11
 #define TOGGLE_DRUM_LOW        12
 #define TOGGLE_DRUM_HIGH       13
-#define TOGGLE_DRUM_SPECIAL    14
 
 #define SELECT_MAJOR           15
 #define SELECT_MIXOLYDIAN      16
@@ -172,9 +169,10 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_KEYBOARD 3
 #define ENDPOINT_LEAD 4
 #define N_BUTTON_ENDPOINTS (ENDPOINT_LEAD + 1)
-#define ENDPOINT_DRUM 5
-#define ENDPOINT_FOOTBASS 6
-#define ENDPOINT_JAWHARP 7
+#define ENDPOINT_DRUM_LOW 5
+#define ENDPOINT_DRUM_HIGH 6
+#define ENDPOINT_FOOTBASS 7
+#define ENDPOINT_JAWHARP 8
 #define N_ENDPOINTS (ENDPOINT_JAWHARP+1)
 
 /* modes */
@@ -198,7 +196,6 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define MIDI_DRUM_LOW 36  // Acoustic Bass Drum
 #define MIDI_DRUM_HIGH 42  // Closed Hi-Hat
-#define MIDI_DRUM_SPECIAL 59  // Crash Cymbal 1
 
 #define MIDI_MAX 127
 
@@ -219,7 +216,6 @@ bool footbass_high_on = false;
 bool footbass_octave = true;
 bool drum_low_on = false;
 bool drum_high_on = false;
-bool drum_special_on = false;
 bool piano_on = false;
 
 int button_endpoint = ENDPOINT_ACCORDION;
@@ -679,10 +675,6 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       drum_high_on = !drum_high_on;
       return;
 
-    case TOGGLE_DRUM_SPECIAL:
-      drum_special_on = !drum_special_on;
-      return;
-
     case TOGGLE_PIANO:
       piano_on = !piano_on;
       return;
@@ -742,9 +734,13 @@ int scale_drum(int val_sum) {
 }  
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
-  if (mode == MIDI_ON) {
+  bool is_low = note_in == MIDI_DRUM_LOW;
+  bool is_midi_on = mode == MIDI_ON;
+  int drum_endpoint = is_low ? ENDPOINT_DRUM_LOW : ENDPOINT_DRUM_HIGH;
+
+  if (is_midi_on) {
     char* lr;
-    if (note_in == MIDI_DRUM_LOW) {
+    if (is_low) {
       push_history(val, drum_left_history, &drum_left_pos, &drum_left_sum);
       val = scale_drum(drum_left_sum);
       lr = "L";
@@ -753,29 +749,23 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
       val = scale_drum(drum_right_sum);
       lr = "R";
     }
-    //printf("%s %3d    L:%3d    R:%3d\n",
-    //       lr, val,
-    //       drum_left_sum / HISTORY_LENGTH,
-    //       drum_right_sum / HISTORY_LENGTH);
   }
 
-  if (mode == MIDI_OFF ||
-      (drum_low_on && note_in == MIDI_DRUM_LOW) ||
-      (drum_high_on && note_in == MIDI_DRUM_HIGH) ||
-      (drum_special_on && note_in == MIDI_DRUM_SPECIAL)) {
+  if (!is_midi_on ||
+      is_low ? drum_low_on : drum_high_on) {
     int drum_val = val;
-    if (mode == MIDI_ON && note_in != MIDI_DRUM_LOW) {
+    if (mode == MIDI_ON && !is_low) {
       drum_val -= 30;
     }
-    send_midi(mode, note_in, drum_val, ENDPOINT_DRUM);
+    send_midi(mode, note_in, drum_val, drum_endpoint);
   }
 
   int* footbass_note;
   int* other_footbass_note;
-  if (footbass_low_on && note_in == MIDI_DRUM_LOW) {
+  if (footbass_low_on && is_low) {
     footbass_note = &footbass_low_note;
     other_footbass_note = &footbass_high_note;
-  } else if (footbass_high_on && note_in == MIDI_DRUM_HIGH) {
+  } else if (footbass_high_on && !is_low) {
     footbass_note = &footbass_high_note;
     other_footbass_note = &footbass_low_note;
   } else {
@@ -783,7 +773,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
   
   int note_out = active_note();
-  if (note_in == MIDI_DRUM_HIGH && footbass_octave) {
+  if (!is_low && footbass_octave) {
     note_out += 12;
     val -= 10;
   }
@@ -920,7 +910,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
          (tilt_on ? "T" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "Bl" : "  "),
@@ -928,7 +918,6 @@ void print_status() {
          (footbass_octave ? "Bo" : "  "),
          (drum_low_on ? "dL" : "  "),
          (drum_high_on ? "dH" : "  "),
-         (drum_special_on ? "dS" : "  "),
          (piano_on ? "P" : " "),
          (radio_buttons ? "R" : " "),
          (selecting_root ? "RS" : "  "),
@@ -1071,7 +1060,8 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_KEYBOARD],  CFSTR("jammer-keyboard"));
   create_source(&endpoints[ENDPOINT_LEAD],      CFSTR("jammer-lead"));
   create_source(&endpoints[ENDPOINT_FOOTBASS],  CFSTR("jammer-footbass"));
-  create_source(&endpoints[ENDPOINT_DRUM],       CFSTR("jammer-drum"));
+  create_source(&endpoints[ENDPOINT_DRUM_LOW],  CFSTR("jammer-drum-low"));
+  create_source(&endpoints[ENDPOINT_DRUM_HIGH], CFSTR("jammer-drum-high"));
   create_source(&endpoints[ENDPOINT_JAWHARP],   CFSTR("jammer-jawharp"));
 }
 
