@@ -153,9 +153,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_DRUM_HIGH       13
 
 #define SELECT_MAJOR           15
-#define SELECT_MIXOLYDIAN      16
-#define SELECT_DORIAN          17
-#define SELECT_MINOR           18
+#define SELECT_MINOR           16
 #define TOGGLE_PIANO           19
 #define TOGGLE_FOOTBASS_HIGH   20
 #define TOGGLE_FOOTBASS_OCTAVE 21
@@ -176,12 +174,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define N_ENDPOINTS (ENDPOINT_JAWHARP+1)
 
 /* modes */
-// These need to be in the same order as the selectors, and start from zero.
 #define MODE_MAJOR 0
-#define MODE_MIXO 1
-#define MODE_DORIAN 2
-#define MODE_MINOR 3
-#define N_MODES (MODE_MINOR+1)
+#define MODE_MINOR 1
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -314,12 +308,7 @@ int  scale_degree(int degree) {
     delta = 2;
     break;
   case 3:
-    if (musical_mode == MODE_MAJOR ||
-        musical_mode == MODE_MIXO) {
-      delta = 4;
-    } else {
-      delta = 3;
-    }
+    delta = (musical_mode == MODE_MAJOR ? 4 : 3);
     break;
   case 4:
     delta = 5;
@@ -328,7 +317,7 @@ int  scale_degree(int degree) {
     delta = 7;
     break;
   case 6:
-    delta = musical_mode == MODE_MINOR ? 8 : 9;
+    delta = (musical_mode == MODE_MAJOR ? 9 : 8);
     break;
   case 7:
     delta = (musical_mode == MODE_MAJOR ? 11 : 10);
@@ -680,10 +669,11 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       return;
 
     case SELECT_MAJOR:
-    case SELECT_MIXOLYDIAN:
-    case SELECT_DORIAN:
+      musical_mode = MODE_MAJOR;
+      return;
+
     case SELECT_MINOR:
-      musical_mode = note_in - SELECT_MAJOR;
+      musical_mode = MODE_MINOR;
       return;
     }
   }
@@ -867,10 +857,6 @@ const char* musical_mode_str() {
   switch (musical_mode) {
   case MODE_MAJOR:
     return "MJ";
-  case MODE_MIXO:
-    return "MX";
-  case MODE_DORIAN:
-    return "DR";
   case MODE_MINOR:
     return "MN";
   default:
