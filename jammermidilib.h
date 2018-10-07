@@ -729,9 +729,13 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 int scale_drum(int val_sum) {
-  // highest value I can consistently get is 90, lowest is 27
-  // for now, just scale so highest value is 127, which means adding 127-90=37
-  int val = val_sum / HISTORY_LENGTH + 37;
+  // The highest value I can consistently get is 90, lowest is 27.  Map that
+  // onto 27 through 127 which is a range of 100.
+  float val = val_sum * 1.0 / HISTORY_LENGTH; // 27 - 90
+  val -= 27; // 0 - 63
+  val *= (100.0 / 63.0);  // 0 - 100
+  val += 27; // 27 - 127
+
   return val > MIDI_MAX ? MIDI_MAX : val;
 }  
 
@@ -756,9 +760,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (!is_midi_on ||
       is_low ? drum_low_on : drum_high_on) {
     int drum_val = val;
-    if (mode == MIDI_ON && !is_low) {
-      drum_val -= 30;
-    }
     send_midi(mode, note_in, drum_val, drum_endpoint);
   }
 
