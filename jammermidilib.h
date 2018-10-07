@@ -44,7 +44,7 @@
     note: tilt
     attack: pedal velocity
 
- 6. Keyboard
+ 6. Piano
 
     intensity: none
     note: buttons
@@ -79,7 +79,7 @@
     - Accordion radio
     - Sax
     - Trombone
-    - Keyboard
+    - Piano
     - Lead
   - Root note (key) selector
     - where is Footbass / Jaw Harp based?
@@ -103,7 +103,7 @@ Which is:
   3 Ar  Accordion Radio
   4 S   Sax
   5 T   Trombone
-  6 K   Keyboard
+  6 K   Piano
   7 L   Lead
 
   8 Rs  Root select
@@ -142,7 +142,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define SELECT_ACCORDION_R      3
 #define SELECT_SAX              4
 #define SELECT_TROMBONE         5
-#define SELECT_KEYBOARD         6
+#define SELECT_PIANO            6
 #define SELECT_LEAD             7
 
 #define SELECT_ROOT             8
@@ -154,6 +154,7 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define SELECT_MAJOR           15
 #define SELECT_MINOR           16
+#define TOGGLE_SYNTH           18
 #define TOGGLE_PIANO           19
 #define TOGGLE_FOOTBASS_HIGH   20
 #define TOGGLE_FOOTBASS_OCTAVE 21
@@ -164,14 +165,15 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_ACCORDION 0
 #define ENDPOINT_SAX 1
 #define ENDPOINT_TROMBONE 2
-#define ENDPOINT_KEYBOARD 3
+#define ENDPOINT_PIANO 3
 #define ENDPOINT_LEAD 4
 #define N_BUTTON_ENDPOINTS (ENDPOINT_LEAD + 1)
 #define ENDPOINT_DRUM_LOW 5
 #define ENDPOINT_DRUM_HIGH 6
 #define ENDPOINT_FOOTBASS 7
 #define ENDPOINT_JAWHARP 8
-#define N_ENDPOINTS (ENDPOINT_JAWHARP+1)
+#define ENDPOINT_SYNTH 9
+#define N_ENDPOINTS (ENDPOINT_SYNTH+1)
 
 /* modes */
 #define MODE_MAJOR 0
@@ -183,6 +185,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define MIDI_CC 0xb0
 
 #define CC_BREATH 0x02
+#define CC_07 0x07
 #define CC_11 0x0b
 
 #define CC_ROLL 30
@@ -205,6 +208,7 @@ MIDIPortRef midiport_piano;
 
 bool tilt_on = false;
 bool jawharp_on = false;
+bool synth_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
 bool footbass_octave = true;
@@ -393,7 +397,7 @@ void jawharp_off() {
 }
 
 void update_bass() {
-  if (jawharp_on) {
+  if (jawharp_on && !synth_on) {
     int note_out = active_note();
     if (current_note[ENDPOINT_JAWHARP] == note_out) {
       return;
@@ -584,9 +588,12 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       update_bass();
     }
   }
-  note_in += 12;  // using a patch that's confused about location
   if (piano_on || mode == MIDI_OFF) {
-    send_midi(mode, note_in, val, ENDPOINT_KEYBOARD);
+    int piano_note = note_in + 12;  // using a patch that's confused about location
+    send_midi(mode, piano_note, val, ENDPOINT_PIANO);
+  }
+  if (synth_on || mode == MIDI_OFF) {
+    send_midi(mode, note_in, val, ENDPOINT_SYNTH);
   }
 }
 
@@ -602,7 +609,7 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case SELECT_ACCORDION_R:
     case SELECT_SAX:
     case SELECT_TROMBONE:
-    case SELECT_KEYBOARD:
+    case SELECT_PIANO:
     case SELECT_LEAD:
       all_notes_off(N_BUTTON_ENDPOINTS);
 
@@ -616,8 +623,8 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
         button_endpoint = ENDPOINT_SAX;
       } else if (note_in == SELECT_TROMBONE) {
         button_endpoint = ENDPOINT_TROMBONE;
-      } else if (note_in == SELECT_KEYBOARD) {
-        button_endpoint = ENDPOINT_KEYBOARD;
+      } else if (note_in == SELECT_PIANO) {
+        button_endpoint = ENDPOINT_PIANO;
       } else if (note_in == SELECT_LEAD) {
         button_endpoint = ENDPOINT_LEAD;
       }
@@ -630,6 +637,11 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case TOGGLE_TILT:
       tilt_on = !tilt_on;
       update_bass();
+      return;
+
+    case TOGGLE_SYNTH:
+      endpoint_notes_off(ENDPOINT_SYNTH);
+      synth_on = !synth_on;
       return;
 
     case TOGGLE_JAWHARP:
@@ -801,20 +813,19 @@ void handle_cc(unsigned int cc, unsigned int val) {
   breath = val;
 
   // pass other control change to all synths that care about it:
-  //  - accordion
-  //  - sax
-  //  - trombone
-  //  - jawharp
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     if (endpoint != ENDPOINT_ACCORDION &&
         endpoint != ENDPOINT_SAX &&
         endpoint != ENDPOINT_TROMBONE &&
-        endpoint != ENDPOINT_JAWHARP) {
+        endpoint != ENDPOINT_JAWHARP &&
+        endpoint != ENDPOINT_SYNTH) {
       continue;
     }
     int use_val = val;
     if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
       use_val += 18;
+    } else if (endpoint == ENDPOINT_SYNTH) {
+      use_val = 63 + (jawharp_on ? breath / 2 : 0);
     }
 
     if (use_val > MIDI_MAX) {
@@ -830,8 +841,9 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
-
-    send_midi(MIDI_CC, CC_11, use_val, endpoint);
+    send_midi(MIDI_CC,
+              endpoint == ENDPOINT_SYNTH ? CC_07 : CC_11,
+              use_val, endpoint);
   }
 }
 
@@ -844,7 +856,7 @@ const char* button_endpoint_str() {
     break;
   case ENDPOINT_TROMBONE:
     return "trm";
-  case ENDPOINT_KEYBOARD:
+  case ENDPOINT_PIANO:
     return "key";
   case ENDPOINT_LEAD:
     return "lea";
@@ -896,7 +908,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
          (tilt_on ? "T" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "Bl" : "  "),
@@ -905,6 +917,7 @@ void print_status() {
          (drum_low_on ? "dL" : "  "),
          (drum_high_on ? "dH" : "  "),
          (piano_on ? "P" : " "),
+         (synth_on ? "S" : " "),
          (radio_buttons ? "R" : " "),
          (selecting_root ? "RS" : "  "),
          button_endpoint_str(),
@@ -1043,12 +1056,13 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_ACCORDION], CFSTR("jammer-accordion"));
   create_source(&endpoints[ENDPOINT_SAX],       CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],  CFSTR("jammer-trombone"));
-  create_source(&endpoints[ENDPOINT_KEYBOARD],  CFSTR("jammer-keyboard"));
+  create_source(&endpoints[ENDPOINT_PIANO],     CFSTR("jammer-piano"));
   create_source(&endpoints[ENDPOINT_LEAD],      CFSTR("jammer-lead"));
   create_source(&endpoints[ENDPOINT_FOOTBASS],  CFSTR("jammer-footbass"));
   create_source(&endpoints[ENDPOINT_DRUM_LOW],  CFSTR("jammer-drum-low"));
   create_source(&endpoints[ENDPOINT_DRUM_HIGH], CFSTR("jammer-drum-high"));
   create_source(&endpoints[ENDPOINT_JAWHARP],   CFSTR("jammer-jawharp"));
+  create_source(&endpoints[ENDPOINT_SYNTH],     CFSTR("jammer-synth"));
 }
 
 #endif
