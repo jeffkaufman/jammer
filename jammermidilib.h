@@ -904,12 +904,12 @@ const char* note_str(int note) {
 
 void print_status() {
   printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
-         (tilt_on ? "T" : " "),
+         (tilt_on ? "t" : " "),
          (jawharp_on ? "J" : " "),
-         (footbass_low_on ? "Bl" : "  "),
-         (footbass_high_on ? "Bh" : "  "),
-         (drum_low_on ? "dL" : "  "),
-         (drum_high_on ? "dH" : "  "),
+         (footbass_low_on ? "f" : " "),
+         (footbass_high_on ? "fh" : "  "),
+         (drum_low_on ? "dl" : "  "),
+         (drum_high_on ? "dh" : "  "),
          (piano_on ? "P" : " "),
          (synth_on ? "S" : " "),
          (radio_buttons ? "R" : " "),
