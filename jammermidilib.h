@@ -92,8 +92,8 @@
 
 This looks like:
 
-  Mj   Mx   Dr   Mn   P   Fh   Fo
-     Rs   Tl   J    Fl  Dl   Dh   Ds
+  ▲    -               P   Fh   Bw
+     Rs   Tl   J    Fl  Dl   Dh
   O    A    Ar   S    T    K    L
 
 Which is:
@@ -112,14 +112,15 @@ Which is:
  11 Fl  Footbass low (toggle)
  12 Dl  Drum Low (toggle)
  13 Dh  Drum High (toggle)
+ 14
 
- 15 Mj  Major scale
- 16 Dr  Dorian scale
- 17 Mx  Mixolydian scale
- 18 Mn  Minor scale
+ 15 ▲   Major scale
+ 16 -   Minor scale
+ 17
+ 18
  19 P   Piano (toggle)
  20 Fh  Footbass high (toggle)
- 21 Fh  Footbass high octave (toggle)
+ 21 bw  Bass wind (toggle)
 
  */
 
@@ -157,8 +158,9 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_SYNTH           18
 #define TOGGLE_PIANO           19
 #define TOGGLE_FOOTBASS_HIGH   20
+#define TOGGLE_BASS_WIND       21
 
-#define N_CONTROLS (TOGGLE_FOOTBASS_HIGH+1)
+#define N_CONTROLS (TOGGLE_BASS_WIND+1)
 
 /* endpoints */
 #define ENDPOINT_ACCORDION 0
@@ -172,7 +174,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_FOOTBASS 7
 #define ENDPOINT_JAWHARP 8
 #define ENDPOINT_SYNTH 9
-#define N_ENDPOINTS (ENDPOINT_SYNTH+1)
+#define ENDPOINT_BASS_WIND 10
+#define N_ENDPOINTS (ENDPOINT_BASS_WIND+1)
 
 /* modes */
 #define MODE_MAJOR 0
@@ -210,6 +213,7 @@ bool jawharp_on = false;
 bool synth_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
+bool bass_wind_on = false;
 bool drum_low_on = false;
 bool drum_high_on = false;
 bool piano_on = false;
@@ -579,14 +583,22 @@ void all_notes_off(int max_endpoint) {
 }
 
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
-  if (mode == MIDI_ON && note_in < 51) {
+  bool is_bass = note_in < 51;
+
+  if (mode == MIDI_ON && is_bass) {
     int new_root = (note_in - 2) % 12 + 26;
     if (new_root != root_note) {
       root_note = new_root;
       update_bass();
     }
   }
-  if (piano_on || mode == MIDI_OFF) {
+  bool bass_claimed = false;
+  if ((bass_wind_on && is_bass) || mode == MIDI_OFF) {
+    bass_claimed = true;
+    int bass_note = note_in + 24; // intentionally shifting this left on the keyboard
+    send_midi(mode, bass_note, val, ENDPOINT_BASS_WIND);
+  }
+  if ((piano_on && !bass_claimed) || mode == MIDI_OFF) {
     int piano_note = note_in + 12;  // using a patch that's confused about location
     send_midi(mode, piano_note, val, ENDPOINT_PIANO);
   }
@@ -662,6 +674,10 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       footbass_high_on = !footbass_high_on;
       return;
 
+    case TOGGLE_BASS_WIND:
+      bass_wind_on = !bass_wind_on;
+      return;
+
     case TOGGLE_DRUM_LOW:
       drum_low_on = !drum_low_on;
       return;
@@ -731,7 +747,7 @@ int scale_drum(int val_sum) {
   val += 27; // 27 - 127
 
   return val > MIDI_MAX ? MIDI_MAX : val;
-}  
+}
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_low = note_in == MIDI_DRUM_LOW;
@@ -768,7 +784,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   } else {
     return;
   }
-  
+
   int note_out = active_note();
   if (!is_low) {
     note_out += 12;
@@ -813,7 +829,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
         endpoint != ENDPOINT_SAX &&
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
-        endpoint != ENDPOINT_SYNTH) {
+        endpoint != ENDPOINT_SYNTH &&
+        endpoint != ENDPOINT_BASS_WIND) {
       continue;
     }
     int use_val = val;
@@ -903,7 +920,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
          (tilt_on ? "t" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
@@ -912,6 +929,7 @@ void print_status() {
          (drum_high_on ? "dh" : "  "),
          (piano_on ? "P" : " "),
          (synth_on ? "S" : " "),
+         (bass_wind_on ? "bw" : "  "),
          (radio_buttons ? "R" : " "),
          (selecting_root ? "RS" : "  "),
          button_endpoint_str(),
@@ -1039,14 +1057,14 @@ void jml_setup() {
   for (int i = 0; i < N_ENDPOINTS; i++) {
     current_note[i] = -1;
   }
-  
+
   for (int i = 0 ; i < HISTORY_LENGTH; i++) {
     drum_left_history[i] = 40;
     drum_right_history[i] = 40;
     drum_left_sum += 40;
     drum_right_sum += 40;
   }
-  
+
   create_source(&endpoints[ENDPOINT_ACCORDION], CFSTR("jammer-accordion"));
   create_source(&endpoints[ENDPOINT_SAX],       CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],  CFSTR("jammer-trombone"));
@@ -1057,6 +1075,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_DRUM_HIGH], CFSTR("jammer-drum-high"));
   create_source(&endpoints[ENDPOINT_JAWHARP],   CFSTR("jammer-jawharp"));
   create_source(&endpoints[ENDPOINT_SYNTH],     CFSTR("jammer-synth"));
+  create_source(&endpoints[ENDPOINT_BASS_WIND], CFSTR("jammer-bass-wind"));
 }
 
 #endif
