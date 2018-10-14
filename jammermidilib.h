@@ -863,11 +863,11 @@ const char* button_endpoint_str() {
 const char* musical_mode_str() {
   switch (musical_mode) {
   case MODE_MAJOR:
-    return "MJ";
+    return "\u25B2";
   case MODE_MINOR:
-    return "MN";
+    return "-";
   default:
-    return "??";
+    return "?";
   }
 }
 
