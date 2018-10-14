@@ -157,9 +157,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_SYNTH           18
 #define TOGGLE_PIANO           19
 #define TOGGLE_FOOTBASS_HIGH   20
-#define TOGGLE_FOOTBASS_OCTAVE 21
 
-#define N_CONTROLS (TOGGLE_FOOTBASS_OCTAVE+1)
+#define N_CONTROLS (TOGGLE_FOOTBASS_HIGH+1)
 
 /* endpoints */
 #define ENDPOINT_ACCORDION 0
@@ -211,7 +210,6 @@ bool jawharp_on = false;
 bool synth_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
-bool footbass_octave = true;
 bool drum_low_on = false;
 bool drum_high_on = false;
 bool piano_on = false;
@@ -664,10 +662,6 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       footbass_high_on = !footbass_high_on;
       return;
 
-    case TOGGLE_FOOTBASS_OCTAVE:
-      footbass_octave = !footbass_octave;
-      return;
-
     case TOGGLE_DRUM_LOW:
       drum_low_on = !drum_low_on;
       return;
@@ -776,7 +770,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
   
   int note_out = active_note();
-  if (!is_low && footbass_octave) {
+  if (!is_low) {
     note_out += 12;
     val -= 10;
   }
@@ -909,12 +903,11 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
          (tilt_on ? "T" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "Bl" : "  "),
          (footbass_high_on ? "Bh" : "  "),
-         (footbass_octave ? "Bo" : "  "),
          (drum_low_on ? "dL" : "  "),
          (drum_high_on ? "dH" : "  "),
          (piano_on ? "P" : " "),
