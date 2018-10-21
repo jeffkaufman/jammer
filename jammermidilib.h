@@ -1,6 +1,8 @@
 #ifndef JAMMER_MIDI_LIB_H
 #define JAMMER_MIDI_LIB_H
 
+#include <sys/socket.h>
+#include <arpa/inet.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/MIDIServices.h>
 #include <CoreAudio/HostTime.h>
@@ -197,6 +199,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define MIDI_DRUM_HIGH 42  // Closed Hi-Hat
 
 #define MIDI_MAX 127
+
+#define LIGHT_UDP_PORT 23512
 
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
@@ -607,6 +611,133 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
+#define LIGHT_PIANO 0
+#define LIGHT_JAWHARP 1
+#define LIGHT_BASS_WIND 2
+#define LIGHT_FOOT_LOW 3
+#define LIGHT_FOOT_HIGH 4
+#define LIGHT_BUTTONS 5
+#define N_LIGHTS 8
+
+#define COLOR_QUANTUM 10
+#define COLOR_OFF (struct Color){0, 0, 0}
+#define COLOR_RED (struct Color){COLOR_QUANTUM, 0, 0}
+#define COLOR_BLUE (struct Color){0, 0, COLOR_QUANTUM}
+#define COLOR_GREEN (struct Color){0, COLOR_QUANTUM, 0}
+#define COLOR_PURPLE (struct Color){COLOR_QUANTUM, 0, COLOR_QUANTUM}
+#define COLOR_YELLOW (struct Color){COLOR_QUANTUM, COLOR_QUANTUM, 0}
+#define COLOR_WHITE (struct Color){COLOR_QUANTUM, COLOR_QUANTUM, COLOR_QUANTUM}
+#define COLOR_LOW (struct Color){1, 1, 1}
+
+#define COLOR_PIANO COLOR_WHITE
+#define COLOR_JAWHARP COLOR_GREEN
+#define COLOR_BASS_WIND COLOR_YELLOW
+#define COLOR_DRUM COLOR_BLUE
+#define COLOR_DRUM COLOR_BLUE
+#define COLOR_FOOTBASS COLOR_RED
+#define COLOR_FOOTBASS_DRUM COLOR_PURPLE
+
+
+struct Color {
+  unsigned char r, g, b;
+};
+
+void set_light(unsigned char index, struct Color color) {
+  // See https://github.com/jeffkaufman/blinksticknet
+  if (!LIGHT_UDP_PORT) return;
+
+  unsigned char buf[4];
+  buf[0] = index;
+  buf[1] = color.r;
+  buf[2] = color.g;
+  buf[3] = color.b;
+
+  int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0) {
+    perror("couldn't create udp socket");
+    return;  // ignore failure
+  }
+
+  struct sockaddr_in  address;
+  memset(&address, 0, sizeof(address));
+
+  // Filling server information
+  address.sin_family = AF_INET;
+  address.sin_port = htons(LIGHT_UDP_PORT);
+  address.sin_addr.s_addr = INADDR_ANY;
+
+  sendto(fd, buf, sizeof(buf), /*flags=*/0,
+         (const struct sockaddr*)&address, sizeof(address));
+}
+
+void update_lights(int control) {
+  unsigned char index = 0;
+  struct Color color = {0, 0, 0};
+
+  bool low = (control == TOGGLE_FOOTBASS_LOW ||
+              control == TOGGLE_DRUM_LOW);
+  int footbass_on = low ? footbass_low_on : footbass_high_on;
+  int drum_on = low ? drum_low_on : drum_high_on;
+
+  switch (control) {
+  case SELECT_ACCORDION:
+    index = LIGHT_BUTTONS;
+    color = COLOR_BLUE;
+    break;
+  case SELECT_ACCORDION_R:
+    index = LIGHT_BUTTONS;
+    color = COLOR_PURPLE;
+    break;
+  case SELECT_SAX:
+    index = LIGHT_BUTTONS;
+    color = COLOR_RED;
+    break;
+  case SELECT_TROMBONE:
+    index = LIGHT_BUTTONS;
+    color = COLOR_YELLOW;
+    break;
+  case SELECT_PIANO:
+    index = LIGHT_BUTTONS;
+    color = COLOR_GREEN;
+    break;
+  case SELECT_LEAD:
+    index = LIGHT_BUTTONS;
+    color = COLOR_WHITE;
+    break;
+
+  case TOGGLE_JAWHARP:
+    index = LIGHT_JAWHARP;
+    color = jawharp_on ? COLOR_JAWHARP : COLOR_OFF;
+    break;
+  case TOGGLE_BASS_WIND:
+    index = LIGHT_BASS_WIND;
+    color = bass_wind_on ? COLOR_BASS_WIND : COLOR_OFF;
+    break;
+  case TOGGLE_PIANO:
+    index = LIGHT_PIANO;
+    color = piano_on ? COLOR_PIANO : COLOR_OFF;
+    break;
+  case TOGGLE_FOOTBASS_LOW:
+  case TOGGLE_DRUM_LOW:
+  case TOGGLE_FOOTBASS_HIGH:
+  case TOGGLE_DRUM_HIGH:
+    index = low ? LIGHT_FOOT_LOW : LIGHT_FOOT_HIGH;
+    if (footbass_on && drum_on) {
+      color = COLOR_FOOTBASS_DRUM;
+    } else if (footbass_on) {
+      color = COLOR_FOOTBASS;
+    } else if (drum_on) {
+      color = COLOR_DRUM;
+    } else {
+      color = COLOR_OFF;
+    }
+    break;
+  default:
+    return;
+  }
+  set_light(index, color);
+}
+
 void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (mode == MIDI_ON) {
     switch (note_in) {
@@ -976,6 +1107,7 @@ void read_midi(const MIDIPacketList *pktlist,
       } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in < N_CONTROLS) {
           handle_control(mode, note_in, val);
+          update_lights(note_in);
         } else {
           handle_button(mode, note_in, val);
         }
@@ -1022,6 +1154,13 @@ void create_source(MIDIEndpointRef* endpoint_ref, CFStringRef name) {
 }
 
 void jml_setup() {
+  for (int i = 0; i < N_LIGHTS; i++) {
+    set_light(i, COLOR_WHITE);
+  }
+  for (int i = 0; i < N_LIGHTS; i++) {
+    set_light(i, COLOR_OFF);
+  }
+
   attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
