@@ -114,7 +114,7 @@ Which is:
  11 Fl  Footbass low (toggle)
  12 Dl  Drum Low (toggle)
  13 Dh  Drum High (toggle)
- 14
+ 14 bT  Bass Trombone (toggle)
 
  15 ▲   Major scale
  16 -   Minor scale
@@ -154,6 +154,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_FOOTBASS_LOW    11
 #define TOGGLE_DRUM_LOW        12
 #define TOGGLE_DRUM_HIGH       13
+#define TOGGLE_BASS_TROMBONE   14
 
 #define SELECT_MAJOR           15
 #define SELECT_MINOR           16
@@ -214,6 +215,7 @@ MIDIPortRef midiport_piano;
 
 bool tilt_on = false;
 bool jawharp_on = false;
+bool bass_trombone_on = false;
 bool synth_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
@@ -402,16 +404,26 @@ void jawharp_off() {
   }
 }
 
-void update_bass() {
-  if (jawharp_on && !synth_on) {
-    int note_out = active_note();
-    if (current_note[ENDPOINT_JAWHARP] == note_out) {
-      return;
-    }
+void bass_trombone_off() {
+  if (current_note[ENDPOINT_TROMBONE] != -1) {
+    send_midi(MIDI_OFF, current_note[ENDPOINT_TROMBONE], 0, ENDPOINT_TROMBONE);
+    current_note[ENDPOINT_TROMBONE] = -1;
+  }
+}
 
-    jawharp_off();
-    send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
-    current_note[ENDPOINT_JAWHARP] = note_out;
+void update_bass() {
+  if ((jawharp_on || bass_trombone_on) && !synth_on) {
+    int note_out = active_note();
+    if (current_note[ENDPOINT_JAWHARP] != note_out) {
+      jawharp_off();
+      send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
+      current_note[ENDPOINT_JAWHARP] = note_out;
+    }
+    if (current_note[ENDPOINT_TROMBONE] != note_out) {
+      bass_trombone_off();
+      send_midi(MIDI_ON, note_out, 100, ENDPOINT_TROMBONE);
+      current_note[ENDPOINT_TROMBONE] = note_out;
+    }
   }
 }
 
@@ -617,6 +629,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 #define LIGHT_FOOT_LOW 3
 #define LIGHT_FOOT_HIGH 4
 #define LIGHT_BUTTONS 5
+#define LIGHT_BASS_TROMBONE 6
 #define N_LIGHTS 8
 
 #define COLOR_QUANTUM 10
@@ -631,6 +644,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 
 #define COLOR_PIANO COLOR_WHITE
 #define COLOR_JAWHARP COLOR_GREEN
+#define COLOR_BASS_TROMBONE COLOR_YELLOW
 #define COLOR_BASS_WIND COLOR_YELLOW
 #define COLOR_DRUM COLOR_BLUE
 #define COLOR_DRUM COLOR_BLUE
@@ -691,10 +705,13 @@ void update_lights(int control) {
     index = LIGHT_BUTTONS;
     color = COLOR_WHITE;
     break;
-
   case TOGGLE_JAWHARP:
     index = LIGHT_JAWHARP;
     color = jawharp_on ? COLOR_JAWHARP : COLOR_OFF;
+    break;
+  case TOGGLE_BASS_TROMBONE:
+    index = LIGHT_BASS_TROMBONE;
+    color = bass_trombone_on ? COLOR_BASS_TROMBONE : COLOR_OFF;
     break;
   case TOGGLE_BASS_WIND:
     index = LIGHT_BASS_WIND;
@@ -779,6 +796,16 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
         update_bass();
       } else {
         jawharp_off();
+      }
+      return;
+
+    case TOGGLE_BASS_TROMBONE:
+      endpoint_notes_off(ENDPOINT_TROMBONE);
+      bass_trombone_on = !bass_trombone_on;
+      if (bass_trombone_on) {
+        update_bass();
+      } else {
+        bass_trombone_off();
       }
       return;
 
@@ -971,6 +998,16 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
+    if (bass_trombone_on && endpoint == ENDPOINT_TROMBONE) {
+      if (breath < 10 &&
+          current_note[ENDPOINT_TROMBONE] != -1) {
+        send_midi(MIDI_OFF, current_note[ENDPOINT_TROMBONE], 0,
+                  ENDPOINT_TROMBONE);
+        current_note[ENDPOINT_TROMBONE] = -1;
+      } else if (breath > 20) {
+        update_bass();
+      }
+    }
     send_midi(MIDI_CC,
               endpoint == ENDPOINT_SYNTH ? CC_07 : CC_11,
               use_val, endpoint);
@@ -1038,7 +1075,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
          (tilt_on ? "t" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
@@ -1048,6 +1085,7 @@ void print_status() {
          (piano_on ? "P" : " "),
          (synth_on ? "S" : " "),
          (bass_wind_on ? "bw" : "  "),
+         (bass_trombone_on ? "bT" : "  "),
          (radio_buttons ? "R" : " "),
          (selecting_root ? "RS" : "  "),
          button_endpoint_str(),
