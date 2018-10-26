@@ -642,32 +642,19 @@ struct Color {
   unsigned char r, g, b;
 };
 
+unsigned char light_buf[4];
+int light_fd = -1;
+
 void set_light(unsigned char index, struct Color color) {
   // See https://github.com/jeffkaufman/blinksticknet
-  if (!LIGHT_UDP_PORT) return;
+  if (!LIGHT_UDP_PORT || light_fd < 0) return;
 
-  unsigned char buf[4];
-  buf[0] = index;
-  buf[1] = color.r;
-  buf[2] = color.g;
-  buf[3] = color.b;
+  light_buf[0] = index;
+  light_buf[1] = color.r;
+  light_buf[2] = color.g;
+  light_buf[3] = color.b;
 
-  int fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (fd < 0) {
-    perror("couldn't create udp socket");
-    return;  // ignore failure
-  }
-
-  struct sockaddr_in  address;
-  memset(&address, 0, sizeof(address));
-
-  // Filling server information
-  address.sin_family = AF_INET;
-  address.sin_port = htons(LIGHT_UDP_PORT);
-  address.sin_addr.s_addr = INADDR_ANY;
-
-  sendto(fd, buf, sizeof(buf), /*flags=*/0,
-         (const struct sockaddr*)&address, sizeof(address));
+  send(light_fd, light_buf, sizeof(light_buf), /*flags=*/0);
 }
 
 void update_lights(int control) {
@@ -1154,6 +1141,25 @@ void create_source(MIDIEndpointRef* endpoint_ref, CFStringRef name) {
 }
 
 void jml_setup() {
+  light_fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (light_fd < 0) {
+    perror("couldn't create light udp socket");
+  } else {
+    struct sockaddr_in  address;
+    memset(&address, 0, sizeof(address));
+
+    address.sin_family = AF_INET;
+    address.sin_port = htons(LIGHT_UDP_PORT);
+    address.sin_addr.s_addr = INADDR_ANY;
+
+    if (connect(light_fd,
+                (const struct sockaddr*)&address,
+                sizeof(address)) < 0) {
+      perror("couldn't connect light udp socket");
+      light_fd = -1;
+    }
+  }
+
   for (int i = 0; i < N_LIGHTS; i++) {
     set_light(i, COLOR_WHITE);
   }
