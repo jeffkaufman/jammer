@@ -243,6 +243,8 @@ int current_note[N_ENDPOINTS];
 int footbass_low_note = -1;
 int footbass_high_note = -1;
 
+int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
+
 int roll = MIDI_MAX / 2;
 int pitch = MIDI_MAX / 2;
 
@@ -421,7 +423,7 @@ void update_bass() {
     }
     if (current_note[ENDPOINT_TROMBONE] != note_out) {
       bass_trombone_off();
-      send_midi(MIDI_ON, note_out, 100, ENDPOINT_TROMBONE);
+      send_midi(MIDI_ON, note_out, piano_left_hand_velocity, ENDPOINT_TROMBONE);
       current_note[ENDPOINT_TROMBONE] = note_out;
     }
   }
@@ -602,6 +604,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_bass = note_in < 51;
 
   if (mode == MIDI_ON && is_bass) {
+    piano_left_hand_velocity = val;
     int new_root = (note_in - 2) % 12 + 26;
     if (new_root != root_note) {
       root_note = new_root;
@@ -910,6 +913,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
       val = scale_drum(drum_right_sum);
       lr = "R";
     }
+    //val = piano_left_hand_velocity;  // testing getting velocity from piano
   }
 
   if (!is_midi_on ||
