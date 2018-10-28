@@ -414,18 +414,22 @@ void bass_trombone_off() {
 }
 
 void update_bass() {
-  if ((jawharp_on || bass_trombone_on) && !synth_on) {
-    int note_out = active_note();
-    if (current_note[ENDPOINT_JAWHARP] != note_out) {
-      jawharp_off();
-      send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
-      current_note[ENDPOINT_JAWHARP] = note_out;
-    }
-    if (current_note[ENDPOINT_TROMBONE] != note_out) {
-      bass_trombone_off();
-      send_midi(MIDI_ON, note_out, piano_left_hand_velocity, ENDPOINT_TROMBONE);
-      current_note[ENDPOINT_TROMBONE] = note_out;
-    }
+  if (synth_on || breath < 10) return;
+
+  int note_out = active_note();
+  if (jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
+    jawharp_off();
+    send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
+    current_note[ENDPOINT_JAWHARP] = note_out;
+  }
+  int trombone_note = note_out + 12;
+  if (trombone_note < 40) {
+    trombone_note += 12;
+  }
+  if (bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
+    bass_trombone_off();
+    send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
+    current_note[ENDPOINT_TROMBONE] = trombone_note;
   }
 }
 
