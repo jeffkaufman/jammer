@@ -611,6 +611,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     piano_left_hand_velocity = val;
     int new_root = (note_in - 2) % 12 + 26;
     if (new_root != root_note) {
+      //printf("New root: %d (vel=%d)\n", root_note, val);
       root_note = new_root;
       update_bass();
     }
@@ -988,7 +989,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
     }
     int use_val = val;
     if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
-      use_val += 18;
+      //use_val += 18;
     } else if (endpoint == ENDPOINT_SYNTH) {
       use_val = 63 + (jawharp_on ? breath / 2 : 0);
     }
