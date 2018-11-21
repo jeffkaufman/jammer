@@ -193,6 +193,10 @@ void attempt(OSStatus result, char* errmsg) {
 #define CC_07 0x07
 #define CC_11 0x0b
 
+// gcmidi sends on CC 20 through 29
+#define GCMIDI_MIN 20
+#define GCMIDI_MAX 29
+
 #define CC_ROLL 30
 #define CC_PITCH 31
 
@@ -970,6 +974,12 @@ void handle_tilt(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void handle_cc(unsigned int cc, unsigned int val) {
+  if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
+    send_midi(MIDI_CC, cc, val, ENDPOINT_SAX);
+    send_midi(MIDI_CC, cc, val, ENDPOINT_TROMBONE);
+    return;
+  }
+
   if (cc != CC_BREATH && cc != CC_11) {
     printf("Unknown Control change %d\n", cc);
     return;
