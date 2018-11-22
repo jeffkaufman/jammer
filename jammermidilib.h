@@ -254,22 +254,6 @@ int pitch = MIDI_MAX / 2;
 
 int breath = 0;
 
-#define HISTORY_LENGTH 8
-int drum_left_history[HISTORY_LENGTH];
-int drum_right_history[HISTORY_LENGTH];
-int drum_left_pos = 0;
-int drum_right_pos = 0;
-int drum_left_sum = 0;
-int drum_right_sum = 0;
-
-void push_history(int val, int* drum_history, int* drum_pos, int* drum_sum) {
-  int adj_pos = (*drum_pos) % HISTORY_LENGTH;
-  *drum_sum -= drum_history[adj_pos];
-  *drum_sum += val;
-  drum_history[adj_pos] = val;
-  (*drum_pos)++;
-}
-
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
   //printf("sending %d %x:%d = %d\n",
@@ -895,15 +879,23 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-int scale_drum(int val_sum) {
+int scale_drum(int val) {
   // The highest value I can consistently get is 90, lowest is 27.  Map that
   // onto 27 through 127 which is a range of 100.
-  float val = val_sum * 1.0 / HISTORY_LENGTH; // 27 - 90
-  val -= 27; // 0 - 63
-  val *= (100.0 / 63.0);  // 0 - 100
-  val += 27; // 27 - 127
 
-  return val > MIDI_MAX ? MIDI_MAX : val;
+  int min_in = 0;
+  int max_in = 90;
+  int min_out = 70;
+  int max_out = 120;
+  if (val < min_in) {
+    return min_out;
+  }
+
+  if (val > max_in) {
+    return max_out;
+  }
+
+  return ((val - min_in) * (max_out - min_out) / (max_in - min_in)) + min_out;
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -914,15 +906,14 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (is_midi_on) {
     char* lr;
     if (is_low) {
-      push_history(val, drum_left_history, &drum_left_pos, &drum_left_sum);
-      val = scale_drum(drum_left_sum);
+      printf("%3d\n", val);
+      val = scale_drum(val);
+      printf("  %3d\n", val);
       lr = "L";
     } else {
-      push_history(val, drum_right_history, &drum_right_pos, &drum_right_sum);
-      val = scale_drum(drum_right_sum);
+      val = scale_drum(val);
       lr = "R";
     }
-    //val = piano_left_hand_velocity;  // testing getting velocity from piano
   }
 
   if (!is_midi_on ||
@@ -1094,7 +1085,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d\n",
          (tilt_on ? "t" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
@@ -1114,9 +1105,7 @@ void print_status() {
          position,
          roll,
          pitch,
-         breath,
-         scale_drum(drum_left_sum),
-         scale_drum(drum_right_sum));
+         breath);
 }
 
 void read_midi(const MIDIPacketList *pktlist,
@@ -1164,7 +1153,7 @@ void read_midi(const MIDIPacketList *pktlist,
       } else {
         printf("ignored\n");
       }
-      print_status();
+      //print_status();
     }
     packet = MIDIPacketNext(packet);
   }
@@ -1258,13 +1247,6 @@ void jml_setup() {
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
     current_note[i] = -1;
-  }
-
-  for (int i = 0 ; i < HISTORY_LENGTH; i++) {
-    drum_left_history[i] = 40;
-    drum_right_history[i] = 40;
-    drum_left_sum += 40;
-    drum_right_sum += 40;
   }
 
   create_source(&endpoints[ENDPOINT_ACCORDION], CFSTR("jammer-accordion"));
