@@ -16,12 +16,6 @@
 /*
  Thinking about different modes I'm likely to want:
 
- 1. Accordion:
-
-    intensity: breath
-    note: buttons (optionally as radio)
-    attack: none
-
  2. Brass (Sax / Trombone):
 
     intensity: breath
@@ -77,8 +71,6 @@
   - Toggle: Footbass
   - Toggle: Tilt active
   - Buttons selector (includes all notes off for covered endpoints)
-    - Accordion
-    - Accordion radio
     - Sax
     - Trombone
     - Piano
@@ -101,8 +93,6 @@ This looks like:
 Which is:
 
   1 O   All notes off
-  2 A   Accordion
-  3 Ar  Accordion Radio
   4 S   Sax
   5 T   Trombone
   6 K   Piano
@@ -141,8 +131,6 @@ void attempt(OSStatus result, char* errmsg) {
 /* controls */
 #define ALL_NOTES_OFF           1
 
-#define SELECT_ACCORDION        2
-#define SELECT_ACCORDION_R      3
 #define SELECT_SAX              4
 #define SELECT_TROMBONE         5
 #define SELECT_PIANO            6
@@ -158,7 +146,6 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define SELECT_MAJOR           15
 #define SELECT_MINOR           16
-#define TOGGLE_SYNTH           18
 #define TOGGLE_PIANO           19
 #define TOGGLE_FOOTBASS_HIGH   20
 #define TOGGLE_BASS_WIND       21
@@ -166,7 +153,6 @@ void attempt(OSStatus result, char* errmsg) {
 #define N_CONTROLS (TOGGLE_BASS_WIND+1)
 
 /* endpoints */
-#define ENDPOINT_ACCORDION 0
 #define ENDPOINT_SAX 1
 #define ENDPOINT_TROMBONE 2
 #define ENDPOINT_PIANO 3
@@ -176,7 +162,6 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_DRUM_HIGH 6
 #define ENDPOINT_FOOTBASS 7
 #define ENDPOINT_JAWHARP 8
-#define ENDPOINT_SYNTH 9
 #define ENDPOINT_BASS_WIND 10
 #define N_ENDPOINTS (ENDPOINT_BASS_WIND+1)
 
@@ -220,7 +205,6 @@ MIDIPortRef midiport_piano;
 bool tilt_on = false;
 bool jawharp_on = false;
 bool bass_trombone_on = false;
-bool synth_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
 bool bass_wind_on = false;
@@ -228,8 +212,7 @@ bool drum_low_on = false;
 bool drum_high_on = false;
 bool piano_on = false;
 
-int button_endpoint = ENDPOINT_ACCORDION;
-bool radio_buttons = false;
+int button_endpoint = ENDPOINT_SAX;
 
 int musical_mode = MODE_MAJOR;
 int position = 3;
@@ -238,7 +221,6 @@ bool selecting_root = false;
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
-//  * In use for button endpoints if radio_buttons == true
 //  * Not in use for drums or footbass
 int current_note[N_ENDPOINTS];
 
@@ -402,7 +384,7 @@ void bass_trombone_off() {
 }
 
 void update_bass() {
-  if (synth_on || breath < 10) return;
+  if (breath < 10) return;
 
   int note_out = active_note();
   if (jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
@@ -614,9 +596,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     int piano_note = note_in + 12;  // using a patch that's confused about location
     send_midi(mode, piano_note, val, ENDPOINT_PIANO);
   }
-  if (synth_on || mode == MIDI_OFF) {
-    send_midi(mode, note_in, val, ENDPOINT_SYNTH);
-  }
 }
 
 #define LIGHT_PIANO 0
@@ -677,14 +656,6 @@ void update_lights(int control) {
   int drum_on = low ? drum_low_on : drum_high_on;
 
   switch (control) {
-  case SELECT_ACCORDION:
-    index = LIGHT_BUTTONS;
-    color = COLOR_BLUE;
-    break;
-  case SELECT_ACCORDION_R:
-    index = LIGHT_BUTTONS;
-    color = COLOR_PURPLE;
-    break;
   case SELECT_SAX:
     index = LIGHT_BUTTONS;
     color = COLOR_RED;
@@ -746,21 +717,13 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
       all_notes_off(N_ENDPOINTS);
       return;
 
-    case SELECT_ACCORDION:
-    case SELECT_ACCORDION_R:
     case SELECT_SAX:
     case SELECT_TROMBONE:
     case SELECT_PIANO:
     case SELECT_LEAD:
       all_notes_off(N_BUTTON_ENDPOINTS);
 
-      radio_buttons = (note_in == SELECT_ACCORDION_R ||
-                       note_in == SELECT_LEAD);
-
-      if (note_in == SELECT_ACCORDION ||
-          note_in == SELECT_ACCORDION_R) {
-        button_endpoint = ENDPOINT_ACCORDION;
-      } else if (note_in == SELECT_SAX) {
+      if (note_in == SELECT_SAX) {
         button_endpoint = ENDPOINT_SAX;
       } else if (note_in == SELECT_TROMBONE) {
         button_endpoint = ENDPOINT_TROMBONE;
@@ -778,11 +741,6 @@ void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
     case TOGGLE_TILT:
       tilt_on = !tilt_on;
       update_bass();
-      return;
-
-    case TOGGLE_SYNTH:
-      endpoint_notes_off(ENDPOINT_SYNTH);
-      synth_on = !synth_on;
       return;
 
     case TOGGLE_JAWHARP:
@@ -858,25 +816,9 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (button_endpoint == ENDPOINT_SAX) {
     // sax sounds an octave lower than we want
     note_out += 12;
-  } else if (button_endpoint == ENDPOINT_ACCORDION) {
-    // accordion always uses full volume, and is adjusted via the breath
-    // controller.
-    val = MIDI_MAX;
   }
 
-  if (radio_buttons) {
-    if (mode == MIDI_ON) {
-      if (current_note[button_endpoint] != -1) {
-        send_midi(MIDI_OFF, current_note[button_endpoint], 0, button_endpoint);
-      }
-      current_note[button_endpoint] = note_out;
-      send_midi(MIDI_ON, note_out, val, button_endpoint);
-    } else if (mode == MIDI_OFF) {
-      // ignore
-    }
-  } else {
-    send_midi(mode, note_out, val, button_endpoint);
-  }
+  send_midi(mode, note_out, val, button_endpoint);
 }
 
 int scale_drum(int val) {
@@ -980,21 +922,13 @@ void handle_cc(unsigned int cc, unsigned int val) {
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-    if (endpoint != ENDPOINT_ACCORDION &&
-        endpoint != ENDPOINT_SAX &&
+    if (endpoint != ENDPOINT_SAX &&
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
-        endpoint != ENDPOINT_SYNTH &&
         endpoint != ENDPOINT_BASS_WIND) {
       continue;
     }
     int use_val = val;
-    if (endpoint == ENDPOINT_ACCORDION && !radio_buttons) {
-      //use_val += 18;
-    } else if (endpoint == ENDPOINT_SYNTH) {
-      use_val = 63 + (jawharp_on ? breath / 2 : 0);
-    }
-
     if (use_val > MIDI_MAX) {
       use_val = MIDI_MAX;
     }
@@ -1018,16 +952,12 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
-    send_midi(MIDI_CC,
-              endpoint == ENDPOINT_SYNTH ? CC_07 : CC_11,
-              use_val, endpoint);
+    send_midi(MIDI_CC, CC_11, use_val, endpoint);
   }
 }
 
 const char* button_endpoint_str() {
   switch (button_endpoint) {
-  case ENDPOINT_ACCORDION:
-    return "acc";
   case ENDPOINT_SAX:
     return "sax";
     break;
@@ -1085,7 +1015,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d\n",
          (tilt_on ? "t" : " "),
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
@@ -1093,10 +1023,8 @@ void print_status() {
          (drum_low_on ? "dl" : "  "),
          (drum_high_on ? "dh" : "  "),
          (piano_on ? "P" : " "),
-         (synth_on ? "S" : " "),
          (bass_wind_on ? "bw" : "  "),
          (bass_trombone_on ? "bT" : "  "),
-         (radio_buttons ? "R" : " "),
          (selecting_root ? "RS" : "  "),
          button_endpoint_str(),
          musical_mode_str(),
@@ -1249,7 +1177,6 @@ void jml_setup() {
     current_note[i] = -1;
   }
 
-  create_source(&endpoints[ENDPOINT_ACCORDION], CFSTR("jammer-accordion"));
   create_source(&endpoints[ENDPOINT_SAX],       CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],  CFSTR("jammer-trombone"));
   create_source(&endpoints[ENDPOINT_PIANO],     CFSTR("jammer-piano"));
@@ -1258,7 +1185,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_DRUM_LOW],  CFSTR("jammer-drum-low"));
   create_source(&endpoints[ENDPOINT_DRUM_HIGH], CFSTR("jammer-drum-high"));
   create_source(&endpoints[ENDPOINT_JAWHARP],   CFSTR("jammer-jawharp"));
-  create_source(&endpoints[ENDPOINT_SYNTH],     CFSTR("jammer-synth"));
   create_source(&endpoints[ENDPOINT_BASS_WIND], CFSTR("jammer-bass-wind"));
 }
 
