@@ -813,12 +813,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   // At this point, the signal is telling us to play a button instrument.
 
+  int chosen_endpoint = button_endpoint;
   if (button_endpoint == ENDPOINT_SAX) {
-    // sax sounds an octave lower than we want
-    note_out += 12;
+    if (note_out < 54) {
+      chosen_endpoint = ENDPOINT_BASS_WIND;
+    }
   }
 
-  send_midi(mode, note_out, val, button_endpoint);
+  send_midi(mode, note_out, val, chosen_endpoint);
 }
 
 int scale_drum(int val) {
