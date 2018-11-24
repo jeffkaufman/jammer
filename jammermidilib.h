@@ -14,106 +14,25 @@
 
 
 /*
- Thinking about different modes I'm likely to want:
+  P  ST  J   bw  bT  Dl  Dh
+                       Fl   Fh
+  ...
 
- 2. Brass (Sax / Trombone):
-
-    intensity: breath
-    note: buttons
-    attack: button velocity
-
- 3. Jaw Harp
-
-    intensity: breath
-    note: tilt
-    attack: none
-
- 4. Drums
-
-    intensity: none
-    note: pedals
-    attack: pedal velocity
-
- 5. Footbass
-
-    intensity: none
-    note: tilt
-    attack: pedal velocity
-
- 6. Piano
-
-    intensity: none
-    note: buttons
-    attack: button velocity
-
- 7. Lead
-
-    intensity: none
-    note: buttons (as radio)
-    attack: none
-
- Plus playing Hands (Mandolin or Piano)
-
- Combinations:
-
- - Jaw Harp with anything
-   - Combining with Accordion or Brass is logically possible, but probably
-     sounds weird.  Interface doesn't need to prevent it though.
- - Drums with anything
-   - Don't necessarily want all three drums enabled at once, so need to be able
-     to toggle them individually.
- - Footbass with anything
-
- Interface:
-  - Toggle: Jaw harp toggle
-  - Toggle: Drums - Low (Kick)
-  - Toggle: Drums - High (Hihat etc)
-  - Toggle: Footbass
-  - Toggle: Tilt active
-  - Buttons selector (includes all notes off for covered endpoints)
-    - Sax
-    - Trombone
-    - Piano
-    - Lead
-  - Root note (key) selector
-    - where is Footbass / Jaw Harp based?
-  - Scale selector
-    - Major
-    - Mixolydian
-    - Dorian
-    - Minor
-  - Absolutely all notes off
-
-This looks like:
-
-  ▲    -               P   Fh   Bw
-     Rs   Tl   J    Fl  Dl   Dh
-  O    A    Ar   S    T    K    L
+  O
 
 Which is:
+ 92 P   Piano
+ 93 ST  Sax vs Trombone
+ 94  J  Jawharp
+ 95 bw  Bass sax
+ 96 bT  Bass Trombone
+ 97 Dl  Drum low
+ 98 Dh  Drum high
 
-  1 O   All notes off
-  4 S   Sax
-  5 T   Trombone
-  6 K   Piano
-  7 L   Lead
+ 90 Fl  Footbass low
+ 91 Fh  Footbass high
 
-  8 Rs  Root select
-  9 T   Tilt (toggle)
- 10 J   Jawharp (toggle)
- 11 Fl  Footbass low (toggle)
- 12 Dl  Drum Low (toggle)
- 13 Dh  Drum High (toggle)
- 14 bT  Bass Trombone (toggle)
-
- 15 ▲   Major scale
- 16 -   Minor scale
- 17
- 18
- 19 P   Piano (toggle)
- 20 Fh  Footbass high (toggle)
- 21 bw  Bass wind (toggle)
-
+ 1  O   All notes off
  */
 
 
@@ -131,43 +50,34 @@ void attempt(OSStatus result, char* errmsg) {
 /* controls */
 #define ALL_NOTES_OFF           1
 
-#define SELECT_SAX              4
-#define SELECT_TROMBONE         5
-#define SELECT_PIANO            6
-#define SELECT_LEAD             7
+#define TOGGLE_PIANO           92
+#define SELECT_SAX_TROMBONE    93
+#define TOGGLE_JAWHARP         94
+#define TOGGLE_BASS_SAX        95
+#define TOGGLE_BASS_TROMBONE   96
+#define TOGGLE_DRUM_LOW        97
+#define TOGGLE_DRUM_HIGH       98
 
-#define SELECT_ROOT             8
-#define TOGGLE_TILT             9
-#define TOGGLE_JAWHARP         10
-#define TOGGLE_FOOTBASS_LOW    11
-#define TOGGLE_DRUM_LOW        12
-#define TOGGLE_DRUM_HIGH       13
-#define TOGGLE_BASS_TROMBONE   14
+#define TOGGLE_FOOTBASS_LOW    90
+#define TOGGLE_FOOTBASS_HIGH   91
 
-#define SELECT_MAJOR           15
-#define SELECT_MINOR           16
-#define TOGGLE_PIANO           19
-#define TOGGLE_FOOTBASS_HIGH   20
-#define TOGGLE_BASS_WIND       21
+#define LOW_CONTROL_MAX        ALL_NOTES_OFF
+#define HIGH_CONTROL_MIN       TOGGLE_FOOTBASS_LOW
 
-#define N_CONTROLS (TOGGLE_BASS_WIND+1)
+#define BASS_MIN               71
 
 /* endpoints */
-#define ENDPOINT_SAX 1
-#define ENDPOINT_TROMBONE 2
-#define ENDPOINT_PIANO 3
-#define ENDPOINT_LEAD 4
-#define N_BUTTON_ENDPOINTS (ENDPOINT_LEAD + 1)
-#define ENDPOINT_DRUM_LOW 5
-#define ENDPOINT_DRUM_HIGH 6
-#define ENDPOINT_FOOTBASS 7
-#define ENDPOINT_JAWHARP 8
-#define ENDPOINT_BASS_WIND 10
-#define N_ENDPOINTS (ENDPOINT_BASS_WIND+1)
-
-/* modes */
-#define MODE_MAJOR 0
-#define MODE_MINOR 1
+#define ENDPOINT_SAX 0
+#define ENDPOINT_TROMBONE 1
+#define N_BUTTON_ENDPOINTS (ENDPOINT_TROMBONE + 1)
+#define ENDPOINT_PIANO 2
+#define ENDPOINT_DRUM_LOW 3
+#define ENDPOINT_DRUM_HIGH 4
+#define ENDPOINT_FOOTBASS 5
+#define ENDPOINT_JAWHARP 6
+#define ENDPOINT_BASS_SAX 7
+#define ENDPOINT_BASS_TROMBONE 8
+#define N_ENDPOINTS (ENDPOINT_BASS_TROMBONE+1)
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -207,17 +117,14 @@ bool jawharp_on = false;
 bool bass_trombone_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
-bool bass_wind_on = false;
+bool bass_sax_on = false;
 bool drum_low_on = false;
 bool drum_high_on = false;
 bool piano_on = false;
 
 int button_endpoint = ENDPOINT_SAX;
 
-int musical_mode = MODE_MAJOR;
-int position = 3;
 int root_note = 26;  // D @ 37Hz
-bool selecting_root = false;
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
@@ -266,96 +173,8 @@ void send_midi(char actionType, int noteNo, int v, int endpoint) {
   attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
 }
 
-int  scale_degree(int degree) {
-  // return the adjustment needed for the degree-th note in the musical_mode scale
-  //
-  // For example, if we're in major and degree is 3, then produce 4 (four half
-  // steps from C -> E).  If we're in minor, this would be 3 (three half steps
-  // from C -> Eb).
-
-  // Degree should be between 1 and 7 inclusive
-
-  // Modes just depend on which scale degree you start on:
-  //
-  //   1st: major        T–T–S–T–T–T–S  0  2  4  5  7  9 11   zero flats
-  //   5th: mixolydian   T–T–S–T–T–S–T  0  2  4  5  7  9 10   one flat
-  //   2nd: dorian       T–S–T–T–T–S–T  0  2  3  5  7  9 10   two flats
-  //   6th: minor        T–S–T–T–S–T–T  0  2  3  5  7  8 10   three flats
-
-  int octave = ((degree-1) / 7);
-  int delta;
-  switch ((degree-1) % 7 + 1) {
-  case 1:
-    delta = 0;
-    break;
-  case 2:
-    delta = 2;
-    break;
-  case 3:
-    delta = (musical_mode == MODE_MAJOR ? 4 : 3);
-    break;
-  case 4:
-    delta = 5;
-    break;
-  case 5:
-    delta = 7;
-    break;
-  case 6:
-    delta = (musical_mode == MODE_MAJOR ? 9 : 8);
-    break;
-  case 7:
-    delta = (musical_mode == MODE_MAJOR ? 11 : 10);
-    break;
-  }
-  return delta + octave * 12;
-}
-
 char active_note() {
-  if (!tilt_on) {
-    return root_note;
-  }
-
-  int degree;
-  // position is:
-  //
-  //    0 1
-  //   2 3 4
-  //
-  // degree is:
-  //
-  //   major:
-  //
-  //     2 6
-  //    4 1 5
-  //
-  //   otherwise:
-  //
-  //     6 4
-  //    7 1 5
-  switch (position) {
-  case 0:
-    degree = (musical_mode == MODE_MAJOR) ? 2 : 6;
-    break;
-  case 1:
-    degree = (musical_mode == MODE_MAJOR) ? 6 : 4;
-    break;
-  case 2:
-    degree = (musical_mode == MODE_MAJOR) ? 4 : 7;
-    break;
-  case 3:
-    degree = 1;
-    break;
-  case 4:
-    degree = 5;
-    break;
-  }
-
-  if (musical_mode == MODE_MAJOR || degree < 6) {
-    degree += 7;
-  }
-
-  int note = root_note + scale_degree(degree) - 12;
-  return note;
+  return root_note;
 }
 
 void footbass_off() {
@@ -400,35 +219,6 @@ void update_bass() {
     bass_trombone_off();
     send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
     current_note[ENDPOINT_TROMBONE] = trombone_note;
-  }
-}
-
-int dist_sq(int x1, int x2, int y1, int y2) {
-  return (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2);
-}
-
-//    0  1
-//  2  3  4
-//               0   1   2   3   4
-int rolls[]   = {56, 48, 66, 63, 58};
-int pitches[] = {69, 61, 67, 60, 55};
-#define N_POSITIONS 5
-
-void choose_position() {
-  int best_position = -1;
-  int best_distance = -1;
-
-  for (int i = 0; i < N_POSITIONS; i++) {
-    int distance = dist_sq(roll, rolls[i], pitch, pitches[i]);
-    if (best_position == -1 || distance < best_distance) {
-      best_position = i;
-      best_distance = distance;
-    }
-  }
-
-  if (best_position != position) {
-    position = best_position;
-    update_bass();
   }
 }
 
@@ -574,12 +364,16 @@ void all_notes_off(int max_endpoint) {
   }
 }
 
+int to_root(note_out) {
+  return (note_out - 2) % 12 + 26;
+}
+
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_bass = note_in < 51;
 
   if (mode == MIDI_ON && is_bass) {
     piano_left_hand_velocity = val;
-    int new_root = (note_in - 2) % 12 + 26;
+    int new_root = to_root(note_in);
     if (new_root != root_note) {
       //printf("New root: %d (vel=%d)\n", root_note, val);
       root_note = new_root;
@@ -587,10 +381,10 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }
   bool bass_claimed = false;
-  if ((bass_wind_on && is_bass) || mode == MIDI_OFF) {
+  if ((bass_sax_on && is_bass) || mode == MIDI_OFF) {
     bass_claimed = true;
     int bass_note = note_in + 24; // intentionally shifting this left on the keyboard
-    send_midi(mode, bass_note, val, ENDPOINT_BASS_WIND);
+    send_midi(mode, bass_note, val, ENDPOINT_BASS_SAX);
   }
   if ((piano_on && !bass_claimed) || mode == MIDI_OFF) {
     int piano_note = note_in + 12;  // using a patch that's confused about location
@@ -598,13 +392,13 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-#define LIGHT_PIANO 0
-#define LIGHT_JAWHARP 1
-#define LIGHT_BASS_WIND 2
-#define LIGHT_FOOT_LOW 3
-#define LIGHT_FOOT_HIGH 4
-#define LIGHT_BUTTONS 5
-#define LIGHT_BASS_TROMBONE 6
+#define LIGHT_PIANO          0
+#define LIGHT_BUTTONS        1
+#define LIGHT_BASS_SAX      2
+#define LIGHT_BASS_TROMBONE  3
+#define LIGHT_JAWHARP        4
+#define LIGHT_FOOT_LOW       5
+#define LIGHT_FOOT_HIGH      6
 #define N_LIGHTS 8
 
 #define COLOR_QUANTUM 10
@@ -619,8 +413,8 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 
 #define COLOR_PIANO COLOR_WHITE
 #define COLOR_JAWHARP COLOR_GREEN
-#define COLOR_BASS_TROMBONE COLOR_YELLOW
-#define COLOR_BASS_WIND COLOR_YELLOW
+#define COLOR_TROMBONE COLOR_YELLOW
+#define COLOR_SAX COLOR_RED
 #define COLOR_DRUM COLOR_BLUE
 #define COLOR_DRUM COLOR_BLUE
 #define COLOR_FOOTBASS COLOR_RED
@@ -656,21 +450,9 @@ void update_lights(int control) {
   int drum_on = low ? drum_low_on : drum_high_on;
 
   switch (control) {
-  case SELECT_SAX:
+  case SELECT_SAX_TROMBONE:
     index = LIGHT_BUTTONS;
-    color = COLOR_RED;
-    break;
-  case SELECT_TROMBONE:
-    index = LIGHT_BUTTONS;
-    color = COLOR_YELLOW;
-    break;
-  case SELECT_PIANO:
-    index = LIGHT_BUTTONS;
-    color = COLOR_GREEN;
-    break;
-  case SELECT_LEAD:
-    index = LIGHT_BUTTONS;
-    color = COLOR_WHITE;
+    color = (button_endpoint == ENDPOINT_SAX) ? COLOR_SAX : COLOR_TROMBONE;
     break;
   case TOGGLE_JAWHARP:
     index = LIGHT_JAWHARP;
@@ -678,11 +460,11 @@ void update_lights(int control) {
     break;
   case TOGGLE_BASS_TROMBONE:
     index = LIGHT_BASS_TROMBONE;
-    color = bass_trombone_on ? COLOR_BASS_TROMBONE : COLOR_OFF;
+    color = bass_trombone_on ? COLOR_TROMBONE : COLOR_OFF;
     break;
-  case TOGGLE_BASS_WIND:
-    index = LIGHT_BASS_WIND;
-    color = bass_wind_on ? COLOR_BASS_WIND : COLOR_OFF;
+  case TOGGLE_BASS_SAX:
+    index = LIGHT_BASS_SAX;
+    color = bass_sax_on ? COLOR_SAX : COLOR_OFF;
     break;
   case TOGGLE_PIANO:
     index = LIGHT_PIANO;
@@ -709,105 +491,78 @@ void update_lights(int control) {
   set_light(index, color);
 }
 
-void handle_control(unsigned int mode, unsigned int note_in, unsigned int val) {
-  if (mode == MIDI_ON) {
-    switch (note_in) {
-
-    case ALL_NOTES_OFF:
-      all_notes_off(N_ENDPOINTS);
-      return;
-
-    case SELECT_SAX:
-    case SELECT_TROMBONE:
-    case SELECT_PIANO:
-    case SELECT_LEAD:
-      all_notes_off(N_BUTTON_ENDPOINTS);
-
-      if (note_in == SELECT_SAX) {
-        button_endpoint = ENDPOINT_SAX;
-      } else if (note_in == SELECT_TROMBONE) {
-        button_endpoint = ENDPOINT_TROMBONE;
-      } else if (note_in == SELECT_PIANO) {
-        button_endpoint = ENDPOINT_PIANO;
-      } else if (note_in == SELECT_LEAD) {
-        button_endpoint = ENDPOINT_LEAD;
-      }
-      return;
-
-    case SELECT_ROOT:
-      selecting_root = !selecting_root;
-      return;
-
-    case TOGGLE_TILT:
-      tilt_on = !tilt_on;
+void handle_control_helper(unsigned int note_in) {
+  switch (note_in) {
+    
+  case ALL_NOTES_OFF:
+    all_notes_off(N_ENDPOINTS);
+    return;
+    
+  case SELECT_SAX_TROMBONE:
+    all_notes_off(N_BUTTON_ENDPOINTS);
+    button_endpoint = (button_endpoint == ENDPOINT_SAX) ? ENDPOINT_TROMBONE : ENDPOINT_SAX;
+    return;
+    
+  case TOGGLE_JAWHARP:
+    endpoint_notes_off(ENDPOINT_JAWHARP);
+    jawharp_on = !jawharp_on;
+    if (jawharp_on) {
       update_bass();
-      return;
-
-    case TOGGLE_JAWHARP:
-      endpoint_notes_off(ENDPOINT_JAWHARP);
-      jawharp_on = !jawharp_on;
-      if (jawharp_on) {
-        update_bass();
-      } else {
-        jawharp_off();
-      }
-      return;
-
-    case TOGGLE_BASS_TROMBONE:
-      endpoint_notes_off(ENDPOINT_TROMBONE);
-      bass_trombone_on = !bass_trombone_on;
-      if (bass_trombone_on) {
-        update_bass();
-      } else {
-        bass_trombone_off();
-      }
-      return;
-
-    case TOGGLE_FOOTBASS_LOW:
-      footbass_off();
-      footbass_low_on = !footbass_low_on;
-      return;
-
-    case TOGGLE_FOOTBASS_HIGH:
-      footbass_off();
-      footbass_high_on = !footbass_high_on;
-      return;
-
-    case TOGGLE_BASS_WIND:
-      bass_wind_on = !bass_wind_on;
-      return;
-
-    case TOGGLE_DRUM_LOW:
-      drum_low_on = !drum_low_on;
-      return;
-
-    case TOGGLE_DRUM_HIGH:
-      drum_high_on = !drum_high_on;
-      return;
-
-    case TOGGLE_PIANO:
-      piano_on = !piano_on;
-      return;
-
-    case SELECT_MAJOR:
-      musical_mode = MODE_MAJOR;
-      return;
-
-    case SELECT_MINOR:
-      musical_mode = MODE_MINOR;
-      return;
+    } else {
+      jawharp_off();
     }
+    return;
+    
+  case TOGGLE_BASS_TROMBONE:
+    endpoint_notes_off(ENDPOINT_TROMBONE);
+    bass_trombone_on = !bass_trombone_on;
+    if (bass_trombone_on) {
+      update_bass();
+    } else {
+      bass_trombone_off();
+    }
+    return;
+    
+  case TOGGLE_FOOTBASS_LOW:
+    footbass_off();
+    footbass_low_on = !footbass_low_on;
+    return;
+    
+  case TOGGLE_FOOTBASS_HIGH:
+    footbass_off();
+    footbass_high_on = !footbass_high_on;
+    return;
+    
+  case TOGGLE_BASS_SAX:
+    bass_sax_on = !bass_sax_on;
+    return;
+    
+  case TOGGLE_DRUM_LOW:
+    drum_low_on = !drum_low_on;
+    return;
+    
+  case TOGGLE_DRUM_HIGH:
+    drum_high_on = !drum_high_on;
+    return;
+    
+  case TOGGLE_PIANO:
+    piano_on = !piano_on;
+    return;
   }
+}
+
+void handle_control(unsigned int note_in) {
+  handle_control_helper(note_in);
+  update_lights(note_in);
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in) + 12 + 2;
-
-  if (selecting_root) {
-    selecting_root = false;
-    root_note = note_out - (12*3);
-    update_bass();
-    // There will also be a corresponding MIDI_OFF but we don't care.
+  if (note_in >= BASS_MIN) {
+    if (mode == MIDI_ON) {
+      root_note = to_root(note_out);
+      update_bass();
+    }
     return;
   }
 
@@ -815,8 +570,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   int chosen_endpoint = button_endpoint;
   if (button_endpoint == ENDPOINT_SAX) {
+    note_out += 24;
     if (note_out < 54) {
-      chosen_endpoint = ENDPOINT_BASS_WIND;
+      chosen_endpoint = ENDPOINT_BASS_SAX;
+    }
+  } else {
+    printf("%d\n", note_out);
+    if (note_out < 40) {
+      chosen_endpoint = ENDPOINT_BASS_TROMBONE;
     }
   }
 
@@ -899,19 +660,10 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-void handle_tilt(unsigned int mode, unsigned int note_in, unsigned int val) {
-  if (note_in == CC_ROLL) {
-    roll = val;
-  } else if (note_in == CC_PITCH) {
-    pitch = val;
-  }
-  choose_position();
-}
-
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
     send_midi(MIDI_CC, cc, val, ENDPOINT_SAX);
-    send_midi(MIDI_CC, cc, val, ENDPOINT_TROMBONE);
+    send_midi(MIDI_CC, cc, val, ENDPOINT_BASS_SAX);
     return;
   }
 
@@ -927,7 +679,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (endpoint != ENDPOINT_SAX &&
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
-        endpoint != ENDPOINT_BASS_WIND) {
+        endpoint != ENDPOINT_BASS_SAX &&
+        endpoint != ENDPOINT_BASS_TROMBONE) {
       continue;
     }
     int use_val = val;
@@ -965,23 +718,8 @@ const char* button_endpoint_str() {
     break;
   case ENDPOINT_TROMBONE:
     return "trm";
-  case ENDPOINT_PIANO:
-    return "key";
-  case ENDPOINT_LEAD:
-    return "lea";
   default:
     return "???";
-  }
-}
-
-const char* musical_mode_str() {
-  switch (musical_mode) {
-  case MODE_MAJOR:
-    return "\u25B2";
-  case MODE_MINOR:
-    return "-";
-  default:
-    return "?";
   }
 }
 
@@ -1017,24 +755,17 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %s %s %s %d %3d %3d %3d\n",
-         (tilt_on ? "t" : " "),
+  printf("%s %s %s %s %s %s %s %s %s %s %3d\n",
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
          (footbass_high_on ? "fh" : "  "),
          (drum_low_on ? "dl" : "  "),
          (drum_high_on ? "dh" : "  "),
          (piano_on ? "P" : " "),
-         (bass_wind_on ? "bw" : "  "),
+         (bass_sax_on ? "bw" : "  "),
          (bass_trombone_on ? "bT" : "  "),
-         (selecting_root ? "RS" : "  "),
          button_endpoint_str(),
-         musical_mode_str(),
-         note_str(root_note),
          note_str(active_note()),
-         position,
-         roll,
-         pitch,
          breath);
 }
 
@@ -1068,16 +799,15 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-        if (note_in < N_CONTROLS) {
-          handle_control(mode, note_in, val);
-          update_lights(note_in);
+        if (note_in <= LOW_CONTROL_MAX || note_in >= HIGH_CONTROL_MIN) {
+          if (mode == MIDI_ON) {
+            handle_control(note_in);
+          }
         } else {
           handle_button(mode, note_in, val);
         }
       } else if (srcConnRefCon == &midiport_feet_controller) {
         handle_feet(mode, note_in, val);
-      } else if (srcConnRefCon == &midiport_tilt_controller) {
-        handle_tilt(mode, note_in, val);
       } else if (mode == MIDI_CC) {
         handle_cc(note_in, val);
       } else {
@@ -1179,15 +909,24 @@ void jml_setup() {
     current_note[i] = -1;
   }
 
-  create_source(&endpoints[ENDPOINT_SAX],       CFSTR("jammer-sax"));
-  create_source(&endpoints[ENDPOINT_TROMBONE],  CFSTR("jammer-trombone"));
-  create_source(&endpoints[ENDPOINT_PIANO],     CFSTR("jammer-piano"));
-  create_source(&endpoints[ENDPOINT_LEAD],      CFSTR("jammer-lead"));
-  create_source(&endpoints[ENDPOINT_FOOTBASS],  CFSTR("jammer-footbass"));
-  create_source(&endpoints[ENDPOINT_DRUM_LOW],  CFSTR("jammer-drum-low"));
-  create_source(&endpoints[ENDPOINT_DRUM_HIGH], CFSTR("jammer-drum-high"));
-  create_source(&endpoints[ENDPOINT_JAWHARP],   CFSTR("jammer-jawharp"));
-  create_source(&endpoints[ENDPOINT_BASS_WIND], CFSTR("jammer-bass-wind"));
+  create_source(&endpoints[ENDPOINT_SAX],            CFSTR("jammer-sax"));
+  create_source(&endpoints[ENDPOINT_TROMBONE],       CFSTR("jammer-trombone"));
+  create_source(&endpoints[ENDPOINT_PIANO],          CFSTR("jammer-piano"));
+  create_source(&endpoints[ENDPOINT_FOOTBASS],       CFSTR("jammer-footbass"));
+  create_source(&endpoints[ENDPOINT_DRUM_LOW],       CFSTR("jammer-drum-low"));
+  create_source(&endpoints[ENDPOINT_DRUM_HIGH],      CFSTR("jammer-drum-high"));
+  create_source(&endpoints[ENDPOINT_JAWHARP],        CFSTR("jammer-jawharp"));
+  create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
+  create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
+
+  // turn things on; doing it here zvso the lights end up correct
+  handle_control(TOGGLE_PIANO);
+  handle_control(TOGGLE_DRUM_LOW);
+  handle_control(TOGGLE_DRUM_HIGH);
+
+  // toggle to trombone and then back to sax
+  handle_control(SELECT_SAX_TROMBONE);
+  handle_control(SELECT_SAX_TROMBONE);
 }
 
 #endif
