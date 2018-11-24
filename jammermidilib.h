@@ -850,9 +850,9 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (is_midi_on) {
     char* lr;
     if (is_low) {
-      printf("%3d\n", val);
+      //printf("%3d\n", val);
       val = scale_drum(val);
-      printf("  %3d\n", val);
+      //printf("  %3d\n", val);
       lr = "L";
     } else {
       val = scale_drum(val);
@@ -1083,7 +1083,7 @@ void read_midi(const MIDIPacketList *pktlist,
       } else {
         printf("ignored\n");
       }
-      //print_status();
+      print_status();
     }
     packet = MIDIPacketNext(packet);
   }
