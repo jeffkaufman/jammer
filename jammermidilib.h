@@ -14,8 +14,8 @@
 
 
 /*
-  P  ST  J   bw  bT  Dl  Dh
-                       Fl   Fh
+  P  ST  J   bw  bT  Dl  Fl
+                       Dh  Fh
   ...
 
   O
@@ -27,9 +27,10 @@ Which is:
  95 bw  Bass sax
  96 bT  Bass Trombone
  97 Dl  Drum low
- 98 Dh  Drum high
+ 99 Fl  Footbass low
 
- 90 Fl  Footbass low
+ 89 Bt  Very bass trombone
+ 90 Dh  Drum high
  91 Fh  Footbass high
 
  1  O   All notes off
@@ -56,13 +57,14 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_BASS_SAX        95
 #define TOGGLE_BASS_TROMBONE   96
 #define TOGGLE_DRUM_LOW        97
-#define TOGGLE_DRUM_HIGH       98
+#define TOGGLE_FOOTBASS_LOW    98
 
-#define TOGGLE_FOOTBASS_LOW    90
+#define TOGGLE_VBASS_TROMBONE  89
+#define TOGGLE_DRUM_HIGH       90
 #define TOGGLE_FOOTBASS_HIGH   91
 
 #define LOW_CONTROL_MAX        ALL_NOTES_OFF
-#define HIGH_CONTROL_MIN       TOGGLE_FOOTBASS_LOW
+#define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
 #define BASS_MIN               71
 
@@ -115,6 +117,7 @@ MIDIPortRef midiport_piano;
 bool tilt_on = false;
 bool jawharp_on = false;
 bool bass_trombone_on = false;
+bool vbass_trombone_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
 bool bass_sax_on = false;
@@ -202,6 +205,13 @@ void bass_trombone_off() {
   }
 }
 
+void vbass_trombone_off() {
+  if (current_note[ENDPOINT_BASS_TROMBONE] != -1) {
+    send_midi(MIDI_OFF, current_note[ENDPOINT_BASS_TROMBONE], 0, ENDPOINT_BASS_TROMBONE);
+    current_note[ENDPOINT_BASS_TROMBONE] = -1;
+  }
+}
+
 void update_bass() {
   if (breath < 10) return;
 
@@ -219,6 +229,15 @@ void update_bass() {
     bass_trombone_off();
     send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
     current_note[ENDPOINT_TROMBONE] = trombone_note;
+  }
+  int bass_trombone_note = trombone_note - 12;
+  if (bass_trombone_note < 32) {
+    bass_trombone_note += 12;
+  }
+  if (vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
+    vbass_trombone_off();
+    send_midi(MIDI_ON, bass_trombone_note, piano_left_hand_velocity, ENDPOINT_BASS_TROMBONE);
+    current_note[ENDPOINT_BASS_TROMBONE] = bass_trombone_note;
   }
 }
 
@@ -394,11 +413,12 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 
 #define LIGHT_PIANO          0
 #define LIGHT_BUTTONS        1
-#define LIGHT_BASS_SAX      2
+#define LIGHT_BASS_SAX       2
 #define LIGHT_BASS_TROMBONE  3
-#define LIGHT_JAWHARP        4
-#define LIGHT_FOOT_LOW       5
-#define LIGHT_FOOT_HIGH      6
+#define LIGHT_VBASS_TROMBONE 4
+#define LIGHT_JAWHARP        5
+#define LIGHT_FOOT_LOW       6
+#define LIGHT_FOOT_HIGH      7
 #define N_LIGHTS 8
 
 #define COLOR_QUANTUM 10
@@ -462,6 +482,10 @@ void update_lights(int control) {
     index = LIGHT_BASS_TROMBONE;
     color = bass_trombone_on ? COLOR_TROMBONE : COLOR_OFF;
     break;
+  case TOGGLE_VBASS_TROMBONE:
+    index = LIGHT_VBASS_TROMBONE;
+    color = vbass_trombone_on ? COLOR_TROMBONE : COLOR_OFF;
+    break;
   case TOGGLE_BASS_SAX:
     index = LIGHT_BASS_SAX;
     color = bass_sax_on ? COLOR_SAX : COLOR_OFF;
@@ -520,6 +544,16 @@ void handle_control_helper(unsigned int note_in) {
       update_bass();
     } else {
       bass_trombone_off();
+    }
+    return;
+    
+  case TOGGLE_VBASS_TROMBONE:
+    endpoint_notes_off(ENDPOINT_BASS_TROMBONE);
+    vbass_trombone_on = !vbass_trombone_on;
+    if (vbass_trombone_on) {
+      update_bass();
+    } else {
+      vbass_trombone_off();
     }
     return;
     
@@ -697,12 +731,12 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
-    if (bass_trombone_on && endpoint == ENDPOINT_TROMBONE) {
+    if ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
+        (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE)) {
       if (breath < 10 &&
-          current_note[ENDPOINT_TROMBONE] != -1) {
-        send_midi(MIDI_OFF, current_note[ENDPOINT_TROMBONE], 0,
-                  ENDPOINT_TROMBONE);
-        current_note[ENDPOINT_TROMBONE] = -1;
+          current_note[endpoint] != -1) {
+        send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
+        current_note[endpoint] = -1;
       } else if (breath > 20) {
         update_bass();
       }
@@ -755,7 +789,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %3d\n",
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
          (footbass_high_on ? "fh" : "  "),
@@ -764,6 +798,7 @@ void print_status() {
          (piano_on ? "P" : " "),
          (bass_sax_on ? "bw" : "  "),
          (bass_trombone_on ? "bT" : "  "),
+         (vbass_trombone_on ? "BT" : "  "),
          button_endpoint_str(),
          note_str(active_note()),
          breath);
@@ -804,6 +839,7 @@ void read_midi(const MIDIPacketList *pktlist,
             handle_control(note_in);
           }
         } else {
+          printf("button\n");
           handle_button(mode, note_in, val);
         }
       } else if (srcConnRefCon == &midiport_feet_controller) {
