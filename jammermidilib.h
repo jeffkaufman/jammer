@@ -225,7 +225,7 @@ void update_bass() {
   if (trombone_note < 40) {
     trombone_note += 12;
   }
-  if (bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
+  if (piano_on && bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
     bass_trombone_off();
     send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
     current_note[ENDPOINT_TROMBONE] = trombone_note;
@@ -234,7 +234,7 @@ void update_bass() {
   if (bass_trombone_note < 32) {
     bass_trombone_note += 12;
   }
-  if (vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
+  if (piano_on && vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
     vbass_trombone_off();
     send_midi(MIDI_ON, bass_trombone_note, piano_left_hand_velocity, ENDPOINT_BASS_TROMBONE);
     current_note[ENDPOINT_BASS_TROMBONE] = bass_trombone_note;
@@ -597,6 +597,19 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
       root_note = to_root(note_out);
       update_bass();
     }
+
+    if (!piano_on) {
+      if (bass_sax_on) {
+        send_midi(mode, note_out - (12*3), val, ENDPOINT_BASS_SAX);
+      }
+      if (vbass_trombone_on) {
+        send_midi(mode, note_out - (12*4), val, ENDPOINT_BASS_TROMBONE);
+      }
+      if (bass_trombone_on) {
+        send_midi(mode, note_out - (12*3) + 7, val, ENDPOINT_TROMBONE);
+      }
+    }
+
     return;
   }
 
@@ -609,7 +622,6 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
       chosen_endpoint = ENDPOINT_BASS_SAX;
     }
   } else {
-    printf("%d\n", note_out);
     if (note_out < 40) {
       chosen_endpoint = ENDPOINT_BASS_TROMBONE;
     }
@@ -731,7 +743,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
-    if ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
+    if (piano_on &&
+        (bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
         (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE)) {
       if (breath < 10 &&
           current_note[endpoint] != -1) {
@@ -839,7 +852,6 @@ void read_midi(const MIDIPacketList *pktlist,
             handle_control(note_in);
           }
         } else {
-          printf("button\n");
           handle_button(mode, note_in, val);
         }
       } else if (srcConnRefCon == &midiport_feet_controller) {
@@ -935,10 +947,13 @@ void jml_setup() {
   }
   if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
     connect_source(feet_controller, &midiport_feet_controller);
+    handle_control(TOGGLE_DRUM_LOW);
+    handle_control(TOGGLE_DRUM_HIGH);
   }
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
+    handle_control(TOGGLE_PIANO);
   }
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
@@ -955,12 +970,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
 
-  // turn things on; doing it here zvso the lights end up correct
-  handle_control(TOGGLE_PIANO);
-  handle_control(TOGGLE_DRUM_LOW);
-  handle_control(TOGGLE_DRUM_HIGH);
-
-  // toggle to trombone and then back to sax
+  // toggle to trombone and then back to sax so the lights are right
   handle_control(SELECT_SAX_TROMBONE);
   handle_control(SELECT_SAX_TROMBONE);
 }
