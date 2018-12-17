@@ -213,7 +213,7 @@ void vbass_trombone_off() {
 }
 
 void update_bass() {
-  if (breath < 10) return;
+  if (breath < 3) return;
 
   int note_out = active_note();
   if (jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
@@ -746,11 +746,11 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (piano_on &&
         (bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
         (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE)) {
-      if (breath < 10 &&
+      if (breath < 2 &&
           current_note[endpoint] != -1) {
         send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
         current_note[endpoint] = -1;
-      } else if (breath > 20) {
+      } else if (breath > 3) {
         update_bass();
       }
     }
