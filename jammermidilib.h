@@ -33,6 +33,8 @@ Which is:
  90 Dh  Drum high
  91 Fh  Footbass high
 
+ 3  fl  Feet louder
+ 2  fq  Feet quieter
  1  O   All notes off
  */
 
@@ -49,7 +51,10 @@ void attempt(OSStatus result, char* errmsg) {
 }
 
 /* controls */
-#define ALL_NOTES_OFF           1
+#define ALL_NOTES_OFF          1
+#define FEET_QUIETER           2
+#define FEET_LOUDER            3
+#define LOW_CONTROL_MAX        FEET_LOUDER
 
 #define TOGGLE_PIANO           92
 #define SELECT_SAX_TROMBONE    93
@@ -62,8 +67,6 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_VBASS_TROMBONE  89
 #define TOGGLE_DRUM_HIGH       90
 #define TOGGLE_FOOTBASS_HIGH   91
-
-#define LOW_CONTROL_MAX        ALL_NOTES_OFF
 #define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
 #define BASS_MIN               71
@@ -104,6 +107,8 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define LIGHT_UDP_PORT 23512
 
+#define FOOT_MAX_VOLUME 10  // 0 - max, inclusive
+
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
 
@@ -124,6 +129,7 @@ bool bass_sax_on = false;
 bool drum_low_on = false;
 bool drum_high_on = false;
 bool piano_on = false;
+int foot_volume = FOOT_MAX_VOLUME / 2;
 
 int button_endpoint = ENDPOINT_SAX;
 
@@ -521,7 +527,19 @@ void handle_control_helper(unsigned int note_in) {
   case ALL_NOTES_OFF:
     all_notes_off(N_ENDPOINTS);
     return;
-    
+
+  case FEET_QUIETER:
+    if (foot_volume > 0) {
+      foot_volume--;
+    }
+    return;
+  
+  case FEET_LOUDER:
+    if (foot_volume < FOOT_MAX_VOLUME) {
+      foot_volume++;
+    }
+    return;    
+
   case SELECT_SAX_TROMBONE:
     all_notes_off(N_BUTTON_ENDPOINTS);
     button_endpoint = (button_endpoint == ENDPOINT_SAX) ? ENDPOINT_TROMBONE : ENDPOINT_SAX;
@@ -630,42 +648,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
-int scale_drum(int val) {
-  // The highest value I can consistently get is 90, lowest is 27.  Map that
-  // onto 27 through 127 which is a range of 100.
-
-  int min_in = 0;
-  int max_in = 90;
-  int min_out = 70;
-  int max_out = 120;
-  if (val < min_in) {
-    return min_out;
-  }
-
-  if (val > max_in) {
-    return max_out;
-  }
-
-  return ((val - min_in) * (max_out - min_out) / (max_in - min_in)) + min_out;
-}
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_low = note_in == MIDI_DRUM_LOW;
   bool is_midi_on = mode == MIDI_ON;
   int drum_endpoint = is_low ? ENDPOINT_DRUM_LOW : ENDPOINT_DRUM_HIGH;
 
-  if (is_midi_on) {
-    char* lr;
-    if (is_low) {
-      //printf("%3d\n", val);
-      val = scale_drum(val);
-      //printf("  %3d\n", val);
-      lr = "L";
-    } else {
-      val = scale_drum(val);
-      lr = "R";
-    }
-  }
+  // val is entirely ignored, replaced with a button-controlled volume
+  val = 127 * foot_volume / FOOT_MAX_VOLUME;
 
   if (!is_midi_on ||
       is_low ? drum_low_on : drum_high_on) {
@@ -744,8 +734,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
       }
     }
     if (piano_on &&
-        (bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
-        (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE)) {
+        ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
+         (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE))) {
       if (breath < 2 &&
           current_note[endpoint] != -1) {
         send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
