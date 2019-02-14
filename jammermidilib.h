@@ -54,7 +54,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define ALL_NOTES_OFF          1
 #define FEET_QUIETER           2
 #define FEET_LOUDER            3
-#define LOW_CONTROL_MAX        FEET_LOUDER
+#define FEET_RESET             4
+#define LOW_CONTROL_MAX        FEET_RESET
 
 #define TOGGLE_PIANO           92
 #define SELECT_SAX_TROMBONE    93
@@ -107,7 +108,7 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define LIGHT_UDP_PORT 23512
 
-#define FOOT_MAX_VOLUME 10  // 0 - max, inclusive
+#define FOOT_MAX_VOLUME 16  // 0 - max, inclusive
 
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
@@ -466,6 +467,16 @@ void set_light(unsigned char index, struct Color color) {
   send(light_fd, light_buf, sizeof(light_buf), /*flags=*/0);
 }
 
+struct Color scale_color(struct Color color_in, int val, int max_val) {
+  // Make color brighter/dimmer based on the val/max_val fraction.  At 1/3 of
+  // max_val color should be unchanged.
+  double scalar = 3.0 * val / max_val;
+  return (struct Color){
+      color_in.r * scalar,
+      color_in.g * scalar,
+      color_in.b * scalar};
+}
+
 void update_lights(int control) {
   unsigned char index = 0;
   struct Color color = {0, 0, 0};
@@ -514,6 +525,7 @@ void update_lights(int control) {
     } else {
       color = COLOR_OFF;
     }
+    color = scale_color(color, foot_volume, FOOT_MAX_VOLUME);
     break;
   default:
     return;
@@ -539,6 +551,10 @@ void handle_control_helper(unsigned int note_in) {
       foot_volume++;
     }
     return;    
+
+  case FEET_RESET:
+    foot_volume = FOOT_MAX_VOLUME / 2;
+    return;
 
   case SELECT_SAX_TROMBONE:
     all_notes_off(N_BUTTON_ENDPOINTS);
@@ -606,6 +622,14 @@ void handle_control_helper(unsigned int note_in) {
 void handle_control(unsigned int note_in) {
   handle_control_helper(note_in);
   update_lights(note_in);
+
+  // Special case volume controls, since they affect multiple lights.
+  if (note_in == FEET_QUIETER ||
+      note_in == FEET_LOUDER ||
+      note_in == FEET_RESET) {
+    update_lights(TOGGLE_DRUM_LOW);
+    update_lights(TOGGLE_DRUM_HIGH);
+  }
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
