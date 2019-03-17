@@ -26,11 +26,11 @@ Which is:
  94  J  Jawharp
  95 bw  Bass sax
  96 bT  Bass Trombone
- 97 Dl  Drum low
+ 97 Dl  Bass trombone up a fifth
  99 Fl  Footbass low
 
  89 Bt  Very bass trombone
- 90 Dh  Drum high
+ 90 Dh  Bass trombone up an octave
  91 Fh  Footbass high
 
  3  fl  Feet louder
@@ -62,11 +62,11 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_JAWHARP         94
 #define TOGGLE_BASS_SAX        95
 #define TOGGLE_BASS_TROMBONE   96
-#define TOGGLE_DRUM_LOW        97
+#define TOGGLE_BT_UP_5         97
 #define TOGGLE_FOOTBASS_LOW    98
 
 #define TOGGLE_VBASS_TROMBONE  89
-#define TOGGLE_DRUM_HIGH       90
+#define TOGGLE_BT_UP_8         90
 #define TOGGLE_FOOTBASS_HIGH   91
 #define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
@@ -77,8 +77,6 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_TROMBONE 1
 #define N_BUTTON_ENDPOINTS (ENDPOINT_TROMBONE + 1)
 #define ENDPOINT_PIANO 2
-#define ENDPOINT_DRUM_LOW 3
-#define ENDPOINT_DRUM_HIGH 4
 #define ENDPOINT_FOOTBASS 5
 #define ENDPOINT_JAWHARP 6
 #define ENDPOINT_BASS_SAX 7
@@ -127,8 +125,6 @@ bool vbass_trombone_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
 bool bass_sax_on = false;
-bool drum_low_on = false;
-bool drum_high_on = false;
 bool piano_on = false;
 int foot_volume = FOOT_MAX_VOLUME / 2;
 
@@ -138,7 +134,7 @@ int root_note = 26;  // D @ 37Hz
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
-//  * Not in use for drums or footbass
+//  * Not in use for footbass
 int current_note[N_ENDPOINTS];
 
 // Footbass needs to track two notes, because each pedal stays on either until
@@ -442,10 +438,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 #define COLOR_JAWHARP COLOR_GREEN
 #define COLOR_TROMBONE COLOR_YELLOW
 #define COLOR_SAX COLOR_RED
-#define COLOR_DRUM COLOR_BLUE
-#define COLOR_DRUM COLOR_BLUE
 #define COLOR_FOOTBASS COLOR_RED
-#define COLOR_FOOTBASS_DRUM COLOR_PURPLE
 
 
 struct Color {
@@ -481,10 +474,8 @@ void update_lights(int control) {
   unsigned char index = 0;
   struct Color color = {0, 0, 0};
 
-  bool low = (control == TOGGLE_FOOTBASS_LOW ||
-              control == TOGGLE_DRUM_LOW);
+  bool low = (control == TOGGLE_FOOTBASS_LOW);
   int footbass_on = low ? footbass_low_on : footbass_high_on;
-  int drum_on = low ? drum_low_on : drum_high_on;
 
   switch (control) {
   case SELECT_SAX_TROMBONE:
@@ -512,19 +503,9 @@ void update_lights(int control) {
     color = piano_on ? COLOR_PIANO : COLOR_OFF;
     break;
   case TOGGLE_FOOTBASS_LOW:
-  case TOGGLE_DRUM_LOW:
   case TOGGLE_FOOTBASS_HIGH:
-  case TOGGLE_DRUM_HIGH:
     index = low ? LIGHT_FOOT_LOW : LIGHT_FOOT_HIGH;
-    if (footbass_on && drum_on) {
-      color = COLOR_FOOTBASS_DRUM;
-    } else if (footbass_on) {
-      color = COLOR_FOOTBASS;
-    } else if (drum_on) {
-      color = COLOR_DRUM;
-    } else {
-      color = COLOR_OFF;
-    }
+    color = footbass_on ? COLOR_FOOTBASS : COLOR_OFF;
     color = scale_color(color, foot_volume, FOOT_MAX_VOLUME);
     break;
   default:
@@ -605,14 +586,6 @@ void handle_control_helper(unsigned int note_in) {
     bass_sax_on = !bass_sax_on;
     return;
     
-  case TOGGLE_DRUM_LOW:
-    drum_low_on = !drum_low_on;
-    return;
-    
-  case TOGGLE_DRUM_HIGH:
-    drum_high_on = !drum_high_on;
-    return;
-    
   case TOGGLE_PIANO:
     piano_on = !piano_on;
     return;
@@ -627,8 +600,8 @@ void handle_control(unsigned int note_in) {
   if (note_in == FEET_QUIETER ||
       note_in == FEET_LOUDER ||
       note_in == FEET_RESET) {
-    update_lights(TOGGLE_DRUM_LOW);
-    update_lights(TOGGLE_DRUM_HIGH);
+    update_lights(TOGGLE_FOOTBASS_LOW);
+    update_lights(TOGGLE_FOOTBASS_HIGH);
   }
 }
 
@@ -675,17 +648,9 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_low = note_in == MIDI_DRUM_LOW;
-  bool is_midi_on = mode == MIDI_ON;
-  int drum_endpoint = is_low ? ENDPOINT_DRUM_LOW : ENDPOINT_DRUM_HIGH;
 
   // val is entirely ignored, replaced with a button-controlled volume
   val = 127 * foot_volume / FOOT_MAX_VOLUME;
-
-  if (!is_midi_on ||
-      is_low ? drum_low_on : drum_high_on) {
-    int drum_val = val;
-    send_midi(mode, note_in, drum_val, drum_endpoint);
-  }
 
   int* footbass_note;
   int* other_footbass_note;
@@ -816,12 +781,10 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %3d\n",
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
          (footbass_high_on ? "fh" : "  "),
-         (drum_low_on ? "dl" : "  "),
-         (drum_high_on ? "dh" : "  "),
          (piano_on ? "P" : " "),
          (bass_sax_on ? "bw" : "  "),
          (bass_trombone_on ? "bT" : "  "),
@@ -961,8 +924,8 @@ void jml_setup() {
   }
   if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
     connect_source(feet_controller, &midiport_feet_controller);
-    handle_control(TOGGLE_DRUM_LOW);
-    handle_control(TOGGLE_DRUM_HIGH);
+    handle_control(TOGGLE_FOOTBASS_LOW);
+    handle_control(TOGGLE_FOOTBASS_HIGH);
   }
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
@@ -978,8 +941,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_TROMBONE],       CFSTR("jammer-trombone"));
   create_source(&endpoints[ENDPOINT_PIANO],          CFSTR("jammer-piano"));
   create_source(&endpoints[ENDPOINT_FOOTBASS],       CFSTR("jammer-footbass"));
-  create_source(&endpoints[ENDPOINT_DRUM_LOW],       CFSTR("jammer-drum-low"));
-  create_source(&endpoints[ENDPOINT_DRUM_HIGH],      CFSTR("jammer-drum-high"));
   create_source(&endpoints[ENDPOINT_JAWHARP],        CFSTR("jammer-jawharp"));
   create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
