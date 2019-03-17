@@ -26,11 +26,11 @@ Which is:
  94  J  Jawharp
  95 bw  Bass sax
  96 bT  Bass Trombone
- 97 Dl  Bass trombone up a fifth
+ 97 b5  Bass trombone up a fifth
  99 Fl  Footbass low
 
  89 Bt  Very bass trombone
- 90 Dh  Bass trombone up an octave
+ 90 b8  Bass trombone up an octave
  91 Fh  Footbass high
 
  3  fl  Feet louder
@@ -66,7 +66,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_FOOTBASS_LOW    98
 
 #define TOGGLE_VBASS_TROMBONE  89
-#define TOGGLE_BT_UP_8         90
+#define TOGGLE_VBT_UP_8        90
 #define TOGGLE_FOOTBASS_HIGH   91
 #define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
@@ -77,10 +77,10 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_TROMBONE 1
 #define N_BUTTON_ENDPOINTS (ENDPOINT_TROMBONE + 1)
 #define ENDPOINT_PIANO 2
-#define ENDPOINT_FOOTBASS 5
-#define ENDPOINT_JAWHARP 6
-#define ENDPOINT_BASS_SAX 7
-#define ENDPOINT_BASS_TROMBONE 8
+#define ENDPOINT_FOOTBASS 3
+#define ENDPOINT_JAWHARP 4
+#define ENDPOINT_BASS_SAX 5
+#define ENDPOINT_BASS_TROMBONE 6
 #define N_ENDPOINTS (ENDPOINT_BASS_TROMBONE+1)
 
 /* midi values */
@@ -121,6 +121,8 @@ MIDIPortRef midiport_piano;
 bool tilt_on = false;
 bool jawharp_on = false;
 bool bass_trombone_on = false;
+bool bass_trombone_up_5 = false;
+bool vbass_trombone_up_8 = false;
 bool vbass_trombone_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
@@ -487,12 +489,32 @@ void update_lights(int control) {
     color = jawharp_on ? COLOR_JAWHARP : COLOR_OFF;
     break;
   case TOGGLE_BASS_TROMBONE:
+  case TOGGLE_BT_UP_5:
     index = LIGHT_BASS_TROMBONE;
-    color = bass_trombone_on ? COLOR_TROMBONE : COLOR_OFF;
+
+    if (bass_trombone_on) {
+      if (bass_trombone_up_5) {
+        color = COLOR_GREEN;
+      } else {
+        color = COLOR_YELLOW;
+      }
+    } else {
+      color = COLOR_OFF;
+    }
     break;
   case TOGGLE_VBASS_TROMBONE:
+  case TOGGLE_VBT_UP_8:
     index = LIGHT_VBASS_TROMBONE;
-    color = vbass_trombone_on ? COLOR_TROMBONE : COLOR_OFF;
+
+    if (vbass_trombone_on) {
+      if (vbass_trombone_up_8) {
+        color = COLOR_GREEN;
+      } else {
+        color = COLOR_YELLOW;
+      }
+    } else {
+      color = COLOR_OFF;
+    }
     break;
   case TOGGLE_BASS_SAX:
     index = LIGHT_BASS_SAX;
@@ -516,7 +538,7 @@ void update_lights(int control) {
 
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
-    
+
   case ALL_NOTES_OFF:
     all_notes_off(N_ENDPOINTS);
     return;
@@ -526,12 +548,12 @@ void handle_control_helper(unsigned int note_in) {
       foot_volume--;
     }
     return;
-  
+
   case FEET_LOUDER:
     if (foot_volume < FOOT_MAX_VOLUME) {
       foot_volume++;
     }
-    return;    
+    return;
 
   case FEET_RESET:
     foot_volume = FOOT_MAX_VOLUME / 2;
@@ -541,7 +563,7 @@ void handle_control_helper(unsigned int note_in) {
     all_notes_off(N_BUTTON_ENDPOINTS);
     button_endpoint = (button_endpoint == ENDPOINT_SAX) ? ENDPOINT_TROMBONE : ENDPOINT_SAX;
     return;
-    
+
   case TOGGLE_JAWHARP:
     endpoint_notes_off(ENDPOINT_JAWHARP);
     jawharp_on = !jawharp_on;
@@ -551,41 +573,55 @@ void handle_control_helper(unsigned int note_in) {
       jawharp_off();
     }
     return;
-    
+
   case TOGGLE_BASS_TROMBONE:
+  case TOGGLE_BT_UP_5:
     endpoint_notes_off(ENDPOINT_TROMBONE);
-    bass_trombone_on = !bass_trombone_on;
+
+    if (note_in == TOGGLE_BASS_TROMBONE) {
+      bass_trombone_on = !bass_trombone_on;
+    } else if (note_in == TOGGLE_BT_UP_5) {
+      bass_trombone_up_5 = !bass_trombone_up_5;
+    }
+
     if (bass_trombone_on) {
       update_bass();
     } else {
       bass_trombone_off();
     }
     return;
-    
+
   case TOGGLE_VBASS_TROMBONE:
+  case TOGGLE_VBT_UP_8:
     endpoint_notes_off(ENDPOINT_BASS_TROMBONE);
-    vbass_trombone_on = !vbass_trombone_on;
+
+    if (note_in == TOGGLE_VBASS_TROMBONE) {
+      vbass_trombone_on = !vbass_trombone_on;
+    } else if (note_in == TOGGLE_VBT_UP_8) {
+      vbass_trombone_up_8 = !vbass_trombone_up_8;
+    }
+
     if (vbass_trombone_on) {
       update_bass();
     } else {
       vbass_trombone_off();
     }
     return;
-    
+
   case TOGGLE_FOOTBASS_LOW:
     footbass_off();
     footbass_low_on = !footbass_low_on;
     return;
-    
+
   case TOGGLE_FOOTBASS_HIGH:
     footbass_off();
     footbass_high_on = !footbass_high_on;
     return;
-    
+
   case TOGGLE_BASS_SAX:
     bass_sax_on = !bass_sax_on;
     return;
-    
+
   case TOGGLE_PIANO:
     piano_on = !piano_on;
     return;
@@ -618,10 +654,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
         send_midi(mode, note_out - (12*3), val, ENDPOINT_BASS_SAX);
       }
       if (vbass_trombone_on) {
-        send_midi(mode, note_out - (12*4), val, ENDPOINT_BASS_TROMBONE);
+        send_midi(mode, note_out - (12*4) +
+                  (vbass_trombone_up_8 ? 12 : 0),
+                  val, ENDPOINT_BASS_TROMBONE);
       }
       if (bass_trombone_on) {
-        send_midi(mode, note_out - (12*3) + 7, val, ENDPOINT_TROMBONE);
+        send_midi(mode, note_out - (12*3) +
+                  (bass_trombone_up_5 ? 7 : 0),
+                  val, ENDPOINT_TROMBONE);
       }
     }
 
@@ -781,14 +821,16 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %3d\n",
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
          (footbass_high_on ? "fh" : "  "),
          (piano_on ? "P" : " "),
          (bass_sax_on ? "bw" : "  "),
          (bass_trombone_on ? "bT" : "  "),
+         (bass_trombone_up_5 ? "b5" : "  "),
          (vbass_trombone_on ? "BT" : "  "),
+         (vbass_trombone_up_8 ? "b8" : "  "),
          button_endpoint_str(),
          note_str(active_note()),
          breath);
