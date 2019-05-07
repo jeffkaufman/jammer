@@ -16,7 +16,7 @@
 /*
   P  ST  J   bw  bT  Dl  Fl
                        Dh  Fh
-  ...
+  ...                    Or
 
   O
 
@@ -32,6 +32,8 @@ Which is:
  89 Bt  Very bass trombone
  90 b8  Bass trombone up an octave
  91 Fh  Footbass high
+
+ 84 Or  Organ
 
  3  fl  Feet louder
  2  fq  Feet quieter
@@ -70,6 +72,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_FOOTBASS_HIGH   91
 #define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
+#define TOGGLE_ORGAN           84
+
 #define BASS_MIN               71
 
 /* endpoints */
@@ -81,7 +85,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_JAWHARP 4
 #define ENDPOINT_BASS_SAX 5
 #define ENDPOINT_BASS_TROMBONE 6
-#define N_ENDPOINTS (ENDPOINT_BASS_TROMBONE+1)
+#define ENDPOINT_ORGAN 6
+#define N_ENDPOINTS (ENDPOINT_ORGAN+1)
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -108,6 +113,8 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define FOOT_MAX_VOLUME 16  // 0 - max, inclusive
 
+#define TICK_MS 10  // try to tick every N milliseconds
+
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
 
@@ -128,6 +135,7 @@ bool footbass_low_on = false;
 bool footbass_high_on = false;
 bool bass_sax_on = false;
 bool piano_on = false;
+bool organ_on = false;
 int foot_volume = FOOT_MAX_VOLUME / 2;
 
 int button_endpoint = ENDPOINT_SAX;
@@ -149,7 +157,11 @@ int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
 int roll = MIDI_MAX / 2;
 int pitch = MIDI_MAX / 2;
 
-int breath = 0;
+int breath = 0;  // current value from breath controller
+double leakage = 0;  // set by calculate_breath_speeds()
+double breath_gain = 0;  // set by calculate_breath_speeds()
+double max_air = 0; // set by calculate_breath_speeds()
+double air = 0;  // maintained by update_air()
 
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
@@ -414,6 +426,9 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     int piano_note = note_in + 12;  // using a patch that's confused about location
     send_midi(mode, piano_note, val, ENDPOINT_PIANO);
   }
+  if (organ_on) {
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN);
+  }
 }
 
 #define LIGHT_PIANO          0
@@ -521,8 +536,19 @@ void update_lights(int control) {
     color = bass_sax_on ? COLOR_SAX : COLOR_OFF;
     break;
   case TOGGLE_PIANO:
+  case TOGGLE_ORGAN:
     index = LIGHT_PIANO;
-    color = piano_on ? COLOR_PIANO : COLOR_OFF;
+    if (piano_on) {
+      if (organ_on) {
+        color = COLOR_GREEN;
+      } else {
+        color = COLOR_BLUE;
+      }
+    } else if (organ_on) {
+      color = COLOR_YELLOW;
+    } else {
+      color = COLOR_OFF;
+    }
     break;
   case TOGGLE_FOOTBASS_LOW:
   case TOGGLE_FOOTBASS_HIGH:
@@ -624,6 +650,11 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_PIANO:
     piano_on = !piano_on;
+    return;
+
+  case TOGGLE_ORGAN:
+    endpoint_notes_off(ENDPOINT_ORGAN);
+    organ_on = !organ_on;
     return;
   }
 }
@@ -729,6 +760,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
   if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
     send_midi(MIDI_CC, cc, val, ENDPOINT_SAX);
     send_midi(MIDI_CC, cc, val, ENDPOINT_BASS_SAX);
+    send_midi(MIDI_CC, cc, val, ENDPOINT_TROMBONE);
     return;
   }
 
@@ -745,10 +777,14 @@ void handle_cc(unsigned int cc, unsigned int val) {
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
         endpoint != ENDPOINT_BASS_SAX &&
-        endpoint != ENDPOINT_BASS_TROMBONE) {
+        endpoint != ENDPOINT_BASS_TROMBONE &&
+        endpoint != ENDPOINT_ORGAN) {
       continue;
     }
     int use_val = val;
+    if (endpoint == ENDPOINT_ORGAN) {
+      use_val = air;
+    }
     if (use_val > MIDI_MAX) {
       use_val = MIDI_MAX;
     }
@@ -866,7 +902,9 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-        if (note_in <= LOW_CONTROL_MAX || note_in >= HIGH_CONTROL_MIN) {
+        if (note_in <= LOW_CONTROL_MAX ||
+            note_in >= HIGH_CONTROL_MIN ||
+            note_in == TOGGLE_ORGAN) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
           }
@@ -913,7 +951,58 @@ void create_source(MIDIEndpointRef* endpoint_ref, CFStringRef name) {
    "creating OS-X virtual MIDI source." );
 }
 
+void calculate_breath_speeds() {
+  // We're modeling a bag that gets blown up from the breath controller and then
+  // slowly deflates on its own.  Each tick we want to put `breath` air into the
+  // bag, and let out some air for leakage.
+  //
+  // We want a pretty big stretchy bag, because we want to be able to take a
+  // breath without losing the energy.  I can comfortably take a breath in half
+  // a second, so lets say a 5s half life.
+  int half_life_ms = 5000;
+  int half_life_ticks = half_life_ms / TICK_MS;
+
+  // To make the bag lose half its air in a given number of ticks we want:
+  //
+  //   leakage^half_life_ticks = 0.5
+  //
+  // So, what's leakage?  Take the log of both sides, reorder, then
+  // exponentiate:
+  //
+  //   ln(leakage^half_life_ticks) = ln(0.5)
+  //   half_life_ticks * ln(leakage) = ln(0.5)
+  //   ln(leakage) = ln(0.5) / half_life_ticks
+  //   leakage = e^(ln(0.5) / half_life_ticks)
+  leakage = exp(log(0.5) / half_life_ticks);
+  printf("Calculated that to leak half the air in %dms (%d ticks) we "
+         "should scale by %.4f on each tick.\n", half_life_ms, half_life_ticks,
+         leakage);
+
+  // Model the bag as being a bit bigger than MIDI_MAX in order to allow
+  // holding the synth at MIDI_MAX without constant breath.  Specifically, we
+  // want half a second of breath=0 to bring the bag from its maximum volume
+  // down to MIDI_MAX.
+  int half_a_second_ticks = 1000 / TICK_MS;
+  double half_a_second_leakage = pow(leakage, half_a_second_ticks);
+  max_air = 1/half_a_second_leakage * MIDI_MAX;
+  printf("Calculated that in half a second we leak down to %.0f%% full, so "
+         "we should oversize the bag to %.0f%%\n", half_a_second_leakage*100,
+         1/half_a_second_leakage*100);
+
+  // Lets say we want to be able to blow the bag up to full in the same time it
+  // takes for it to lose half its air (ignoring leakage), and we blow it up
+  // linearly.
+  int fill_time_ms = half_life_ms;
+  int fill_time_ticks = fill_time_ms / TICK_MS;
+  breath_gain = max_air / fill_time_ticks / MIDI_MAX;
+  printf("Calculated that to fill the bag to %.2f at max breath in %dms "
+         "(%d ticks) we should inflate by %.6f of the breath value each tick\n",
+         max_air, fill_time_ms, fill_time_ticks, breath_gain);
+}
+
 void jml_setup() {
+  calculate_breath_speeds();
+
   light_fd = socket(AF_INET, SOCK_DGRAM, 0);
   if (light_fd < 0) {
     perror("couldn't create light udp socket");
@@ -986,10 +1075,27 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_JAWHARP],        CFSTR("jammer-jawharp"));
   create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
+  create_source(&endpoints[ENDPOINT_ORGAN],          CFSTR("jammer-organ"));
 
   // toggle to trombone and then back to sax so the lights are right
   handle_control(SELECT_SAX_TROMBONE);
   handle_control(SELECT_SAX_TROMBONE);
+}
+
+void update_air() {
+  // see calculate_breath_speeds()
+  air *= leakage;
+  air += (breath * breath_gain);
+  if (air > max_air) {
+    air = max_air;
+  }
+  // It's ok that air > MIDI_MAX (because max_air > MIDI_MAX) because
+  // everything that uses this will only allow a max of MIDI_MAX.
+}
+
+void jml_tick() {
+  // Called every TICK_MS
+  update_air();
 }
 
 #endif

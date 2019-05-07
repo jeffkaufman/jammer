@@ -8,6 +8,9 @@
 
 int main(int argc, char** argv) {
   jml_setup();
-  sleep(-1);
+  while (true) {
+    usleep(TICK_MS);
+    jml_tick();
+  }
   return 0;
 }
