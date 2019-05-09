@@ -777,14 +777,10 @@ void handle_cc(unsigned int cc, unsigned int val) {
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
         endpoint != ENDPOINT_BASS_SAX &&
-        endpoint != ENDPOINT_BASS_TROMBONE &&
-        endpoint != ENDPOINT_ORGAN) {
+        endpoint != ENDPOINT_BASS_TROMBONE) {
       continue;
     }
     int use_val = val;
-    if (endpoint == ENDPOINT_ORGAN) {
-      use_val = air;
-    }
     if (use_val > MIDI_MAX) {
       use_val = MIDI_MAX;
     }
@@ -1093,9 +1089,22 @@ void update_air() {
   // everything that uses this will only allow a max of MIDI_MAX.
 }
 
+int last_val = 0;
+void forward_air() {
+  int val = air;
+  if (val > MIDI_MAX) {
+    val = MIDI_MAX;
+  }
+  if (val != last_val) {
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN);
+    last_val = val;
+  }
+}
+
 void jml_tick() {
   // Called every TICK_MS
   update_air();
+  forward_air();
 }
 
 #endif
