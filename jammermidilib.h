@@ -14,8 +14,8 @@
 
 
 /*
-  P  ST  J   bw  bT  Dl  Fl
-                       Dh  Fh
+  P  ST  J   bw  bT  b5  Fl
+                       b8  Fh
   ...                    Or
 
   O
@@ -27,7 +27,7 @@ Which is:
  95 bw  Bass sax
  96 bT  Bass Trombone
  97 b5  Bass trombone up a fifth
- 99 Fl  Footbass low
+ 98 Fl  Footbass low
 
  89 Bt  Very bass trombone
  90 b8  Bass trombone up an octave
