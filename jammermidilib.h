@@ -827,7 +827,7 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %3d\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %s %3d %.2f\n",
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
          (footbass_high_on ? "fh" : "  "),
@@ -839,7 +839,8 @@ void print_status() {
          (vbass_trombone_up_8 ? "b8" : "  "),
          button_endpoint_str(),
          note_str(active_note()),
-         breath);
+         breath,
+         air);
 }
 
 void read_midi(const MIDIPacketList *pktlist,
