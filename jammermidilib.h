@@ -85,7 +85,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_JAWHARP 4
 #define ENDPOINT_BASS_SAX 5
 #define ENDPOINT_BASS_TROMBONE 6
-#define ENDPOINT_ORGAN 6
+#define ENDPOINT_ORGAN 7
 #define N_ENDPOINTS (ENDPOINT_ORGAN+1)
 
 /* midi values */
@@ -985,10 +985,10 @@ void calculate_breath_speeds() {
          "we should oversize the bag to %.0f%%\n", half_a_second_leakage*100,
          1/half_a_second_leakage*100);
 
-  // Lets say we want to be able to blow the bag up to full in the same time it
-  // takes for it to lose half its air (ignoring leakage), and we blow it up
-  // linearly.
-  int fill_time_ms = half_life_ms;
+  // Lets's blow the bag up linearly (ignoring leakage).
+  // TODO: play with making the bag get somewhat full quickly, but then take
+  // more effort to get all the way full.
+  int fill_time_ms = 1000;
   int fill_time_ticks = fill_time_ms / TICK_MS;
   breath_gain = max_air / fill_time_ticks / MIDI_MAX;
   printf("Calculated that to fill the bag to %.2f at max breath in %dms "

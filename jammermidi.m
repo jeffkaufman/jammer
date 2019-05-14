@@ -9,7 +9,7 @@
 int main(int argc, char** argv) {
   jml_setup();
   while (true) {
-    usleep(TICK_MS);
+    usleep(TICK_MS * 1000);
     jml_tick();
   }
   return 0;
