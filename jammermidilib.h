@@ -54,10 +54,7 @@ void attempt(OSStatus result, char* errmsg) {
 
 /* controls */
 #define ALL_NOTES_OFF          1
-#define FEET_QUIETER           2
-#define FEET_LOUDER            3
-#define FEET_RESET             4
-#define LOW_CONTROL_MAX        FEET_RESET
+#define LOW_CONTROL_MAX        ALL_NOTES_OFF
 
 #define TOGGLE_PIANO           92
 #define SELECT_SAX_TROMBONE    93
@@ -136,7 +133,6 @@ bool footbass_high_on = false;
 bool bass_sax_on = false;
 bool piano_on = false;
 bool organ_on = false;
-int foot_volume = FOOT_MAX_VOLUME / 2;
 
 int button_endpoint = ENDPOINT_SAX;
 
@@ -554,7 +550,6 @@ void update_lights(int control) {
   case TOGGLE_FOOTBASS_HIGH:
     index = low ? LIGHT_FOOT_LOW : LIGHT_FOOT_HIGH;
     color = footbass_on ? COLOR_FOOTBASS : COLOR_OFF;
-    color = scale_color(color, foot_volume, FOOT_MAX_VOLUME);
     break;
   default:
     return;
@@ -567,22 +562,6 @@ void handle_control_helper(unsigned int note_in) {
 
   case ALL_NOTES_OFF:
     all_notes_off(N_ENDPOINTS);
-    return;
-
-  case FEET_QUIETER:
-    if (foot_volume > 0) {
-      foot_volume--;
-    }
-    return;
-
-  case FEET_LOUDER:
-    if (foot_volume < FOOT_MAX_VOLUME) {
-      foot_volume++;
-    }
-    return;
-
-  case FEET_RESET:
-    foot_volume = FOOT_MAX_VOLUME / 2;
     return;
 
   case SELECT_SAX_TROMBONE:
@@ -662,14 +641,6 @@ void handle_control_helper(unsigned int note_in) {
 void handle_control(unsigned int note_in) {
   handle_control_helper(note_in);
   update_lights(note_in);
-
-  // Special case volume controls, since they affect multiple lights.
-  if (note_in == FEET_QUIETER ||
-      note_in == FEET_LOUDER ||
-      note_in == FEET_RESET) {
-    update_lights(TOGGLE_FOOTBASS_LOW);
-    update_lights(TOGGLE_FOOTBASS_HIGH);
-  }
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -721,7 +692,10 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_low = note_in == MIDI_DRUM_LOW;
 
   // val is entirely ignored, replaced with a button-controlled volume
-  val = 127 * foot_volume / FOOT_MAX_VOLUME;
+  val = air;
+  if (val > MIDI_MAX) {
+    val = MIDI_MAX;
+  }
 
   int* footbass_note;
   int* other_footbass_note;
