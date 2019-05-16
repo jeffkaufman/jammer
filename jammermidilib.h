@@ -14,9 +14,9 @@
 
 
 /*
-  P  ST  J   bw  bT  b5  Fl
-                       b8  Fh
-  ...                    Or
+  P  ST  J       bT  b5  Fl
+                   Bt  b8  Fh
+  ...            Oh  Ol  Or
 
   O
 
@@ -24,7 +24,7 @@ Which is:
  92 P   Piano
  93 ST  Sax vs Trombone
  94  J  Jawharp
- 95 bw  Bass sax
+ 95
  96 bT  Bass Trombone
  97 b5  Bass trombone up a fifth
  98 Fl  Footbass low
@@ -33,6 +33,8 @@ Which is:
  90 b8  Bass trombone up an octave
  91 Fh  Footbass high
 
+ 82 Oh  Organ High
+ 83 Ol  Organ Low
  84 Or  Organ
 
  3  fl  Feet louder
@@ -59,7 +61,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_PIANO           92
 #define SELECT_SAX_TROMBONE    93
 #define TOGGLE_JAWHARP         94
-#define TOGGLE_BASS_SAX        95
+//                             95
 #define TOGGLE_BASS_TROMBONE   96
 #define TOGGLE_BT_UP_5         97
 #define TOGGLE_FOOTBASS_LOW    98
@@ -69,6 +71,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_FOOTBASS_HIGH   91
 #define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
+#define TOGGLE_ORGAN_HIGH      82
+#define TOGGLE_ORGAN_LOW       83
 #define TOGGLE_ORGAN           84
 
 #define BASS_MIN               71
@@ -82,7 +86,9 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_JAWHARP 4
 #define ENDPOINT_BASS_SAX 5
 #define ENDPOINT_BASS_TROMBONE 6
-#define ENDPOINT_ORGAN 7
+#define ENDPOINT_ORGAN_HIGH 7
+#define ENDPOINT_ORGAN_LOW 8
+#define ENDPOINT_ORGAN 9
 #define N_ENDPOINTS (ENDPOINT_ORGAN+1)
 
 /* midi values */
@@ -130,8 +136,9 @@ bool vbass_trombone_up_8 = false;
 bool vbass_trombone_on = false;
 bool footbass_low_on = false;
 bool footbass_high_on = false;
-bool bass_sax_on = false;
 bool piano_on = false;
+bool organ_high_on = false;
+bool organ_low_on = false;
 bool organ_on = false;
 
 int button_endpoint = ENDPOINT_SAX;
@@ -412,15 +419,17 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       update_bass();
     }
   }
-  bool bass_claimed = false;
-  if ((bass_sax_on && is_bass) || mode == MIDI_OFF) {
-    bass_claimed = true;
-    int bass_note = note_in + 24; // intentionally shifting this left on the keyboard
-    send_midi(mode, bass_note, val, ENDPOINT_BASS_SAX);
-  }
-  if ((piano_on && !bass_claimed) || mode == MIDI_OFF) {
+  if (piano_on || mode == MIDI_OFF) {
     int piano_note = note_in + 12;  // using a patch that's confused about location
     send_midi(mode, piano_note, val, ENDPOINT_PIANO);
+  }
+  if (organ_high_on) {
+    // TODO: skip if not high note
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_LOW);
+  }
+  if (organ_low_on) {
+    // TODO: skip if not low note
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_LOW);
   }
   if (organ_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN);
@@ -429,7 +438,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 
 #define LIGHT_PIANO          0
 #define LIGHT_BUTTONS        1
-#define LIGHT_BASS_SAX       2
+#define LIGHT_ORGANS         2
 #define LIGHT_BASS_TROMBONE  3
 #define LIGHT_VBASS_TROMBONE 4
 #define LIGHT_JAWHARP        5
@@ -483,6 +492,34 @@ struct Color scale_color(struct Color color_in, int val, int max_val) {
       color_in.b * scalar};
 }
 
+struct Color merge_bools_green(bool a, bool b) {
+  if (a) {
+    if (b) {
+      return COLOR_GREEN;
+    } else {
+      return COLOR_YELLOW;
+    }
+  } else if (b) {
+    return COLOR_BLUE;
+  } else {
+    return COLOR_OFF;
+  }
+}
+
+struct Color merge_bools_purple(bool a, bool b) {
+  if (a) {
+    if (b) {
+      return COLOR_PURPLE;
+    } else {
+      return COLOR_RED;
+    }
+  } else if (b) {
+    return COLOR_BLUE;
+  } else {
+    return COLOR_OFF;
+  }
+}
+
 void update_lights(int control) {
   unsigned char index = 0;
   struct Color color = {0, 0, 0};
@@ -527,24 +564,15 @@ void update_lights(int control) {
       color = COLOR_OFF;
     }
     break;
-  case TOGGLE_BASS_SAX:
-    index = LIGHT_BASS_SAX;
-    color = bass_sax_on ? COLOR_SAX : COLOR_OFF;
-    break;
   case TOGGLE_PIANO:
   case TOGGLE_ORGAN:
     index = LIGHT_PIANO;
-    if (piano_on) {
-      if (organ_on) {
-        color = COLOR_GREEN;
-      } else {
-        color = COLOR_BLUE;
-      }
-    } else if (organ_on) {
-      color = COLOR_YELLOW;
-    } else {
-      color = COLOR_OFF;
-    }
+    color = merge_bools_green(piano_on, organ_on);
+    break;
+  case TOGGLE_ORGAN_HIGH:
+  case TOGGLE_ORGAN_LOW:
+    index = LIGHT_ORGANS;
+    color = merge_bools_purple(organ_high_on, organ_low_on);
     break;
   case TOGGLE_FOOTBASS_LOW:
   case TOGGLE_FOOTBASS_HIGH:
@@ -623,12 +651,18 @@ void handle_control_helper(unsigned int note_in) {
     footbass_high_on = !footbass_high_on;
     return;
 
-  case TOGGLE_BASS_SAX:
-    bass_sax_on = !bass_sax_on;
-    return;
-
   case TOGGLE_PIANO:
     piano_on = !piano_on;
+    return;
+
+  case TOGGLE_ORGAN_HIGH:
+    endpoint_notes_off(ENDPOINT_ORGAN_HIGH);
+    organ_high_on = !organ_high_on;
+    return;
+
+  case TOGGLE_ORGAN_LOW:
+    endpoint_notes_off(ENDPOINT_ORGAN_LOW);
+    organ_low_on = !organ_low_on;
     return;
 
   case TOGGLE_ORGAN:
@@ -652,9 +686,6 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
 
     if (!piano_on) {
-      if (bass_sax_on) {
-        send_midi(mode, note_out - (12*3), val, ENDPOINT_BASS_SAX);
-      }
       if (vbass_trombone_on) {
         send_midi(mode, note_out - (12*4) +
                   (vbass_trombone_up_8 ? 12 : 0),
@@ -827,12 +858,11 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %s %3d %.2f\n",
+  printf("%s %s %s %s %s %s %s %s %s %s %3d %.2f\n",
          (jawharp_on ? "J" : " "),
          (footbass_low_on ? "f" : " "),
          (footbass_high_on ? "fh" : "  "),
          (piano_on ? "P" : " "),
-         (bass_sax_on ? "bw" : "  "),
          (bass_trombone_on ? "bT" : "  "),
          (bass_trombone_up_5 ? "b5" : "  "),
          (vbass_trombone_on ? "BT" : "  "),
@@ -875,6 +905,8 @@ void read_midi(const MIDIPacketList *pktlist,
       } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in <= LOW_CONTROL_MAX ||
             note_in >= HIGH_CONTROL_MIN ||
+            note_in == TOGGLE_ORGAN_HIGH ||
+            note_in == TOGGLE_ORGAN_LOW ||
             note_in == TOGGLE_ORGAN) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
