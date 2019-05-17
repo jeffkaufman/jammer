@@ -409,6 +409,7 @@ int to_root(note_out) {
 
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_bass = note_in < 51;
+  bool is_low = note_in < 58;
 
   if (mode == MIDI_ON && is_bass) {
     piano_left_hand_velocity = val;
@@ -423,12 +424,11 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     int piano_note = note_in + 12;  // using a patch that's confused about location
     send_midi(mode, piano_note, val, ENDPOINT_PIANO);
   }
-  if (organ_high_on) {
-    // TODO: skip if not high note
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_LOW);
+
+  if (organ_high_on && !is_low) {
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_HIGH);
   }
-  if (organ_low_on) {
-    // TODO: skip if not low note
+  if (organ_low_on && is_low) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_LOW);
   }
   if (organ_on) {
@@ -1078,6 +1078,8 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_JAWHARP],        CFSTR("jammer-jawharp"));
   create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
+  create_source(&endpoints[ENDPOINT_ORGAN_HIGH],     CFSTR("jammer-organ-high"));
+  create_source(&endpoints[ENDPOINT_ORGAN_LOW],      CFSTR("jammer-organ-low"));
   create_source(&endpoints[ENDPOINT_ORGAN],          CFSTR("jammer-organ"));
 
   // toggle to trombone and then back to sax so the lights are right
@@ -1103,6 +1105,8 @@ void forward_air() {
     val = MIDI_MAX;
   }
   if (val != last_val) {
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_HIGH);
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN);
     last_val = val;
   }
