@@ -96,6 +96,9 @@ void attempt(OSStatus result, char* errmsg) {
 #define CC_07 0x07
 #define CC_11 0x0b
 
+#define MIN_TROMBONE 30  // need to be blowing this hard to make the trombone make noise
+#define MAX_TROMBONE 100  // cap midi breath to the trombone at this, or it gets blatty
+
 // gcmidi sends on CC 20 through 29
 #define GCMIDI_MIN 20
 #define GCMIDI_MAX 29
@@ -240,8 +243,18 @@ void update_bass() {
     send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = note_out;
   }
+
+  if (breath < MIN_TROMBONE) {
+    bass_trombone_off();
+    vbass_trombone_off();
+    return;
+  }
+
   int trombone_note = note_out + 12;
   if (trombone_note < 40) {
+    trombone_note += 12;
+  }
+  if (bass_trombone_up_5) {
     trombone_note += 12;
   }
   if (bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
@@ -251,6 +264,9 @@ void update_bass() {
   }
   int bass_trombone_note = trombone_note - 12;
   if (bass_trombone_note < 32) {
+    bass_trombone_note += 12;
+  }
+  if (vbass_trombone_up_8) {
     bass_trombone_note += 12;
   }
   if (vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
@@ -753,8 +769,12 @@ void handle_cc(unsigned int cc, unsigned int val) {
     }
     if (endpoint == ENDPOINT_TROMBONE ||
         endpoint == ENDPOINT_BASS_TROMBONE) {
-      if (use_val > 100) {
-        use_val = 100;
+      use_val -= MIN_TROMBONE;
+      if (use_val < 0) {
+        use_val = 0;
+      }
+      if (use_val > MAX_TROMBONE) {
+        use_val = MAX_TROMBONE;
       }
     }
     if (endpoint == ENDPOINT_JAWHARP) {
