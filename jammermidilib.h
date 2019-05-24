@@ -27,18 +27,16 @@ Which is:
  95 Of  Organ flex
  96 bT  Bass Trombone
  97 b5  Bass trombone up a fifth
- 98 Fl  Footbass low
+ 98 
 
  89 Bt  Very bass trombone
  90 b8  Bass trombone up an octave
- 91 Fh  Footbass high
+ 91 
 
  82 Oh  Organ High
  83 Ol  Organ Low
  84 Or  Organ
 
- 3  fl  Feet louder
- 2  fq  Feet quieter
  1  O   All notes off
  */
 
@@ -64,11 +62,9 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_ORGAN_FLEX      95
 #define TOGGLE_BASS_TROMBONE   96
 #define TOGGLE_BT_UP_5         97
-#define TOGGLE_FOOTBASS_LOW    98
 
 #define TOGGLE_VBASS_TROMBONE  89
 #define TOGGLE_VBT_UP_8        90
-#define TOGGLE_FOOTBASS_HIGH   91
 #define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
 #define TOGGLE_ORGAN_HIGH      82
@@ -82,7 +78,6 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_TROMBONE 1
 #define N_BUTTON_ENDPOINTS (ENDPOINT_TROMBONE + 1)
 #define ENDPOINT_PIANO 2
-#define ENDPOINT_FOOTBASS 3
 #define ENDPOINT_JAWHARP 4
 #define ENDPOINT_BASS_SAX 5
 #define ENDPOINT_BASS_TROMBONE 6
@@ -115,8 +110,6 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define LIGHT_UDP_PORT 23512
 
-#define FOOT_MAX_VOLUME 16  // 0 - max, inclusive
-
 #define TICK_MS 10  // try to tick every N milliseconds
 
 MIDIClientRef midiclient;
@@ -126,7 +119,6 @@ MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
-MIDIPortRef midiport_feet_controller;
 MIDIPortRef midiport_piano;
 
 bool tilt_on = false;
@@ -135,8 +127,6 @@ bool bass_trombone_on = false;
 bool bass_trombone_up_5 = false;
 bool vbass_trombone_up_8 = false;
 bool vbass_trombone_on = false;
-bool footbass_low_on = false;
-bool footbass_high_on = false;
 bool piano_on = false;
 bool organ_high_on = false;
 bool organ_low_on = false;
@@ -159,13 +149,7 @@ int root_note = 26;  // D @ 37Hz
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
-//  * Not in use for footbass
 int current_note[N_ENDPOINTS];
-
-// Footbass needs to track two notes, because each pedal stays on either until
-// we receive MIDI_OFF for it or we get a new MIDI_ON from it.
-int footbass_low_note = -1;
-int footbass_high_note = -1;
 
 int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
 
@@ -210,17 +194,6 @@ void send_midi(char actionType, int noteNo, int v, int endpoint) {
 
 char active_note() {
   return root_note;
-}
-
-void footbass_off() {
-  if (footbass_low_note != -1) {
-    send_midi(MIDI_OFF, footbass_low_note, 0, ENDPOINT_FOOTBASS);
-    footbass_low_note = -1;
-  }
-  if (footbass_high_note != -1) {
-    send_midi(MIDI_OFF, footbass_high_note, 0, ENDPOINT_FOOTBASS);
-    footbass_high_note = -1;
-  }
 }
 
 void jawharp_off() {
@@ -470,8 +443,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 #define LIGHT_BASS_TROMBONE  3
 #define LIGHT_VBASS_TROMBONE 4
 #define LIGHT_JAWHARP        5
-#define LIGHT_FOOT_LOW       6
-#define LIGHT_FOOT_HIGH      7
 #define N_LIGHTS 8
 
 #define COLOR_QUANTUM 10
@@ -488,7 +459,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 #define COLOR_JAWHARP COLOR_GREEN
 #define COLOR_TROMBONE COLOR_YELLOW
 #define COLOR_SAX COLOR_RED
-#define COLOR_FOOTBASS COLOR_RED
 
 
 struct Color {
@@ -552,9 +522,6 @@ void update_lights(int control) {
   unsigned char index = 0;
   struct Color color = {0, 0, 0};
 
-  bool low = (control == TOGGLE_FOOTBASS_LOW);
-  int footbass_on = low ? footbass_low_on : footbass_high_on;
-
   switch (control) {
   case SELECT_SAX_TROMBONE:
     index = LIGHT_BUTTONS;
@@ -601,11 +568,6 @@ void update_lights(int control) {
   case TOGGLE_ORGAN_LOW:
     index = LIGHT_ORGANS;
     color = merge_bools_purple(organ_high_on, organ_low_on);
-    break;
-  case TOGGLE_FOOTBASS_LOW:
-  case TOGGLE_FOOTBASS_HIGH:
-    index = low ? LIGHT_FOOT_LOW : LIGHT_FOOT_HIGH;
-    color = footbass_on ? COLOR_FOOTBASS : COLOR_OFF;
     break;
   default:
     return;
@@ -667,16 +629,6 @@ void handle_control_helper(unsigned int note_in) {
     } else {
       vbass_trombone_off();
     }
-    return;
-
-  case TOGGLE_FOOTBASS_LOW:
-    footbass_off();
-    footbass_low_on = !footbass_low_on;
-    return;
-
-  case TOGGLE_FOOTBASS_HIGH:
-    footbass_off();
-    footbass_high_on = !footbass_high_on;
     return;
 
   case TOGGLE_PIANO:
@@ -749,49 +701,6 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   send_midi(mode, note_out, val, chosen_endpoint);
-}
-
-
-void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
-  bool is_low = note_in == MIDI_DRUM_LOW;
-
-  // val is entirely ignored, replaced with a button-controlled volume
-  val = air;
-  if (val > MIDI_MAX) {
-    val = MIDI_MAX;
-  }
-
-  int* footbass_note;
-  int* other_footbass_note;
-  if (footbass_low_on && is_low) {
-    footbass_note = &footbass_low_note;
-    other_footbass_note = &footbass_high_note;
-  } else if (footbass_high_on && !is_low) {
-    footbass_note = &footbass_high_note;
-    other_footbass_note = &footbass_low_note;
-  } else {
-    return;
-  }
-
-  int note_out = active_note();
-  if (!is_low) {
-    note_out += 12;
-    val -= 10;
-  }
-
-  if (*footbass_note != -1) {
-    send_midi(MIDI_OFF, *footbass_note, 0, ENDPOINT_FOOTBASS);
-    *footbass_note = -1;
-  }
-  if (mode == MIDI_ON) {
-    send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
-    *footbass_note = note_out;
-    if (*footbass_note == *other_footbass_note) {
-      // take ownership of this note, so the MIDI_OFF from the other bass
-      // doesn't end this note early.
-      *other_footbass_note = -1;
-    }
-  }
 }
 
 void handle_cc(unsigned int cc, unsigned int val) {
@@ -903,10 +812,8 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %s %s %3d %.2f\n",
+  printf("%s %s %s %s %s %s %s %s %3d %.2f\n",
          (jawharp_on ? "J" : " "),
-         (footbass_low_on ? "f" : " "),
-         (footbass_high_on ? "fh" : "  "),
          (piano_on ? "P" : " "),
          (bass_trombone_on ? "bT" : "  "),
          (bass_trombone_up_5 ? "b5" : "  "),
@@ -960,8 +867,6 @@ void read_midi(const MIDIPacketList *pktlist,
         } else {
           handle_button(mode, note_in, val);
         }
-      } else if (srcConnRefCon == &midiport_feet_controller) {
-        handle_feet(mode, note_in, val);
       } else if (mode == MIDI_CC) {
         handle_cc(note_in, val);
       } else {
@@ -1090,7 +995,6 @@ void jml_setup() {
     breath_controller,
     game_controller,
     tilt_controller,
-    feet_controller,
     piano_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
     connect_source(axis49, &midiport_axis_49);
@@ -1103,11 +1007,6 @@ void jml_setup() {
   }
   if (get_endpoint_ref(CFSTR("yocto 3d v2"), &tilt_controller)) {
     connect_source(tilt_controller, &midiport_tilt_controller);
-  }
-  if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
-    connect_source(feet_controller, &midiport_feet_controller);
-    handle_control(TOGGLE_FOOTBASS_LOW);
-    handle_control(TOGGLE_FOOTBASS_HIGH);
   }
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
@@ -1122,7 +1021,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_SAX],            CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],       CFSTR("jammer-trombone"));
   create_source(&endpoints[ENDPOINT_PIANO],          CFSTR("jammer-piano"));
-  create_source(&endpoints[ENDPOINT_FOOTBASS],       CFSTR("jammer-footbass"));
   create_source(&endpoints[ENDPOINT_JAWHARP],        CFSTR("jammer-jawharp"));
   create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
