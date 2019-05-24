@@ -14,7 +14,7 @@
 
 
 /*
-  P  ST  J       bT  b5  Fl
+  P  ST  J   Of  bT  b5  Fl
                    Bt  b8  Fh
   ...            Oh  Ol  Or
 
@@ -24,7 +24,7 @@ Which is:
  92 P   Piano
  93 ST  Sax vs Trombone
  94  J  Jawharp
- 95
+ 95 Of  Organ flex
  96 bT  Bass Trombone
  97 b5  Bass trombone up a fifth
  98 Fl  Footbass low
@@ -61,7 +61,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_PIANO           92
 #define SELECT_SAX_TROMBONE    93
 #define TOGGLE_JAWHARP         94
-//                             95
+#define TOGGLE_ORGAN_FLEX      95
 #define TOGGLE_BASS_TROMBONE   96
 #define TOGGLE_BT_UP_5         97
 #define TOGGLE_FOOTBASS_LOW    98
@@ -88,7 +88,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_BASS_TROMBONE 6
 #define ENDPOINT_ORGAN_HIGH 7
 #define ENDPOINT_ORGAN_LOW 8
-#define ENDPOINT_ORGAN 9
+#define ENDPOINT_ORGAN_FLEX 9
+#define ENDPOINT_ORGAN 10
 #define N_ENDPOINTS (ENDPOINT_ORGAN+1)
 
 /* midi values */
@@ -139,7 +140,18 @@ bool footbass_high_on = false;
 bool piano_on = false;
 bool organ_high_on = false;
 bool organ_low_on = false;
+bool organ_flex_on = false;
 bool organ_on = false;
+
+//  The flex organ follows organ_flex_breath and organ_flex_base.
+//  organ_flex_min follows air, organ_flex_breath follows breath.
+int organ_flex_base = 0;
+int organ_flex_breath = 0;
+int last_organ_flex_val = 0;
+int organ_flex_val() {
+  //return (organ_flex_base > organ_flex_breath) ? organ_flex_base : organ_flex_breath;
+  return (organ_flex_base * 0.5) + (organ_flex_breath * 0.5);
+}
 
 int button_endpoint = ENDPOINT_SAX;
 
@@ -366,6 +378,22 @@ char mapping(unsigned char note_in) {
   }
 }
 
+void print_endpoints() {
+  printf("MIDI Endpoints Detected:\n");
+
+  int n_sources = MIDIGetNumberOfSources();
+   for (int i = 0; i < n_sources ; i++) {
+    MIDIEndpointRef src = MIDIGetSource(i);
+    if (!src) continue;
+
+    CFStringRef name;
+    MIDIObjectGetStringProperty (src, kMIDIPropertyName, &name);
+
+    printf("    %s\n", CFStringGetCStringPtr(name, kCFStringEncodingUTF8));
+  }
+  printf("\n");
+}
+
 bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
   int n_sources = MIDIGetNumberOfSources();
   if (!n_sources) {
@@ -377,8 +405,6 @@ bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
 
     CFStringRef name;
     MIDIObjectGetStringProperty (src, kMIDIPropertyName, &name);
-
-    printf("Saw %s\n", CFStringGetCStringPtr(name, kCFStringEncodingUTF8));
 
     if (CFStringCompare(name, target_name, 0) == kCFCompareEqualTo) {
       *endpoint_ref = src;
@@ -408,8 +434,7 @@ int to_root(note_out) {
 }
 
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
-  bool is_bass = note_in < 51;
-  bool is_low = note_in < 58;
+  bool is_bass = note_in < 50;
 
   if (mode == MIDI_ON && is_bass) {
     piano_left_hand_velocity = val;
@@ -425,11 +450,14 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     send_midi(mode, piano_note, val, ENDPOINT_PIANO);
   }
 
-  if (organ_high_on && !is_low) {
+  if (organ_high_on && !is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_HIGH);
   }
-  if (organ_low_on && is_low) {
+  if (organ_low_on && is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_LOW);
+  }
+  if (organ_flex_on) {
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_FLEX);
   }
   if (organ_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN);
@@ -534,7 +562,7 @@ void update_lights(int control) {
     break;
   case TOGGLE_JAWHARP:
     index = LIGHT_JAWHARP;
-    color = jawharp_on ? COLOR_JAWHARP : COLOR_OFF;
+    color = merge_bools_green(jawharp_on, organ_flex_on);
     break;
   case TOGGLE_BASS_TROMBONE:
   case TOGGLE_BT_UP_5:
@@ -660,6 +688,11 @@ void handle_control_helper(unsigned int note_in) {
     organ_high_on = !organ_high_on;
     return;
 
+  case TOGGLE_ORGAN_FLEX:
+    endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
+    organ_flex_on = !organ_flex_on;
+    return;
+
   case TOGGLE_ORGAN_LOW:
     endpoint_notes_off(ENDPOINT_ORGAN_LOW);
     organ_low_on = !organ_low_on;
@@ -781,6 +814,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (endpoint != ENDPOINT_SAX &&
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
+        endpoint != ENDPOINT_ORGAN_FLEX &&
         endpoint != ENDPOINT_BASS_SAX &&
         endpoint != ENDPOINT_BASS_TROMBONE) {
       continue;
@@ -788,6 +822,12 @@ void handle_cc(unsigned int cc, unsigned int val) {
     int use_val = val;
     if (use_val > MIDI_MAX) {
       use_val = MIDI_MAX;
+    }
+    if (endpoint == ENDPOINT_TROMBONE ||
+        endpoint == ENDPOINT_BASS_TROMBONE) {
+      if (use_val > 100) {
+        use_val = 100;
+      }
     }
     if (endpoint == ENDPOINT_JAWHARP) {
       if (breath < 10 &&
@@ -809,6 +849,11 @@ void handle_cc(unsigned int cc, unsigned int val) {
       } else if (breath > 3) {
         update_bass();
       }
+    }
+    if (endpoint == ENDPOINT_ORGAN_FLEX) {
+      organ_flex_breath = use_val;
+      use_val = organ_flex_val();
+      last_organ_flex_val = use_val;
     }
     send_midi(MIDI_CC, CC_11, use_val, endpoint);
   }
@@ -907,6 +952,7 @@ void read_midi(const MIDIPacketList *pktlist,
             note_in >= HIGH_CONTROL_MIN ||
             note_in == TOGGLE_ORGAN_HIGH ||
             note_in == TOGGLE_ORGAN_LOW ||
+            note_in == TOGGLE_ORGAN_FLEX ||
             note_in == TOGGLE_ORGAN) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
@@ -1038,6 +1084,8 @@ void jml_setup() {
      NULL, NULL, &midiclient),
     "creating OS-X MIDI client object." );
 
+  print_endpoints();
+
   MIDIEndpointRef axis49,
     breath_controller,
     game_controller,
@@ -1080,6 +1128,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
   create_source(&endpoints[ENDPOINT_ORGAN_HIGH],     CFSTR("jammer-organ-high"));
   create_source(&endpoints[ENDPOINT_ORGAN_LOW],      CFSTR("jammer-organ-low"));
+  create_source(&endpoints[ENDPOINT_ORGAN_FLEX],     CFSTR("jammer-organ-flex"));
   create_source(&endpoints[ENDPOINT_ORGAN],          CFSTR("jammer-organ"));
 
   // toggle to trombone and then back to sax so the lights are right
@@ -1098,17 +1147,23 @@ void update_air() {
   // everything that uses this will only allow a max of MIDI_MAX.
 }
 
-int last_val = 0;
+int last_air_val = 0;
 void forward_air() {
   int val = air;
   if (val > MIDI_MAX) {
     val = MIDI_MAX;
   }
-  if (val != last_val) {
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_HIGH);
+  if (val != last_air_val) {
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_HIGH);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN);
-    last_val = val;
+    last_air_val = val;
+  }
+  organ_flex_base = val;
+  int organ_flex_value = organ_flex_val();
+  if (organ_flex_value != last_organ_flex_val) {
+    send_midi(MIDI_CC, CC_11, organ_flex_value, ENDPOINT_ORGAN_FLEX);
+    last_organ_flex_val = organ_flex_value;
   }
 }
 
