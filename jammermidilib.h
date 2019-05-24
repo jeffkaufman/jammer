@@ -21,7 +21,7 @@
   O
 
 Which is:
- 92 P   Piano
+ 92 P   Follow piano
  93 ST  Sax vs Trombone
  94  J  Jawharp
  95 Of  Organ flex
@@ -56,7 +56,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define ALL_NOTES_OFF          1
 #define LOW_CONTROL_MAX        ALL_NOTES_OFF
 
-#define TOGGLE_PIANO           92
+#define TOGGLE_FOLLOW_PIANO    92
 #define SELECT_SAX_TROMBONE    93
 #define TOGGLE_JAWHARP         94
 #define TOGGLE_ORGAN_FLEX      95
@@ -77,14 +77,13 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_SAX 0
 #define ENDPOINT_TROMBONE 1
 #define N_BUTTON_ENDPOINTS (ENDPOINT_TROMBONE + 1)
-#define ENDPOINT_PIANO 2
-#define ENDPOINT_JAWHARP 4
-#define ENDPOINT_BASS_SAX 5
-#define ENDPOINT_BASS_TROMBONE 6
-#define ENDPOINT_ORGAN_HIGH 7
-#define ENDPOINT_ORGAN_LOW 8
-#define ENDPOINT_ORGAN_FLEX 9
-#define ENDPOINT_ORGAN 10
+#define ENDPOINT_JAWHARP 2
+#define ENDPOINT_BASS_SAX 3
+#define ENDPOINT_BASS_TROMBONE 4
+#define ENDPOINT_ORGAN_HIGH 5
+#define ENDPOINT_ORGAN_LOW 6
+#define ENDPOINT_ORGAN_FLEX 7
+#define ENDPOINT_ORGAN 8
 #define N_ENDPOINTS (ENDPOINT_ORGAN+1)
 
 /* midi values */
@@ -127,7 +126,7 @@ bool bass_trombone_on = false;
 bool bass_trombone_up_5 = false;
 bool vbass_trombone_up_8 = false;
 bool vbass_trombone_on = false;
-bool piano_on = false;
+bool follow_piano = false;
 bool organ_high_on = false;
 bool organ_low_on = false;
 bool organ_flex_on = false;
@@ -230,7 +229,7 @@ void update_bass() {
   if (trombone_note < 40) {
     trombone_note += 12;
   }
-  if (piano_on && bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
+  if (follow_piano && bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
     bass_trombone_off();
     send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
     current_note[ENDPOINT_TROMBONE] = trombone_note;
@@ -239,7 +238,7 @@ void update_bass() {
   if (bass_trombone_note < 32) {
     bass_trombone_note += 12;
   }
-  if (piano_on && vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
+  if (follow_piano && vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
     vbass_trombone_off();
     send_midi(MIDI_ON, bass_trombone_note, piano_left_hand_velocity, ENDPOINT_BASS_TROMBONE);
     current_note[ENDPOINT_BASS_TROMBONE] = bass_trombone_note;
@@ -418,10 +417,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       update_bass();
     }
   }
-  if (piano_on || mode == MIDI_OFF) {
-    int piano_note = note_in + 12;  // using a patch that's confused about location
-    send_midi(mode, piano_note, val, ENDPOINT_PIANO);
-  }
 
   if (organ_high_on && !is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_HIGH);
@@ -455,11 +450,8 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 #define COLOR_WHITE (struct Color){COLOR_QUANTUM, COLOR_QUANTUM, COLOR_QUANTUM}
 #define COLOR_LOW (struct Color){1, 1, 1}
 
-#define COLOR_PIANO COLOR_WHITE
-#define COLOR_JAWHARP COLOR_GREEN
 #define COLOR_TROMBONE COLOR_YELLOW
 #define COLOR_SAX COLOR_RED
-
 
 struct Color {
   unsigned char r, g, b;
@@ -559,10 +551,10 @@ void update_lights(int control) {
       color = COLOR_OFF;
     }
     break;
-  case TOGGLE_PIANO:
+  case TOGGLE_FOLLOW_PIANO:
   case TOGGLE_ORGAN:
     index = LIGHT_PIANO;
-    color = merge_bools_green(piano_on, organ_on);
+    color = merge_bools_green(follow_piano, organ_on);
     break;
   case TOGGLE_ORGAN_HIGH:
   case TOGGLE_ORGAN_LOW:
@@ -631,8 +623,8 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_PIANO:
-    piano_on = !piano_on;
+  case TOGGLE_FOLLOW_PIANO:
+    follow_piano = !follow_piano;
     return;
 
   case TOGGLE_ORGAN_HIGH:
@@ -670,7 +662,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
       update_bass();
     }
 
-    if (!piano_on) {
+    if (!follow_piano) {
       if (vbass_trombone_on) {
         send_midi(mode, note_out - (12*4) +
                   (vbass_trombone_up_8 ? 12 : 0),
@@ -748,7 +740,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
-    if (piano_on &&
+    if (follow_piano &&
         ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
          (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE))) {
       if (breath < 2 &&
@@ -814,7 +806,7 @@ const char* note_str(int note) {
 void print_status() {
   printf("%s %s %s %s %s %s %s %s %3d %.2f\n",
          (jawharp_on ? "J" : " "),
-         (piano_on ? "P" : " "),
+         (follow_piano ? "P" : " "),
          (bass_trombone_on ? "bT" : "  "),
          (bass_trombone_up_5 ? "b5" : "  "),
          (vbass_trombone_on ? "BT" : "  "),
@@ -1011,7 +1003,7 @@ void jml_setup() {
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
-    handle_control(TOGGLE_PIANO);
+    handle_control(TOGGLE_FOLLOW_PIANO);
   }
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
@@ -1020,7 +1012,6 @@ void jml_setup() {
 
   create_source(&endpoints[ENDPOINT_SAX],            CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],       CFSTR("jammer-trombone"));
-  create_source(&endpoints[ENDPOINT_PIANO],          CFSTR("jammer-piano"));
   create_source(&endpoints[ENDPOINT_JAWHARP],        CFSTR("jammer-jawharp"));
   create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
