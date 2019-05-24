@@ -14,14 +14,14 @@
 
 
 /*
-  P  ST  J   Of  bT  b5  Fl
-                   Bt  b8  Fh
+  92  ST  J   Of  bT  b5 98
+                   Bt  b8  91
   ...            Oh  Ol  Or
 
-  O
+  O  R
 
 Which is:
- 92 P   Follow piano
+ 92
  93 ST  Sax vs Trombone
  94  J  Jawharp
  95 Of  Organ flex
@@ -37,6 +37,7 @@ Which is:
  83 Ol  Organ Low
  84 Or  Organ
 
+ 2  R   Reset
  1  O   All notes off
  */
 
@@ -54,9 +55,9 @@ void attempt(OSStatus result, char* errmsg) {
 
 /* controls */
 #define ALL_NOTES_OFF          1
-#define LOW_CONTROL_MAX        ALL_NOTES_OFF
+#define FULL_RESET             2
+#define LOW_CONTROL_MAX        FULL_RESET
 
-#define TOGGLE_FOLLOW_PIANO    92
 #define SELECT_SAX_TROMBONE    93
 #define TOGGLE_JAWHARP         94
 #define TOGGLE_ORGAN_FLEX      95
@@ -120,17 +121,35 @@ MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_piano;
 
-bool tilt_on = false;
-bool jawharp_on = false;
-bool bass_trombone_on = false;
-bool bass_trombone_up_5 = false;
-bool vbass_trombone_up_8 = false;
-bool vbass_trombone_on = false;
-bool follow_piano = false;
-bool organ_high_on = false;
-bool organ_low_on = false;
-bool organ_flex_on = false;
-bool organ_on = false;
+/* Anything mentioned here should be initialized in voices_reset */
+bool tilt_on;
+bool jawharp_on;
+bool bass_trombone_on;
+bool bass_trombone_up_5;
+bool vbass_trombone_up_8;
+bool vbass_trombone_on;
+bool organ_high_on;
+bool organ_low_on;
+bool organ_flex_on;
+bool organ_on;
+int button_endpoint;
+int root_note;
+
+void voices_reset() {
+  tilt_on = false;
+  jawharp_on = false;
+  bass_trombone_on = false;
+  bass_trombone_up_5 = false;
+  vbass_trombone_up_8 = false;
+  vbass_trombone_on = false;
+  organ_high_on = false;
+  organ_low_on = false;
+  organ_flex_on = false;
+  organ_on = false;
+
+  button_endpoint = ENDPOINT_SAX;
+  root_note = 26;  // D @ 37Hz
+}
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
 //  organ_flex_min follows air, organ_flex_breath follows breath.
@@ -141,10 +160,6 @@ int organ_flex_val() {
   //return (organ_flex_base > organ_flex_breath) ? organ_flex_base : organ_flex_breath;
   return (organ_flex_base * 0.5) + (organ_flex_breath * 0.5);
 }
-
-int button_endpoint = ENDPOINT_SAX;
-
-int root_note = 26;  // D @ 37Hz
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
@@ -229,7 +244,7 @@ void update_bass() {
   if (trombone_note < 40) {
     trombone_note += 12;
   }
-  if (follow_piano && bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
+  if (bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
     bass_trombone_off();
     send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
     current_note[ENDPOINT_TROMBONE] = trombone_note;
@@ -238,7 +253,7 @@ void update_bass() {
   if (bass_trombone_note < 32) {
     bass_trombone_note += 12;
   }
-  if (follow_piano && vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
+  if (vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
     vbass_trombone_off();
     send_midi(MIDI_ON, bass_trombone_note, piano_left_hand_velocity, ENDPOINT_BASS_TROMBONE);
     current_note[ENDPOINT_BASS_TROMBONE] = bass_trombone_note;
@@ -551,10 +566,9 @@ void update_lights(int control) {
       color = COLOR_OFF;
     }
     break;
-  case TOGGLE_FOLLOW_PIANO:
   case TOGGLE_ORGAN:
     index = LIGHT_PIANO;
-    color = merge_bools_green(follow_piano, organ_on);
+    color = organ_on ? COLOR_GREEN : COLOR_OFF;
     break;
   case TOGGLE_ORGAN_HIGH:
   case TOGGLE_ORGAN_LOW:
@@ -567,11 +581,30 @@ void update_lights(int control) {
   set_light(index, color);
 }
 
+void lights_reset() {
+  update_lights(SELECT_SAX_TROMBONE);
+  update_lights(TOGGLE_JAWHARP);
+  update_lights(TOGGLE_BASS_TROMBONE);
+  update_lights(TOGGLE_VBASS_TROMBONE);
+  update_lights(TOGGLE_ORGAN);
+  update_lights(TOGGLE_ORGAN_HIGH);
+  update_lights(TOGGLE_ORGAN_LOW);
+}
+
+void full_reset() {
+  voices_reset();
+  lights_reset();
+}
+
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
   case ALL_NOTES_OFF:
     all_notes_off(N_ENDPOINTS);
+    return;
+
+  case FULL_RESET:
+    full_reset();
     return;
 
   case SELECT_SAX_TROMBONE:
@@ -623,10 +656,6 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_FOLLOW_PIANO:
-    follow_piano = !follow_piano;
-    return;
-
   case TOGGLE_ORGAN_HIGH:
     endpoint_notes_off(ENDPOINT_ORGAN_HIGH);
     organ_high_on = !organ_high_on;
@@ -662,17 +691,15 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
       update_bass();
     }
 
-    if (!follow_piano) {
-      if (vbass_trombone_on) {
-        send_midi(mode, note_out - (12*4) +
-                  (vbass_trombone_up_8 ? 12 : 0),
-                  val, ENDPOINT_BASS_TROMBONE);
-      }
-      if (bass_trombone_on) {
-        send_midi(mode, note_out - (12*3) +
-                  (bass_trombone_up_5 ? 7 : 0),
-                  val, ENDPOINT_TROMBONE);
-      }
+    if (vbass_trombone_on) {
+      send_midi(mode, note_out - (12*4) +
+                (vbass_trombone_up_8 ? 12 : 0),
+                val, ENDPOINT_BASS_TROMBONE);
+    }
+    if (bass_trombone_on) {
+      send_midi(mode, note_out - (12*3) +
+                (bass_trombone_up_5 ? 7 : 0),
+                val, ENDPOINT_TROMBONE);
     }
 
     return;
@@ -740,8 +767,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
-    if (follow_piano &&
-        ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
+    if ( ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
          (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE))) {
       if (breath < 2 &&
           current_note[endpoint] != -1) {
@@ -804,9 +830,8 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %s %3d %.2f\n",
+  printf("%s %s %s %s %s %s %s %3d %.2f\n",
          (jawharp_on ? "J" : " "),
-         (follow_piano ? "P" : " "),
          (bass_trombone_on ? "bT" : "  "),
          (bass_trombone_up_5 ? "b5" : "  "),
          (vbass_trombone_on ? "BT" : "  "),
@@ -975,6 +1000,8 @@ void jml_setup() {
     set_light(i, COLOR_OFF);
   }
 
+  full_reset();
+
   attempt(
     MIDIClientCreate(
      CFSTR("jammer"),
@@ -1003,7 +1030,6 @@ void jml_setup() {
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
-    handle_control(TOGGLE_FOLLOW_PIANO);
   }
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
@@ -1019,10 +1045,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_ORGAN_LOW],      CFSTR("jammer-organ-low"));
   create_source(&endpoints[ENDPOINT_ORGAN_FLEX],     CFSTR("jammer-organ-flex"));
   create_source(&endpoints[ENDPOINT_ORGAN],          CFSTR("jammer-organ"));
-
-  // toggle to trombone and then back to sax so the lights are right
-  handle_control(SELECT_SAX_TROMBONE);
-  handle_control(SELECT_SAX_TROMBONE);
 }
 
 void update_air() {
