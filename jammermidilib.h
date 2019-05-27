@@ -14,8 +14,8 @@
 
 
 /*
-  92  ST  J   Of  bT  b5  bD
-                   Bt  b8  91
+  92  ST  J   Of  bT  b5  bS
+                   Bt  b8  bH
   ...            Oh  Ol  Or
 
   O  R
@@ -27,11 +27,11 @@ Which is:
  95 Of  Organ flex
  96 bT  Bass Trombone
  97 b5  Bass trombone up a fifth
- 98 bD  Breath Drum
+ 98 bS  Breath Ride
 
  89 Bt  Very bass trombone
  90 b8  Bass trombone up an octave
- 91 
+ 91 bH  Breath Hihat
 
  82 Oh  Organ High
  83 Ol  Organ Low
@@ -63,10 +63,11 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_ORGAN_FLEX      95
 #define TOGGLE_BASS_TROMBONE   96
 #define TOGGLE_BT_UP_5         97
-#define TOGGLE_BREATH_DRUM     98
+#define TOGGLE_BREATH_RIDE    98
 
 #define TOGGLE_VBASS_TROMBONE  89
 #define TOGGLE_VBT_UP_8        90
+#define TOGGLE_BREATH_HIHAT    91
 #define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
 
 #define TOGGLE_ORGAN_HIGH      82
@@ -137,7 +138,8 @@ bool organ_high_on;
 bool organ_low_on;
 bool organ_flex_on;
 bool organ_on;
-bool breath_drum_on;
+bool breath_ride_on;
+bool breath_hihat_on;
 int button_endpoint;
 int root_note;
 
@@ -152,7 +154,8 @@ void voices_reset() {
   organ_low_on = false;
   organ_flex_on = false;
   organ_on = false;
-  breath_drum_on = false;
+  breath_ride_on = false;
+  breath_hihat_on = false;
 
   button_endpoint = ENDPOINT_SAX;
   root_note = 26;  // D @ 37Hz
@@ -596,9 +599,10 @@ void update_lights(int control) {
     index = LIGHT_ORGANS;
     color = merge_bools_purple(organ_high_on, organ_low_on);
     break;
-  case TOGGLE_BREATH_DRUM:
+  case TOGGLE_BREATH_HIHAT:
+  case TOGGLE_BREATH_RIDE:
     index = LIGHT_BREATH_DRUM;
-    color = breath_drum_on ? COLOR_BLUE : COLOR_OFF;
+    color = merge_bools_purple(breath_ride_on, breath_hihat_on);
     break;
   default:
     return;
@@ -614,7 +618,8 @@ void lights_reset() {
   update_lights(TOGGLE_ORGAN);
   update_lights(TOGGLE_ORGAN_HIGH);
   update_lights(TOGGLE_ORGAN_LOW);
-  update_lights(TOGGLE_BREATH_DRUM);
+  update_lights(TOGGLE_BREATH_RIDE);
+  update_lights(TOGGLE_BREATH_HIHAT);
 }
 
 void full_reset() {
@@ -702,9 +707,14 @@ void handle_control_helper(unsigned int note_in) {
     organ_on = !organ_on;
     return;
 
-  case TOGGLE_BREATH_DRUM:
+  case TOGGLE_BREATH_RIDE:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
-    breath_drum_on = !breath_drum_on;
+    breath_ride_on = !breath_ride_on;
+    return;
+
+  case TOGGLE_BREATH_HIHAT:
+    endpoint_notes_off(ENDPOINT_BREATH_DRUM);
+    breath_hihat_on = !breath_hihat_on;
     return;
   }
 
@@ -755,8 +765,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
-bool breath_drum_triggered = false;
-int breath_drum_note = 42;
+bool breath_ride_triggered = false;
+bool breath_hihat_triggered = false;
+
+int breath_ride_note = 51;
+int breath_hihat_note = 42;
+
+int breath_ride_threshold = 20;
+int breath_hihat_threshold = 100;
 
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
@@ -771,15 +787,24 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
-  int breath_drum_threshold = 100;
   breath = val;
 
-  if (breath_drum_triggered && breath < breath_drum_threshold - 10) {
-    send_midi(MIDI_OFF, breath_drum_note, 0, ENDPOINT_BREATH_DRUM);
-    breath_drum_triggered = false;
-  } else if (breath_drum_on && !breath_drum_triggered && breath > breath_drum_threshold) {
-    send_midi(MIDI_ON, breath_drum_note, 100, ENDPOINT_BREATH_DRUM);
-    breath_drum_triggered = true;
+  if (breath_ride_triggered && breath < breath_ride_threshold - 10) {
+    send_midi(MIDI_OFF, breath_ride_note, 0, ENDPOINT_BREATH_DRUM);
+    breath_ride_triggered = false;
+  } else if (breath_ride_on && !breath_ride_triggered &&
+             breath > breath_ride_threshold) {
+    send_midi(MIDI_ON, breath_ride_note, 50, ENDPOINT_BREATH_DRUM);
+    breath_ride_triggered = true;
+  }
+
+  if (breath_hihat_triggered && breath < breath_hihat_threshold - 10) {
+    send_midi(MIDI_OFF, breath_hihat_note, 0, ENDPOINT_BREATH_DRUM);
+    breath_hihat_triggered = false;
+  } else if (breath_hihat_on && !breath_hihat_triggered &&
+             breath > breath_hihat_threshold) {
+    send_midi(MIDI_ON, breath_hihat_note, 100, ENDPOINT_BREATH_DRUM);
+    breath_hihat_triggered = true;
   }
 
   // pass other control change to all synths that care about it:
