@@ -62,7 +62,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_JAWHARP         94
 #define TOGGLE_ORGAN_FLEX      95
 #define TOGGLE_BASS_TROMBONE   96
-#define TOGGLE_BT_UP_5         97
+#define TOGGLE_BT_UP_8         97
 #define TOGGLE_BREATH_RIDE    98
 
 #define TOGGLE_VBASS_TROMBONE  89
@@ -131,7 +131,7 @@ MIDIPortRef midiport_piano;
 bool tilt_on;
 bool jawharp_on;
 bool bass_trombone_on;
-bool bass_trombone_up_5;
+bool bass_trombone_up_8;
 bool vbass_trombone_up_8;
 bool vbass_trombone_on;
 bool organ_high_on;
@@ -147,7 +147,7 @@ void voices_reset() {
   tilt_on = false;
   jawharp_on = false;
   bass_trombone_on = false;
-  bass_trombone_up_5 = false;
+  bass_trombone_up_8 = false;
   vbass_trombone_up_8 = false;
   vbass_trombone_on = false;
   organ_high_on = false;
@@ -261,7 +261,7 @@ void update_bass() {
   if (trombone_note < 40) {
     trombone_note += 12;
   }
-  if (bass_trombone_up_5) {
+  if (bass_trombone_up_8) {
     trombone_note += 12;
   }
   if (bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
@@ -563,11 +563,11 @@ void update_lights(int control) {
     color = merge_bools_green(jawharp_on, organ_flex_on);
     break;
   case TOGGLE_BASS_TROMBONE:
-  case TOGGLE_BT_UP_5:
+  case TOGGLE_BT_UP_8:
     index = LIGHT_BASS_TROMBONE;
 
     if (bass_trombone_on) {
-      if (bass_trombone_up_5) {
+      if (bass_trombone_up_8) {
         color = COLOR_GREEN;
       } else {
         color = COLOR_YELLOW;
@@ -654,13 +654,13 @@ void handle_control_helper(unsigned int note_in) {
     return;
 
   case TOGGLE_BASS_TROMBONE:
-  case TOGGLE_BT_UP_5:
+  case TOGGLE_BT_UP_8:
     endpoint_notes_off(ENDPOINT_TROMBONE);
 
     if (note_in == TOGGLE_BASS_TROMBONE) {
       bass_trombone_on = !bass_trombone_on;
-    } else if (note_in == TOGGLE_BT_UP_5) {
-      bass_trombone_up_5 = !bass_trombone_up_5;
+    } else if (note_in == TOGGLE_BT_UP_8) {
+      bass_trombone_up_8 = !bass_trombone_up_8;
     }
 
     if (bass_trombone_on) {
@@ -741,7 +741,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
     if (bass_trombone_on) {
       send_midi(mode, note_out - (12*3) +
-                (bass_trombone_up_5 ? 7 : 0),
+                (bass_trombone_up_8 ? 12 : 0),
                 val, ENDPOINT_TROMBONE);
     }
 
@@ -907,9 +907,9 @@ void print_status() {
   printf("%s %s %s %s %s %s %s %3d %.2f\n",
          (jawharp_on ? "J" : " "),
          (bass_trombone_on ? "bT" : "  "),
-         (bass_trombone_up_5 ? "b5" : "  "),
+         (bass_trombone_up_8 ? "b8" : "  "),
          (vbass_trombone_on ? "BT" : "  "),
-         (vbass_trombone_up_8 ? "b8" : "  "),
+         (vbass_trombone_up_8 ? "v8" : "  "),
          button_endpoint_str(),
          note_str(active_note()),
          breath,
