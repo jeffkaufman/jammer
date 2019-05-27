@@ -14,7 +14,7 @@
 
 
 /*
-  92  ST  J   Of  bT  b5 98
+  92  ST  J   Of  bT  b5  bD
                    Bt  b8  91
   ...            Oh  Ol  Or
 
@@ -27,7 +27,7 @@ Which is:
  95 Of  Organ flex
  96 bT  Bass Trombone
  97 b5  Bass trombone up a fifth
- 98 
+ 98 bD  Breath Drum
 
  89 Bt  Very bass trombone
  90 b8  Bass trombone up an octave
@@ -63,6 +63,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_ORGAN_FLEX      95
 #define TOGGLE_BASS_TROMBONE   96
 #define TOGGLE_BT_UP_5         97
+#define TOGGLE_BREATH_DRUM     98
 
 #define TOGGLE_VBASS_TROMBONE  89
 #define TOGGLE_VBT_UP_8        90
@@ -85,7 +86,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_ORGAN_LOW 6
 #define ENDPOINT_ORGAN_FLEX 7
 #define ENDPOINT_ORGAN 8
-#define N_ENDPOINTS (ENDPOINT_ORGAN+1)
+#define ENDPOINT_BREATH_DRUM 9
+#define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -135,6 +137,7 @@ bool organ_high_on;
 bool organ_low_on;
 bool organ_flex_on;
 bool organ_on;
+bool breath_drum_on;
 int button_endpoint;
 int root_note;
 
@@ -149,6 +152,7 @@ void voices_reset() {
   organ_low_on = false;
   organ_flex_on = false;
   organ_on = false;
+  breath_drum_on = false;
 
   button_endpoint = ENDPOINT_SAX;
   root_note = 26;  // D @ 37Hz
@@ -469,6 +473,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 #define LIGHT_BASS_TROMBONE  3
 #define LIGHT_VBASS_TROMBONE 4
 #define LIGHT_JAWHARP        5
+#define LIGHT_BREATH_DRUM    6
 #define N_LIGHTS 8
 
 #define COLOR_QUANTUM 10
@@ -591,6 +596,10 @@ void update_lights(int control) {
     index = LIGHT_ORGANS;
     color = merge_bools_purple(organ_high_on, organ_low_on);
     break;
+  case TOGGLE_BREATH_DRUM:
+    index = LIGHT_BREATH_DRUM;
+    color = breath_drum_on ? COLOR_BLUE : COLOR_OFF;
+    break;
   default:
     return;
   }
@@ -605,6 +614,7 @@ void lights_reset() {
   update_lights(TOGGLE_ORGAN);
   update_lights(TOGGLE_ORGAN_HIGH);
   update_lights(TOGGLE_ORGAN_LOW);
+  update_lights(TOGGLE_BREATH_DRUM);
 }
 
 void full_reset() {
@@ -691,7 +701,14 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_ORGAN);
     organ_on = !organ_on;
     return;
+
+  case TOGGLE_BREATH_DRUM:
+    endpoint_notes_off(ENDPOINT_BREATH_DRUM);
+    breath_drum_on = !breath_drum_on;
+    return;
   }
+
+
 }
 
 void handle_control(unsigned int note_in) {
@@ -738,6 +755,9 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
+bool breath_drum_triggered = false;
+int breath_drum_note = 42;
+
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
     send_midi(MIDI_CC, cc, val, ENDPOINT_SAX);
@@ -751,7 +771,16 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
+  int breath_drum_threshold = 100;
   breath = val;
+
+  if (breath_drum_triggered && breath < breath_drum_threshold - 10) {
+    send_midi(MIDI_OFF, breath_drum_note, 0, ENDPOINT_BREATH_DRUM);
+    breath_drum_triggered = false;
+  } else if (breath_drum_on && !breath_drum_triggered && breath > breath_drum_threshold) {
+    send_midi(MIDI_ON, breath_drum_note, 100, ENDPOINT_BREATH_DRUM);
+    breath_drum_triggered = true;
+  }
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
@@ -1065,6 +1094,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_ORGAN_LOW],      CFSTR("jammer-organ-low"));
   create_source(&endpoints[ENDPOINT_ORGAN_FLEX],     CFSTR("jammer-organ-flex"));
   create_source(&endpoints[ENDPOINT_ORGAN],          CFSTR("jammer-organ"));
+  create_source(&endpoints[ENDPOINT_BREATH_DRUM],    CFSTR("jammer-drum"));
 }
 
 void update_air() {
