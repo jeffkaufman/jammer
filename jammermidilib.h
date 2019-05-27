@@ -14,14 +14,14 @@
 
 
 /*
-  92  ST  J   Of  bT  b5  bS
+  O2  ST  J   Of  bT  b5  bS
                    Bt  b8  bH
   ...            Oh  Ol  Or
 
   O  R
 
 Which is:
- 92
+ 92 O2  Organ 2
  93 ST  Sax vs Trombone
  94  J  Jawharp
  95 Of  Organ flex
@@ -58,12 +58,13 @@ void attempt(OSStatus result, char* errmsg) {
 #define FULL_RESET             2
 #define LOW_CONTROL_MAX        FULL_RESET
 
+#define TOGGLE_ORGAN_2         92
 #define SELECT_SAX_TROMBONE    93
 #define TOGGLE_JAWHARP         94
 #define TOGGLE_ORGAN_FLEX      95
 #define TOGGLE_BASS_TROMBONE   96
 #define TOGGLE_BT_UP_8         97
-#define TOGGLE_BREATH_RIDE    98
+#define TOGGLE_BREATH_RIDE     98
 
 #define TOGGLE_VBASS_TROMBONE  89
 #define TOGGLE_VBT_UP_8        90
@@ -87,7 +88,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_ORGAN_LOW 6
 #define ENDPOINT_ORGAN_FLEX 7
 #define ENDPOINT_ORGAN 8
-#define ENDPOINT_BREATH_DRUM 9
+#define ENDPOINT_ORGAN_2 9
+#define ENDPOINT_BREATH_DRUM 10
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
 
 /* midi values */
@@ -138,6 +140,7 @@ bool organ_high_on;
 bool organ_low_on;
 bool organ_flex_on;
 bool organ_on;
+bool organ_2_on;
 bool breath_ride_on;
 bool breath_hihat_on;
 int button_endpoint;
@@ -154,6 +157,7 @@ void voices_reset() {
   organ_low_on = false;
   organ_flex_on = false;
   organ_on = false;
+  organ_2_on = false;
   breath_ride_on = false;
   breath_hihat_on = false;
 
@@ -167,7 +171,6 @@ int organ_flex_base = 0;
 int organ_flex_breath = 0;
 int last_organ_flex_val = 0;
 int organ_flex_val() {
-  //return (organ_flex_base > organ_flex_breath) ? organ_flex_base : organ_flex_breath;
   return (organ_flex_base * 0.5) + (organ_flex_breath * 0.5);
 }
 
@@ -468,6 +471,9 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (organ_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN);
   }
+  if (organ_2_on) {
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_2);
+  }
 }
 
 #define LIGHT_PIANO          0
@@ -590,9 +596,9 @@ void update_lights(int control) {
       color = COLOR_OFF;
     }
     break;
-  case TOGGLE_ORGAN:
+  case TOGGLE_ORGAN_2:
     index = LIGHT_PIANO;
-    color = organ_on ? COLOR_GREEN : COLOR_OFF;
+    color = merge_bools_green(organ_on, organ_2_on);
     break;
   case TOGGLE_ORGAN_HIGH:
   case TOGGLE_ORGAN_LOW:
@@ -616,6 +622,7 @@ void lights_reset() {
   update_lights(TOGGLE_BASS_TROMBONE);
   update_lights(TOGGLE_VBASS_TROMBONE);
   update_lights(TOGGLE_ORGAN);
+  update_lights(TOGGLE_ORGAN_2);
   update_lights(TOGGLE_ORGAN_HIGH);
   update_lights(TOGGLE_ORGAN_LOW);
   update_lights(TOGGLE_BREATH_RIDE);
@@ -705,6 +712,11 @@ void handle_control_helper(unsigned int note_in) {
   case TOGGLE_ORGAN:
     endpoint_notes_off(ENDPOINT_ORGAN);
     organ_on = !organ_on;
+    return;
+
+  case TOGGLE_ORGAN_2:
+    endpoint_notes_off(ENDPOINT_ORGAN_2);
+    organ_2_on = !organ_2_on;
     return;
 
   case TOGGLE_BREATH_RIDE:
@@ -950,7 +962,6 @@ void read_midi(const MIDIPacketList *pktlist,
             note_in >= HIGH_CONTROL_MIN ||
             note_in == TOGGLE_ORGAN_HIGH ||
             note_in == TOGGLE_ORGAN_LOW ||
-            note_in == TOGGLE_ORGAN_FLEX ||
             note_in == TOGGLE_ORGAN) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
@@ -1119,6 +1130,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_ORGAN_LOW],      CFSTR("jammer-organ-low"));
   create_source(&endpoints[ENDPOINT_ORGAN_FLEX],     CFSTR("jammer-organ-flex"));
   create_source(&endpoints[ENDPOINT_ORGAN],          CFSTR("jammer-organ"));
+  create_source(&endpoints[ENDPOINT_ORGAN_2],        CFSTR("jammer-organ-2"));
   create_source(&endpoints[ENDPOINT_BREATH_DRUM],    CFSTR("jammer-drum"));
 }
 
@@ -1143,6 +1155,7 @@ void forward_air() {
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_HIGH);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN);
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_2);
     last_air_val = val;
   }
   organ_flex_base = val;
