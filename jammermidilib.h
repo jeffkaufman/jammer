@@ -15,8 +15,8 @@
 
 /*
   O2  ST  J   Of  bT  b5  bS
-                   Bt  b8  bH
-  ...            Oh  Ol  Or
+    Sl              Bt  b8  bH
+                  Oh  Ol  Or
 
   O  R
 
@@ -28,6 +28,8 @@ Which is:
  96 bT  Bass Trombone
  97 b5  Bass trombone up a fifth
  98 bS  Breath Ride
+
+ 85 Sl  Slide
 
  89 Bt  Very bass trombone
  90 b8  Bass trombone up an octave
@@ -66,6 +68,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_BT_UP_8         97
 #define TOGGLE_BREATH_RIDE     98
 
+#define TOGGLE_SLIDE           85
+
 #define TOGGLE_VBASS_TROMBONE  89
 #define TOGGLE_VBT_UP_8        90
 #define TOGGLE_BREATH_HIHAT    91
@@ -89,7 +93,8 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_ORGAN_FLEX 7
 #define ENDPOINT_ORGAN 8
 #define ENDPOINT_ORGAN_2 9
-#define ENDPOINT_BREATH_DRUM 10
+#define ENDPOINT_SLIDE 10
+#define ENDPOINT_BREATH_DRUM 11
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
 
 /* midi values */
@@ -132,6 +137,7 @@ MIDIPortRef midiport_piano;
 /* Anything mentioned here should be initialized in voices_reset */
 bool tilt_on;
 bool jawharp_on;
+bool slide_on;
 bool bass_trombone_on;
 bool bass_trombone_up_8;
 bool vbass_trombone_up_8;
@@ -149,6 +155,7 @@ int root_note;
 void voices_reset() {
   tilt_on = false;
   jawharp_on = false;
+  slide_on = false;
   bass_trombone_on = false;
   bass_trombone_up_8 = false;
   vbass_trombone_up_8 = false;
@@ -176,6 +183,7 @@ int organ_flex_val() {
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
+//  * Always in use for slide
 int current_note[N_ENDPOINTS];
 
 int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
@@ -230,6 +238,13 @@ void jawharp_off() {
   }
 }
 
+void slide_off() {
+  if (current_note[ENDPOINT_SLIDE] != -1) {
+    send_midi(MIDI_OFF, current_note[ENDPOINT_SLIDE], 0, ENDPOINT_SLIDE);
+    current_note[ENDPOINT_SLIDE] = -1;
+  }
+}
+
 void bass_trombone_off() {
   if (current_note[ENDPOINT_TROMBONE] != -1) {
     send_midi(MIDI_OFF, current_note[ENDPOINT_TROMBONE], 0, ENDPOINT_TROMBONE);
@@ -244,6 +259,11 @@ void vbass_trombone_off() {
   }
 }
 
+int slide_note() {
+  int octave = breath < 100 ? 0 : 1;
+  return active_note() + 12*octave;
+}
+
 void update_bass() {
   if (breath < 3) return;
 
@@ -252,6 +272,14 @@ void update_bass() {
     jawharp_off();
     send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = note_out;
+  }
+
+  int slide_note_out = slide_note();
+  if (slide_on && current_note[ENDPOINT_SLIDE] != slide_note_out) {
+    slide_off();
+    printf("slide: %d\n", slide_note_out);
+    send_midi(MIDI_ON, slide_note_out, MIDI_MAX, ENDPOINT_SLIDE);
+    current_note[ENDPOINT_SLIDE] = slide_note_out;
   }
 
   if (breath < MIN_TROMBONE) {
@@ -483,6 +511,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 #define LIGHT_VBASS_TROMBONE 4
 #define LIGHT_JAWHARP        5
 #define LIGHT_BREATH_DRUM    6
+#define LIGHT_SLIDE          7
 #define N_LIGHTS 8
 
 #define COLOR_QUANTUM 10
@@ -568,6 +597,10 @@ void update_lights(int control) {
     index = LIGHT_JAWHARP;
     color = merge_bools_green(jawharp_on, organ_flex_on);
     break;
+  case TOGGLE_SLIDE:
+    index = LIGHT_SLIDE;
+    color = slide_on ? COLOR_YELLOW : COLOR_OFF;
+    break;
   case TOGGLE_BASS_TROMBONE:
   case TOGGLE_BT_UP_8:
     index = LIGHT_BASS_TROMBONE;
@@ -619,6 +652,7 @@ void update_lights(int control) {
 void lights_reset() {
   update_lights(SELECT_SAX_TROMBONE);
   update_lights(TOGGLE_JAWHARP);
+  update_lights(TOGGLE_SLIDE);
   update_lights(TOGGLE_BASS_TROMBONE);
   update_lights(TOGGLE_VBASS_TROMBONE);
   update_lights(TOGGLE_ORGAN);
@@ -657,6 +691,16 @@ void handle_control_helper(unsigned int note_in) {
       update_bass();
     } else {
       jawharp_off();
+    }
+    return;
+
+  case TOGGLE_SLIDE:
+    endpoint_notes_off(ENDPOINT_SLIDE);
+    slide_on = !slide_on;
+    if (slide_on) {
+      update_bass();
+    } else {
+      slide_off();
     }
     return;
 
@@ -824,6 +868,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (endpoint != ENDPOINT_SAX &&
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
+        endpoint != ENDPOINT_SLIDE &&
         endpoint != ENDPOINT_ORGAN_FLEX &&
         endpoint != ENDPOINT_BASS_SAX &&
         endpoint != ENDPOINT_BASS_TROMBONE) {
@@ -849,6 +894,16 @@ void handle_cc(unsigned int cc, unsigned int val) {
         send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
                   ENDPOINT_JAWHARP);
         current_note[ENDPOINT_JAWHARP] = -1;
+      } else if (breath > 20) {
+        update_bass();
+      }
+    }
+    if (endpoint == ENDPOINT_SLIDE) {
+      if (breath < 10 &&
+          current_note[ENDPOINT_SLIDE] != -1) {
+        send_midi(MIDI_OFF, current_note[ENDPOINT_SLIDE], 0,
+                  ENDPOINT_SLIDE);
+        current_note[ENDPOINT_SLIDE] = -1;
       } else if (breath > 20) {
         update_bass();
       }
@@ -916,8 +971,9 @@ const char* note_str(int note) {
 }
 
 void print_status() {
-  printf("%s %s %s %s %s %s %s %3d %.2f\n",
+  printf("%s %s %s %s %s %s %s %s %3d %.2f\n",
          (jawharp_on ? "J" : " "),
+         (slide_on ? "S" : " "),
          (bass_trombone_on ? "bT" : "  "),
          (bass_trombone_up_8 ? "b8" : "  "),
          (vbass_trombone_on ? "BT" : "  "),
@@ -960,6 +1016,7 @@ void read_midi(const MIDIPacketList *pktlist,
       } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in <= LOW_CONTROL_MAX ||
             note_in >= HIGH_CONTROL_MIN ||
+            note_in == TOGGLE_SLIDE ||
             note_in == TOGGLE_ORGAN_HIGH ||
             note_in == TOGGLE_ORGAN_LOW ||
             note_in == TOGGLE_ORGAN) {
@@ -1124,6 +1181,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_SAX],            CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],       CFSTR("jammer-trombone"));
   create_source(&endpoints[ENDPOINT_JAWHARP],        CFSTR("jammer-jawharp"));
+  create_source(&endpoints[ENDPOINT_SLIDE],          CFSTR("jammer-slide"));
   create_source(&endpoints[ENDPOINT_BASS_SAX],       CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],  CFSTR("jammer-bass-trombone"));
   create_source(&endpoints[ENDPOINT_ORGAN_HIGH],     CFSTR("jammer-organ-high"));
