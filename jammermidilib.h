@@ -192,7 +192,6 @@ int roll = MIDI_MAX / 2;
 int pitch = MIDI_MAX / 2;
 
 int breath = 0;  // current value from breath controller
-int last_breath = 0;  // previous value from breath controller
 double leakage = 0;  // set by calculate_breath_speeds()
 double breath_gain = 0;  // set by calculate_breath_speeds()
 double max_air = 0; // set by calculate_breath_speeds()
@@ -822,16 +821,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
-int breath_ride_triggered_at = -1;
-int breath_hihat_triggered_at = -1;
+bool breath_ride_triggered = false;
+bool breath_hihat_triggered = false;
 
 int breath_ride_note = 51;
 int breath_hihat_note = 42;
 
-int breath_ride_threshold = 5;
-int breath_hihat_threshold = 5;
-
-int breath_fall_amount = 40;
+int breath_ride_threshold = 20;
+int breath_hihat_threshold = 100;
 
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
@@ -846,31 +843,24 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
-  last_breath = breath;
   breath = val;
 
-  if (breath_ride_triggered_at != -1 && 
-      (breath < 3 || breath > last_breath)) {
+  if (breath_ride_triggered && breath < breath_ride_threshold - 10) {
     send_midi(MIDI_OFF, breath_ride_note, 0, ENDPOINT_BREATH_DRUM);
-    breath_ride_triggered_at = -1;
-  } else if (breath_ride_on && breath_ride_triggered_at == -1 &&
-             breath > breath_ride_threshold &&
-             (breath < last_breath || breath == MIDI_MAX)) {
-    send_midi(MIDI_ON, breath_ride_note, last_breath, ENDPOINT_BREATH_DRUM);
-    breath_ride_triggered_at = last_breath;
-    printf("breath ride trigger\n");
+    breath_ride_triggered = false;
+  } else if (breath_ride_on && !breath_ride_triggered &&
+             breath > breath_ride_threshold) {
+    send_midi(MIDI_ON, breath_ride_note, 50, ENDPOINT_BREATH_DRUM);
+    breath_ride_triggered = true;
   }
 
-  if (breath_hihat_triggered_at != -1  &&
-      (breath < 3 || breath > last_breath)) {
+  if (breath_hihat_triggered && breath < breath_hihat_threshold - 10) {
     send_midi(MIDI_OFF, breath_hihat_note, 0, ENDPOINT_BREATH_DRUM);
-    breath_hihat_triggered_at = -1;
-  } else if (breath_hihat_on && breath_hihat_triggered_at == -1 &&
-             breath > breath_hihat_threshold &&
-             (breath < last_breath || breath == MIDI_MAX)) {
-    send_midi(MIDI_ON, breath_hihat_note, last_breath, ENDPOINT_BREATH_DRUM);
-    breath_hihat_triggered_at = last_breath;
-    printf("breath hihat trigger\n");
+    breath_hihat_triggered = false;
+  } else if (breath_hihat_on && !breath_hihat_triggered &&
+             breath > breath_hihat_threshold) {
+    send_midi(MIDI_ON, breath_hihat_note, 100, ENDPOINT_BREATH_DRUM);
+    breath_hihat_triggered = true;
   }
 
   // pass other control change to all synths that care about it:
