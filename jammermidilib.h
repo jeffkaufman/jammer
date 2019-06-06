@@ -102,6 +102,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define MIDI_ON 0x90
 #define MIDI_CC 0xb0
 
+#define CC_MOD 0x01
 #define CC_BREATH 0x02
 #define CC_07 0x07
 #define CC_11 0x0b
@@ -500,7 +501,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN);
   }
   if (organ_2_on) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_2);
+    send_midi(mode, note_in, val, ENDPOINT_ORGAN_2);
   }
 }
 
@@ -843,6 +844,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
+  send_midi(MIDI_CC, CC_MOD, val, ENDPOINT_ORGAN_HIGH);
+
   breath = val;
 
   if (breath_ride_triggered && breath < breath_ride_threshold - 10) {
@@ -1000,9 +1003,9 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned int note_in = packet->data[1];
       unsigned int val = packet->data[2];
 
-      //if (val > 0) {
-      //  printf("got packet %u %u %u\n", mode, note_in, val);
-      //}
+//      if (val > 0) {
+//        printf("got packet %u %u %u\n", mode, note_in, val);
+//      }
 
       //unsigned int channel = mode & 0x0F;
       mode = mode & 0xF0;
@@ -1211,7 +1214,6 @@ void forward_air() {
   }
   if (val != last_air_val) {
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_HIGH);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_2);
     last_air_val = val;
