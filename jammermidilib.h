@@ -16,7 +16,7 @@
 /*
   OR  ST  J   Of  bT  b5  bS
     Sl              Bt  b8  bH
-                  H   Ol  Or
+              Rh  H   Ol  Sp
 
   O  R
 
@@ -35,9 +35,10 @@ Which is:
  90 b8  Bass trombone up an octave
  91 bH  Breath Hihat
 
+ 81 Rh  Rhodes
  82 H   Hammond
  83 Ol  Organ Low
- 84 Or  Sine Pad
+ 84 Sp  Sine Pad
 
  2  R   Reset
  1  O   All notes off
@@ -69,12 +70,16 @@ void attempt(OSStatus result, char* errmsg) {
 #define TOGGLE_BREATH_RIDE        98
 
 #define TOGGLE_SLIDE           85
+#define TOGGLE_TBD_A           86
+#define TOGGLE_TBD_B           87
+#define TOGGLE_TBD_C           88
 
 #define TOGGLE_VBASS_TROMBONE  89
 #define TOGGLE_VBT_UP_8        90
 #define TOGGLE_BREATH_HIHAT    91
-#define HIGH_CONTROL_MIN       TOGGLE_VBASS_TROMBONE
+#define HIGH_CONTROL_MIN       TOGGLE_RHODES
 
+#define TOGGLE_RHODES          81
 #define TOGGLE_HAMMOND         82
 #define TOGGLE_ORGAN_LOW       83
 #define TOGGLE_SINE_PAD        84
@@ -93,8 +98,12 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_ORGAN_FLEX 7
 #define ENDPOINT_SINE_PAD 8
 #define ENDPOINT_OVERDRIVEN_RHODES 9
-#define ENDPOINT_SLIDE 10
-#define ENDPOINT_BREATH_DRUM 11
+#define ENDPOINT_RHODES 10
+#define ENDPOINT_TBD_A 12
+#define ENDPOINT_TBD_B 13
+#define ENDPOINT_TBD_C 14
+#define ENDPOINT_SLIDE 15
+#define ENDPOINT_BREATH_DRUM 16
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
 
 /* midi values */
@@ -143,11 +152,15 @@ bool bass_trombone_on;
 bool bass_trombone_up_8;
 bool vbass_trombone_up_8;
 bool vbass_trombone_on;
-bool organ_high_on;
+bool hammond_on;
 bool organ_low_on;
 bool organ_flex_on;
-bool organ_on;
-bool organ_2_on;
+bool sine_pad_on;
+bool overdriven_rhodes_on;
+bool rhodes_on;
+bool tbd_a_on;
+bool tbd_b_on;
+bool tbd_c_on;
 bool breath_ride_on;
 bool breath_hihat_on;
 int button_endpoint;
@@ -161,11 +174,15 @@ void voices_reset() {
   bass_trombone_up_8 = false;
   vbass_trombone_up_8 = false;
   vbass_trombone_on = false;
-  organ_high_on = false;
+  hammond_on = false;
   organ_low_on = false;
   organ_flex_on = false;
-  organ_on = false;
-  organ_2_on = false;
+  sine_pad_on = false;
+  overdriven_rhodes_on = false;
+  rhodes_on = false;
+  tbd_a_on = false;
+  tbd_b_on = false;
+  tbd_c_on = false;
   breath_ride_on = false;
   breath_hihat_on = false;
 
@@ -488,7 +505,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }
 
-  if (organ_high_on && !is_bass) {
+  if (hammond_on && !is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
   }
   if (organ_low_on && is_bass) {
@@ -497,11 +514,23 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (organ_flex_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_FLEX);
   }
-  if (organ_on) {
+  if (sine_pad_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SINE_PAD);
   }
-  if (organ_2_on) {
+  if (overdriven_rhodes_on) {
     send_midi(mode, note_in, val, ENDPOINT_OVERDRIVEN_RHODES);
+  }
+  if (rhodes_on) {
+    send_midi(mode, note_in, val, ENDPOINT_RHODES);
+  }
+  if (tbd_a_on) {
+    send_midi(mode, note_in, val, ENDPOINT_TBD_A);
+  }
+  if (tbd_b_on) {
+    send_midi(mode, note_in, val, ENDPOINT_TBD_B);
+  }
+  if (tbd_c_on) {
+    send_midi(mode, note_in, val, ENDPOINT_TBD_C);
   }
 }
 
@@ -632,12 +661,18 @@ void update_lights(int control) {
     break;
   case TOGGLE_OVERDRIVEN_RHODES:
     index = LIGHT_PIANO;
-    color = merge_bools_green(organ_on, organ_2_on);
+    color = merge_bools_green(sine_pad_on, overdriven_rhodes_on);
+    break;
+  case TOGGLE_RHODES:
+  case TOGGLE_TBD_A:
+  case TOGGLE_TBD_B:
+  case TOGGLE_TBD_C:
+    // TODO
     break;
   case TOGGLE_HAMMOND:
   case TOGGLE_ORGAN_LOW:
     index = LIGHT_ORGANS;
-    color = merge_bools_purple(organ_high_on, organ_low_on);
+    color = merge_bools_purple(hammond_on, organ_low_on);
     break;
   case TOGGLE_BREATH_HIHAT:
   case TOGGLE_BREATH_RIDE:
@@ -658,6 +693,10 @@ void lights_reset() {
   update_lights(TOGGLE_VBASS_TROMBONE);
   update_lights(TOGGLE_SINE_PAD);
   update_lights(TOGGLE_OVERDRIVEN_RHODES);
+  update_lights(TOGGLE_RHODES);
+  update_lights(TOGGLE_TBD_A);
+  update_lights(TOGGLE_TBD_B);
+  update_lights(TOGGLE_TBD_C);
   update_lights(TOGGLE_HAMMOND);
   update_lights(TOGGLE_ORGAN_LOW);
   update_lights(TOGGLE_BREATH_RIDE);
@@ -742,7 +781,7 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_HAMMOND:
     endpoint_notes_off(ENDPOINT_HAMMOND);
-    organ_high_on = !organ_high_on;
+    hammond_on = !hammond_on;
     return;
 
   case TOGGLE_ORGAN_FLEX:
@@ -757,12 +796,32 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_SINE_PAD:
     endpoint_notes_off(ENDPOINT_SINE_PAD);
-    organ_on = !organ_on;
+    sine_pad_on = !sine_pad_on;
     return;
 
   case TOGGLE_OVERDRIVEN_RHODES:
     endpoint_notes_off(ENDPOINT_OVERDRIVEN_RHODES);
-    organ_2_on = !organ_2_on;
+    overdriven_rhodes_on = !overdriven_rhodes_on;
+    return;
+
+  case TOGGLE_RHODES:
+    endpoint_notes_off(ENDPOINT_RHODES);
+    rhodes_on = !rhodes_on;
+    return;
+
+  case TOGGLE_TBD_A:
+    endpoint_notes_off(ENDPOINT_TBD_A);
+    tbd_a_on = !tbd_a_on;
+    return;
+
+  case TOGGLE_TBD_B:
+    endpoint_notes_off(ENDPOINT_TBD_B);
+    tbd_b_on = !tbd_b_on;
+    return;
+
+  case TOGGLE_TBD_C:
+    endpoint_notes_off(ENDPOINT_TBD_C);
+    tbd_c_on = !tbd_c_on;
     return;
 
   case TOGGLE_BREATH_RIDE:
@@ -1019,11 +1078,7 @@ void read_midi(const MIDIPacketList *pktlist,
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in <= LOW_CONTROL_MAX ||
-            note_in >= HIGH_CONTROL_MIN ||
-            note_in == TOGGLE_SLIDE ||
-            note_in == TOGGLE_HAMMOND ||
-            note_in == TOGGLE_ORGAN_LOW ||
-            note_in == TOGGLE_SINE_PAD) {
+            note_in >= HIGH_CONTROL_MIN) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
           }
@@ -1191,8 +1246,12 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_HAMMOND],           CFSTR("jammer-hammond"));
   create_source(&endpoints[ENDPOINT_ORGAN_LOW],         CFSTR("jammer-organ-low"));
   create_source(&endpoints[ENDPOINT_ORGAN_FLEX],        CFSTR("jammer-organ-flex"));
-  create_source(&endpoints[ENDPOINT_SINE_PAD],          CFSTR("jammer-organ"));
+  create_source(&endpoints[ENDPOINT_SINE_PAD],          CFSTR("jammer-sine-pad"));
   create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES], CFSTR("jammer-overdriven-rhodes"));
+  create_source(&endpoints[ENDPOINT_RHODES],            CFSTR("jammer-rhodes"));
+  create_source(&endpoints[ENDPOINT_TBD_A],             CFSTR("jammer-tbd-a"));
+  create_source(&endpoints[ENDPOINT_TBD_B],             CFSTR("jammer-tbd-b"));
+  create_source(&endpoints[ENDPOINT_TBD_C],             CFSTR("jammer-tbd-c"));
   create_source(&endpoints[ENDPOINT_BREATH_DRUM],       CFSTR("jammer-drum"));
 }
 
@@ -1218,6 +1277,10 @@ void forward_air() {
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_A);
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_B);
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_C);
     last_air_val = val;
   }
   organ_flex_base = val;
