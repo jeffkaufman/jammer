@@ -667,6 +667,7 @@ void lights_reset() {
 void full_reset() {
   voices_reset();
   lights_reset();
+  all_notes_off(N_ENDPOINTS);
 }
 
 void handle_control_helper(unsigned int note_in) {
@@ -1214,8 +1215,9 @@ void forward_air() {
   }
   if (val != last_air_val) {
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_ORGAN_HIGH);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_2);
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_ORGAN_2);
     last_air_val = val;
   }
   organ_flex_base = val;
