@@ -21,7 +21,7 @@
   O  R
 
 Which is:
- 92 O2  Overdriven Rhodes
+ 92 OR  Overdriven Rhodes
  93 ST  Sax vs Trombone
  94  J  Jawharp
  95 Of  Organ flex
@@ -37,7 +37,7 @@ Which is:
 
  82 H   Hammond
  83 Ol  Organ Low
- 84 Or  Organ
+ 84 Or  Sine Pad
 
  2  R   Reset
  1  O   All notes off
@@ -77,7 +77,7 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define TOGGLE_HAMMOND         82
 #define TOGGLE_ORGAN_LOW       83
-#define TOGGLE_ORGAN           84
+#define TOGGLE_SINE_PAD        84
 
 #define BASS_MIN               71
 
@@ -91,7 +91,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_HAMMOND 5
 #define ENDPOINT_ORGAN_LOW 6
 #define ENDPOINT_ORGAN_FLEX 7
-#define ENDPOINT_ORGAN 8
+#define ENDPOINT_SINE_PAD 8
 #define ENDPOINT_OVERDRIVEN_RHODES 9
 #define ENDPOINT_SLIDE 10
 #define ENDPOINT_BREATH_DRUM 11
@@ -498,7 +498,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_FLEX);
   }
   if (organ_on) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN);
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SINE_PAD);
   }
   if (organ_2_on) {
     send_midi(mode, note_in, val, ENDPOINT_OVERDRIVEN_RHODES);
@@ -656,7 +656,7 @@ void lights_reset() {
   update_lights(TOGGLE_SLIDE);
   update_lights(TOGGLE_BASS_TROMBONE);
   update_lights(TOGGLE_VBASS_TROMBONE);
-  update_lights(TOGGLE_ORGAN);
+  update_lights(TOGGLE_SINE_PAD);
   update_lights(TOGGLE_OVERDRIVEN_RHODES);
   update_lights(TOGGLE_HAMMOND);
   update_lights(TOGGLE_ORGAN_LOW);
@@ -755,8 +755,8 @@ void handle_control_helper(unsigned int note_in) {
     organ_low_on = !organ_low_on;
     return;
 
-  case TOGGLE_ORGAN:
-    endpoint_notes_off(ENDPOINT_ORGAN);
+  case TOGGLE_SINE_PAD:
+    endpoint_notes_off(ENDPOINT_SINE_PAD);
     organ_on = !organ_on;
     return;
 
@@ -1023,7 +1023,7 @@ void read_midi(const MIDIPacketList *pktlist,
             note_in == TOGGLE_SLIDE ||
             note_in == TOGGLE_HAMMOND ||
             note_in == TOGGLE_ORGAN_LOW ||
-            note_in == TOGGLE_ORGAN) {
+            note_in == TOGGLE_SINE_PAD) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
           }
@@ -1191,7 +1191,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_HAMMOND],           CFSTR("jammer-hammond"));
   create_source(&endpoints[ENDPOINT_ORGAN_LOW],         CFSTR("jammer-organ-low"));
   create_source(&endpoints[ENDPOINT_ORGAN_FLEX],        CFSTR("jammer-organ-flex"));
-  create_source(&endpoints[ENDPOINT_ORGAN],             CFSTR("jammer-organ"));
+  create_source(&endpoints[ENDPOINT_SINE_PAD],          CFSTR("jammer-organ"));
   create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES], CFSTR("jammer-overdriven-rhodes"));
   create_source(&endpoints[ENDPOINT_BREATH_DRUM],       CFSTR("jammer-drum"));
 }
@@ -1216,7 +1216,7 @@ void forward_air() {
   if (val != last_air_val) {
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN);
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
     last_air_val = val;
   }
