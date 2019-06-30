@@ -110,6 +110,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define MIDI_OFF 0x80
 #define MIDI_ON 0x90
 #define MIDI_CC 0xb0
+#define MIDI_PITCH_BEND 0xe0
 
 #define CC_MOD 0x01
 #define CC_BREATH 0x02
@@ -135,6 +136,17 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define TICK_MS 10  // try to tick every N milliseconds
 
+#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
+#define BYTE_TO_BINARY(byte) \
+  (byte & 0x80 ? '1' : '0'), \
+  (byte & 0x40 ? '1' : '0'), \
+  (byte & 0x20 ? '1' : '0'), \
+  (byte & 0x10 ? '1' : '0'), \
+  (byte & 0x08 ? '1' : '0'), \
+  (byte & 0x04 ? '1' : '0'), \
+  (byte & 0x02 ? '1' : '0'), \
+  (byte & 0x01 ? '1' : '0') 
+
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
 
@@ -143,6 +155,7 @@ MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_piano;
+MIDIPortRef midiport_imitone;
 
 /* Anything mentioned here should be initialized in voices_reset */
 bool tilt_on;
@@ -490,6 +503,15 @@ void all_notes_off(int max_endpoint) {
 
 int to_root(note_out) {
   return (note_out - 2) % 12 + 26;
+}
+
+void handle_imitone(unsigned int mode, unsigned int note_in, unsigned int val) {
+  // printf("imitone "BYTE_TO_BINARY_PATTERN" %u %u\n",
+  //         BYTE_TO_BINARY(mode), note_in, val);
+
+  if (mode == MIDI_ON) {
+    root_note = note_in;
+  }
 }
 
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -1076,6 +1098,8 @@ void read_midi(const MIDIPacketList *pktlist,
 
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
+      } else if (srcConnRefCon == &midiport_imitone) {
+        handle_imitone(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in <= LOW_CONTROL_MAX ||
             note_in >= HIGH_CONTROL_MIN) {
@@ -1090,7 +1114,7 @@ void read_midi(const MIDIPacketList *pktlist,
       } else {
         printf("ignored\n");
       }
-      print_status();
+      //print_status();
     }
     packet = MIDIPacketNext(packet);
   }
@@ -1215,7 +1239,8 @@ void jml_setup() {
     breath_controller,
     game_controller,
     tilt_controller,
-    piano_controller;
+    piano_controller,
+    imitone_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
     connect_source(axis49, &midiport_axis_49);
   }
@@ -1231,6 +1256,9 @@ void jml_setup() {
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
+  }
+  if (get_endpoint_ref(CFSTR("imitone"), &imitone_controller)) {
+    connect_source(imitone_controller, &midiport_imitone);
   }
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
