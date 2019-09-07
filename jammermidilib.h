@@ -145,7 +145,7 @@ void attempt(OSStatus result, char* errmsg) {
   (byte & 0x08 ? '1' : '0'), \
   (byte & 0x04 ? '1' : '0'), \
   (byte & 0x02 ? '1' : '0'), \
-  (byte & 0x01 ? '1' : '0') 
+  (byte & 0x01 ? '1' : '0')
 
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
@@ -156,6 +156,8 @@ MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_piano;
 MIDIPortRef midiport_imitone;
+
+bool piano_on = false;  // Initialized based on availablity of piano.
 
 /* Anything mentioned here should be initialized in voices_reset */
 bool tilt_on;
@@ -176,6 +178,7 @@ bool tbd_b_on;
 bool tbd_c_on;
 bool breath_ride_on;
 bool breath_hihat_on;
+bool sax_on;
 int button_endpoint;
 int root_note;
 
@@ -200,6 +203,7 @@ void voices_reset() {
   breath_hihat_on = false;
 
   button_endpoint = ENDPOINT_SAX;
+  sax_on = true;
   root_note = 26;  // D @ 37Hz
 }
 
@@ -744,16 +748,21 @@ void handle_control_helper(unsigned int note_in) {
 
   case SELECT_SAX_TROMBONE:
     all_notes_off(N_BUTTON_ENDPOINTS);
-    button_endpoint = (button_endpoint == ENDPOINT_SAX) ? ENDPOINT_TROMBONE : ENDPOINT_SAX;
+    sax_on = !sax_on;
+    button_endpoint = sax_on ? ENDPOINT_SAX : ENDPOINT_TROMBONE;
     return;
 
   case TOGGLE_JAWHARP:
     endpoint_notes_off(ENDPOINT_JAWHARP);
-    jawharp_on = !jawharp_on;
-    if (jawharp_on) {
-      update_bass();
+    if (piano_on) {
+      jawharp_on = !jawharp_on;
+      if (jawharp_on) {
+        update_bass();
+      } else {
+        jawharp_off();
+      }
     } else {
-      jawharp_off();
+      button_endpoint = ENDPOINT_JAWHARP;
     }
     return;
 
@@ -764,6 +773,9 @@ void handle_control_helper(unsigned int note_in) {
       update_bass();
     } else {
       slide_off();
+    }
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_SLIDE;
     }
     return;
 
@@ -804,46 +816,73 @@ void handle_control_helper(unsigned int note_in) {
   case TOGGLE_HAMMOND:
     endpoint_notes_off(ENDPOINT_HAMMOND);
     hammond_on = !hammond_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_HAMMOND;
+    }
     return;
 
   case TOGGLE_ORGAN_FLEX:
     endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
     organ_flex_on = !organ_flex_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_ORGAN_FLEX;
+    }
     return;
 
   case TOGGLE_ORGAN_LOW:
     endpoint_notes_off(ENDPOINT_ORGAN_LOW);
     organ_low_on = !organ_low_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_ORGAN_LOW;
+    }
     return;
 
   case TOGGLE_SINE_PAD:
     endpoint_notes_off(ENDPOINT_SINE_PAD);
     sine_pad_on = !sine_pad_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_SINE_PAD;
+    }
     return;
 
   case TOGGLE_OVERDRIVEN_RHODES:
     endpoint_notes_off(ENDPOINT_OVERDRIVEN_RHODES);
     overdriven_rhodes_on = !overdriven_rhodes_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_OVERDRIVEN_RHODES;
+    }
     return;
 
   case TOGGLE_RHODES:
     endpoint_notes_off(ENDPOINT_RHODES);
     rhodes_on = !rhodes_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_RHODES;
+    }
     return;
 
   case TOGGLE_TBD_A:
     endpoint_notes_off(ENDPOINT_TBD_A);
     tbd_a_on = !tbd_a_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_TBD_A;
+    }
     return;
 
   case TOGGLE_TBD_B:
     endpoint_notes_off(ENDPOINT_TBD_B);
     tbd_b_on = !tbd_b_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_TBD_B;
+    }
     return;
 
   case TOGGLE_TBD_C:
     endpoint_notes_off(ENDPOINT_TBD_C);
     tbd_c_on = !tbd_c_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_TBD_C;
+    }
     return;
 
   case TOGGLE_BREATH_RIDE:
@@ -895,11 +934,33 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     if (note_out < 54) {
       chosen_endpoint = ENDPOINT_BASS_SAX;
     }
-  } else {
+  } else if (button_endpoint == ENDPOINT_TROMBONE) {
     if (note_out < 40) {
       chosen_endpoint = ENDPOINT_BASS_TROMBONE;
     }
+  } else if (button_endpoint == ENDPOINT_ORGAN_LOW ||
+             button_endpoint == ENDPOINT_JAWHARP) {
+    // pass
+  } else {
+    note_out += 12;
   }
+
+  if (button_endpoint == ENDPOINT_SLIDE ||
+      button_endpoint == ENDPOINT_TBD_A ||
+      button_endpoint == ENDPOINT_TBD_B ||
+      button_endpoint == ENDPOINT_TBD_C) {
+    val = breath;
+  } else if (button_endpoint == ENDPOINT_OVERDRIVEN_RHODES ||
+             button_endpoint == ENDPOINT_RHODES) {
+    val = (breath + MIDI_MAX) / 2;
+  } else if (button_endpoint == ENDPOINT_ORGAN_LOW ||
+             button_endpoint == ENDPOINT_HAMMOND ||
+             button_endpoint == ENDPOINT_ORGAN_FLEX ||
+             button_endpoint == ENDPOINT_JAWHARP ||
+             button_endpoint == ENDPOINT_SINE_PAD) {
+    val = MIDI_MAX;
+  }
+
 
   send_midi(mode, note_out, val, chosen_endpoint);
 }
@@ -1256,6 +1317,7 @@ void jml_setup() {
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
+    piano_on = true;
   }
   if (get_endpoint_ref(CFSTR("imitone"), &imitone_controller)) {
     connect_source(imitone_controller, &midiport_imitone);
@@ -1300,6 +1362,13 @@ void forward_air() {
   if (val > MIDI_MAX) {
     val = MIDI_MAX;
   }
+  organ_flex_base = val;
+  int organ_flex_value = organ_flex_val();
+
+  if (!piano_on) {
+    val = organ_flex_value;
+  }
+
   if (val != last_air_val) {
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
@@ -1311,8 +1380,6 @@ void forward_air() {
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_C);
     last_air_val = val;
   }
-  organ_flex_base = val;
-  int organ_flex_value = organ_flex_val();
   if (organ_flex_value != last_organ_flex_val) {
     send_midi(MIDI_CC, CC_11, organ_flex_value, ENDPOINT_ORGAN_FLEX);
     last_organ_flex_val = organ_flex_value;
