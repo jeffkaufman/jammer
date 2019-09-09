@@ -232,11 +232,13 @@ double air = 0;  // maintained by update_air()
 
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
-  //printf("sending %d %x:%d = %d\n",
-  //       endpoint,
-  //       (unsigned char) actionType,
-  //       noteNo,
-  //      v);
+  /*if (endpoint == ENDPOINT_RHODES) {
+    printf("sending %d %x:%d = %d\n",
+           endpoint,
+           (unsigned char) actionType,
+           noteNo,
+           v);
+           }*/
 
   Byte buffer[PACKET_BUF_SIZE];
   Byte msg[3];
@@ -731,6 +733,11 @@ void handle_control(unsigned int note_in) {
   handle_control_helper(note_in);
 }
 
+int remap(int val, int min, int max) {
+  int range = max - min;
+  return val * range / MIDI_MAX + min;
+}
+
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in) + 12 + 2;
   if (note_in >= BASS_MIN) {
@@ -772,14 +779,22 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     note_out += 12;
   }
 
+  if (button_endpoint == ENDPOINT_OVERDRIVEN_RHODES) {
+    // This one is special: we fade from rhodes to overdriven rhodes based on
+    // current breath.  That's handled as breath, so just send all note
+    // triggers to both instruments.
+    send_midi(mode, note_out, MIDI_MAX, ENDPOINT_OVERDRIVEN_RHODES);
+
+    // only use 50-110 on the regular rhodes
+    send_midi(mode, note_out, remap(val, 50, 110), ENDPOINT_RHODES);
+    return;
+  }
+
   if (button_endpoint == ENDPOINT_SLIDE ||
       button_endpoint == ENDPOINT_TBD_A ||
       button_endpoint == ENDPOINT_TBD_B ||
       button_endpoint == ENDPOINT_TBD_C) {
     val = breath;
-  } else if (button_endpoint == ENDPOINT_OVERDRIVEN_RHODES ||
-             button_endpoint == ENDPOINT_RHODES) {
-    val = (breath + MIDI_MAX) / 2;
   } else if (button_endpoint == ENDPOINT_ORGAN_LOW ||
              button_endpoint == ENDPOINT_HAMMOND ||
              button_endpoint == ENDPOINT_ORGAN_FLEX ||
@@ -787,7 +802,6 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
              button_endpoint == ENDPOINT_SINE_PAD) {
     val = MIDI_MAX;
   }
-
 
   send_midi(mode, note_out, val, chosen_endpoint);
 }
@@ -834,6 +848,10 @@ void handle_cc(unsigned int cc, unsigned int val) {
              breath > breath_hihat_threshold) {
     send_midi(MIDI_ON, breath_hihat_note, 100, ENDPOINT_BREATH_DRUM);
     breath_hihat_triggered = true;
+  }
+
+  if (!piano_on && button_endpoint == ENDPOINT_OVERDRIVEN_RHODES) {
+    send_midi(MIDI_CC, CC_07, MIDI_MAX, ENDPOINT_RHODES);
   }
 
   // pass other control change to all synths that care about it:
@@ -1174,7 +1192,11 @@ void forward_air() {
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
+    if (piano_on) {
+      send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
+    } else {
+      // handled in handle_cc
+    }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_A);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_B);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_C);
