@@ -132,8 +132,6 @@ void attempt(OSStatus result, char* errmsg) {
 
 #define MIDI_MAX 127
 
-#define LIGHT_UDP_PORT 23512
-
 #define TICK_MS 10  // try to tick every N milliseconds
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
@@ -560,178 +558,8 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-#define LIGHT_PIANO          0
-#define LIGHT_BUTTONS        1
-#define LIGHT_ORGANS         2
-#define LIGHT_BASS_TROMBONE  3
-#define LIGHT_VBASS_TROMBONE 4
-#define LIGHT_JAWHARP        5
-#define LIGHT_BREATH_DRUM    6
-#define LIGHT_SLIDE          7
-#define N_LIGHTS 8
-
-#define COLOR_QUANTUM 10
-#define COLOR_OFF (struct Color){0, 0, 0}
-#define COLOR_RED (struct Color){COLOR_QUANTUM, 0, 0}
-#define COLOR_BLUE (struct Color){0, 0, COLOR_QUANTUM}
-#define COLOR_GREEN (struct Color){0, COLOR_QUANTUM, 0}
-#define COLOR_PURPLE (struct Color){COLOR_QUANTUM, 0, COLOR_QUANTUM}
-#define COLOR_YELLOW (struct Color){COLOR_QUANTUM, COLOR_QUANTUM, 0}
-#define COLOR_WHITE (struct Color){COLOR_QUANTUM, COLOR_QUANTUM, COLOR_QUANTUM}
-#define COLOR_LOW (struct Color){1, 1, 1}
-
-#define COLOR_TROMBONE COLOR_YELLOW
-#define COLOR_SAX COLOR_RED
-
-struct Color {
-  unsigned char r, g, b;
-};
-
-unsigned char light_buf[4];
-int light_fd = -1;
-
-void set_light(unsigned char index, struct Color color) {
-  // See https://github.com/jeffkaufman/blinksticknet
-  if (!LIGHT_UDP_PORT || light_fd < 0) return;
-
-  light_buf[0] = index;
-  light_buf[1] = color.r;
-  light_buf[2] = color.g;
-  light_buf[3] = color.b;
-
-  send(light_fd, light_buf, sizeof(light_buf), /*flags=*/0);
-}
-
-struct Color scale_color(struct Color color_in, int val, int max_val) {
-  // Make color brighter/dimmer based on the val/max_val fraction.  At 1/3 of
-  // max_val color should be unchanged.
-  double scalar = 3.0 * val / max_val;
-  return (struct Color){
-      color_in.r * scalar,
-      color_in.g * scalar,
-      color_in.b * scalar};
-}
-
-struct Color merge_bools_green(bool a, bool b) {
-  if (a) {
-    if (b) {
-      return COLOR_GREEN;
-    } else {
-      return COLOR_YELLOW;
-    }
-  } else if (b) {
-    return COLOR_BLUE;
-  } else {
-    return COLOR_OFF;
-  }
-}
-
-struct Color merge_bools_purple(bool a, bool b) {
-  if (a) {
-    if (b) {
-      return COLOR_PURPLE;
-    } else {
-      return COLOR_RED;
-    }
-  } else if (b) {
-    return COLOR_BLUE;
-  } else {
-    return COLOR_OFF;
-  }
-}
-
-void update_lights(int control) {
-  unsigned char index = 0;
-  struct Color color = {0, 0, 0};
-
-  switch (control) {
-  case SELECT_SAX_TROMBONE:
-    index = LIGHT_BUTTONS;
-    color = (button_endpoint == ENDPOINT_SAX) ? COLOR_SAX : COLOR_TROMBONE;
-    break;
-  case TOGGLE_JAWHARP:
-    index = LIGHT_JAWHARP;
-    color = merge_bools_green(jawharp_on, organ_flex_on);
-    break;
-  case TOGGLE_SLIDE:
-    index = LIGHT_SLIDE;
-    color = slide_on ? COLOR_YELLOW : COLOR_OFF;
-    break;
-  case TOGGLE_BASS_TROMBONE:
-  case TOGGLE_BT_UP_8:
-    index = LIGHT_BASS_TROMBONE;
-
-    if (bass_trombone_on) {
-      if (bass_trombone_up_8) {
-        color = COLOR_GREEN;
-      } else {
-        color = COLOR_YELLOW;
-      }
-    } else {
-      color = COLOR_OFF;
-    }
-    break;
-  case TOGGLE_VBASS_TROMBONE:
-  case TOGGLE_VBT_UP_8:
-    index = LIGHT_VBASS_TROMBONE;
-
-    if (vbass_trombone_on) {
-      if (vbass_trombone_up_8) {
-        color = COLOR_GREEN;
-      } else {
-        color = COLOR_YELLOW;
-      }
-    } else {
-      color = COLOR_OFF;
-    }
-    break;
-  case TOGGLE_OVERDRIVEN_RHODES:
-    index = LIGHT_PIANO;
-    color = merge_bools_green(sine_pad_on, overdriven_rhodes_on);
-    break;
-  case TOGGLE_RHODES:
-  case TOGGLE_TBD_A:
-  case TOGGLE_TBD_B:
-  case TOGGLE_TBD_C:
-    // TODO
-    break;
-  case TOGGLE_HAMMOND:
-  case TOGGLE_ORGAN_LOW:
-    index = LIGHT_ORGANS;
-    color = merge_bools_purple(hammond_on, organ_low_on);
-    break;
-  case TOGGLE_BREATH_HIHAT:
-  case TOGGLE_BREATH_RIDE:
-    index = LIGHT_BREATH_DRUM;
-    color = merge_bools_purple(breath_ride_on, breath_hihat_on);
-    break;
-  default:
-    return;
-  }
-  set_light(index, color);
-}
-
-void lights_reset() {
-  update_lights(SELECT_SAX_TROMBONE);
-  update_lights(TOGGLE_JAWHARP);
-  update_lights(TOGGLE_SLIDE);
-  update_lights(TOGGLE_BASS_TROMBONE);
-  update_lights(TOGGLE_VBASS_TROMBONE);
-  update_lights(TOGGLE_SINE_PAD);
-  update_lights(TOGGLE_OVERDRIVEN_RHODES);
-  update_lights(TOGGLE_RHODES);
-  update_lights(TOGGLE_TBD_A);
-  update_lights(TOGGLE_TBD_B);
-  update_lights(TOGGLE_TBD_C);
-  update_lights(TOGGLE_HAMMOND);
-  update_lights(TOGGLE_ORGAN_LOW);
-  update_lights(TOGGLE_BREATH_RIDE);
-  update_lights(TOGGLE_BREATH_HIHAT);
-}
-
 void full_reset() {
   voices_reset();
-  lights_reset();
   all_notes_off(N_ENDPOINTS);
 }
 
@@ -901,7 +729,6 @@ void handle_control_helper(unsigned int note_in) {
 
 void handle_control(unsigned int note_in) {
   handle_control_helper(note_in);
-  update_lights(note_in);
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -1259,33 +1086,6 @@ void calculate_breath_speeds() {
 
 void jml_setup() {
   calculate_breath_speeds();
-
-  light_fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (light_fd < 0) {
-    perror("couldn't create light udp socket");
-  } else {
-    struct sockaddr_in  address;
-    memset(&address, 0, sizeof(address));
-
-    address.sin_family = AF_INET;
-    address.sin_port = htons(LIGHT_UDP_PORT);
-    address.sin_addr.s_addr = INADDR_ANY;
-
-    if (connect(light_fd,
-                (const struct sockaddr*)&address,
-                sizeof(address)) < 0) {
-      perror("couldn't connect light udp socket");
-      light_fd = -1;
-    }
-  }
-
-  for (int i = 0; i < N_LIGHTS; i++) {
-    set_light(i, COLOR_WHITE);
-  }
-  for (int i = 0; i < N_LIGHTS; i++) {
-    set_light(i, COLOR_OFF);
-  }
-
   full_reset();
 
   attempt(
