@@ -14,82 +14,42 @@
 
 
 /*
-  OR  ST  J   Of  bT  b5  bS
-    Sl              Bt  b8  bH
-              Rh  H   Ol  Sp
+ Controls:
 
-  O  R
-
-Which is:
- 92 OR  Overdriven Rhodes
- 93 ST  Sax vs Trombone
- 94  J  Jawharp
- 95 Of  Organ flex
- 96 bT  Bass Trombone
- 97 b5  Bass trombone up a fifth
- 98 bS  Breath Ride
-
- 85 Sl  Slide
-
- 89 Bt  Very bass trombone
- 90 b8  Bass trombone up an octave
- 91 bH  Breath Hihat
-
- 81 Rh  Rhodes
- 82 H   Hammond
- 83 Ol  Organ Low
- 84 Sp  Sine Pad
-
- 2  R   Reset
- 1  O   All notes off
+   rst  odr  low  bt1  pd1  jaw  s/t
+off  rho  ham  bt2  pd2  flx  bHH
+                       tbA  tbB  tbC
  */
+#define FULL_RESET                  7
+#define ALL_NOTES_OFF            14
 
+#define TOGGLE_OVERDRIVEN_RHODES     6
+#define TOGGLE_RHODES            13
 
-void die(char *errmsg) {
-  printf("%s\n",errmsg);
-  exit(-1);
-}
+#define TOGGLE_ORGAN_LOW             5 // synth bass
+#define TOGGLE_HAMMOND           12
 
-void attempt(OSStatus result, char* errmsg) {
-  if (result != noErr) {
-    die(errmsg);
-  }
-}
+#define TOGGLE_BASS_TROMBONE         4
+#define TOGGLE_VBASS_TROMBONE    11
 
-/* controls */
-#define ALL_NOTES_OFF          1
-#define FULL_RESET             2
-#define LOW_CONTROL_MAX        FULL_RESET
+#define TOGGLE_SINE_PAD              3
+#define TOGGLE_SWEEP_PAD         10
 
-#define TOGGLE_OVERDRIVEN_RHODES  92
-#define SELECT_SAX_TROMBONE       93
-#define TOGGLE_JAWHARP            94
-#define TOGGLE_ORGAN_FLEX         95
-#define TOGGLE_BASS_TROMBONE      96
-#define TOGGLE_BT_UP_8            97
-#define TOGGLE_BREATH_RIDE        98
+#define TOGGLE_JAWHARP               2
+#define TOGGLE_ORGAN_FLEX         9
 
-#define TOGGLE_SLIDE           85
-#define TOGGLE_TBD_A           86
-#define TOGGLE_TBD_B           87
-#define TOGGLE_TBD_C           88
+#define SELECT_SAX_TROMBONE          1
+#define TOGGLE_BREATH_HIHAT       8
 
-#define TOGGLE_VBASS_TROMBONE  89
-#define TOGGLE_VBT_UP_8        90
-#define TOGGLE_BREATH_HIHAT    91
-#define HIGH_CONTROL_MIN       TOGGLE_RHODES
+#define TOGGLE_TBD_A                17
+#define TOGGLE_TBD_B                16
+#define TOGGLE_TBD_C                15
 
-#define TOGGLE_RHODES          81
-#define TOGGLE_HAMMOND         82
-#define TOGGLE_ORGAN_LOW       83
-#define TOGGLE_SINE_PAD        84
-
-#define BASS_MIN               71
+#define CONTROL_MAX TOGGLE_TBD_C
 
 /* endpoints */
 #define ENDPOINT_SAX 0
 #define ENDPOINT_TROMBONE 1
-#define N_BUTTON_ENDPOINTS (ENDPOINT_TROMBONE + 1)
 #define ENDPOINT_JAWHARP 2
 #define ENDPOINT_BASS_SAX 3
 #define ENDPOINT_BASS_TROMBONE 4
@@ -102,7 +62,7 @@ void attempt(OSStatus result, char* errmsg) {
 #define ENDPOINT_TBD_A 12
 #define ENDPOINT_TBD_B 13
 #define ENDPOINT_TBD_C 14
-#define ENDPOINT_SLIDE 15
+#define ENDPOINT_SWEEP_PAD 15
 #define ENDPOINT_BREATH_DRUM 16
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
 
@@ -145,6 +105,17 @@ void attempt(OSStatus result, char* errmsg) {
   (byte & 0x02 ? '1' : '0'), \
   (byte & 0x01 ? '1' : '0')
 
+void die(char *errmsg) {
+  printf("%s\n",errmsg);
+  exit(-1);
+}
+
+void attempt(OSStatus result, char* errmsg) {
+  if (result != noErr) {
+    die(errmsg);
+  }
+}
+
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
 
@@ -160,21 +131,18 @@ bool piano_on = false;  // Initialized based on availablity of piano.
 /* Anything mentioned here should be initialized in voices_reset */
 bool tilt_on;
 bool jawharp_on;
-bool slide_on;
 bool bass_trombone_on;
-bool bass_trombone_up_8;
-bool vbass_trombone_up_8;
 bool vbass_trombone_on;
 bool hammond_on;
 bool organ_low_on;
 bool organ_flex_on;
 bool sine_pad_on;
+bool sweep_pad_on;
 bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
 bool tbd_c_on;
-bool breath_ride_on;
 bool breath_hihat_on;
 bool sax_on;
 int button_endpoint;
@@ -183,21 +151,18 @@ int root_note;
 void voices_reset() {
   tilt_on = false;
   jawharp_on = false;
-  slide_on = false;
   bass_trombone_on = false;
-  bass_trombone_up_8 = false;
-  vbass_trombone_up_8 = false;
   vbass_trombone_on = false;
   hammond_on = false;
   organ_low_on = false;
   organ_flex_on = false;
   sine_pad_on = false;
+  sweep_pad_on = false;
   overdriven_rhodes_on = false;
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
   tbd_c_on = false;
-  breath_ride_on = false;
   breath_hihat_on = false;
 
   button_endpoint = ENDPOINT_SAX;
@@ -216,7 +181,6 @@ int organ_flex_val() {
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
-//  * Always in use for slide
 int current_note[N_ENDPOINTS];
 
 int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
@@ -273,13 +237,6 @@ void jawharp_off() {
   }
 }
 
-void slide_off() {
-  if (current_note[ENDPOINT_SLIDE] != -1) {
-    send_midi(MIDI_OFF, current_note[ENDPOINT_SLIDE], 0, ENDPOINT_SLIDE);
-    current_note[ENDPOINT_SLIDE] = -1;
-  }
-}
-
 void bass_trombone_off() {
   if (current_note[ENDPOINT_TROMBONE] != -1) {
     send_midi(MIDI_OFF, current_note[ENDPOINT_TROMBONE], 0, ENDPOINT_TROMBONE);
@@ -294,11 +251,6 @@ void vbass_trombone_off() {
   }
 }
 
-int slide_note() {
-  int octave = breath < 100 ? 0 : 1;
-  return active_note() + 12*octave;
-}
-
 void update_bass() {
   if (breath < 3) return;
 
@@ -307,14 +259,6 @@ void update_bass() {
     jawharp_off();
     send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = note_out;
-  }
-
-  int slide_note_out = slide_note();
-  if (slide_on && current_note[ENDPOINT_SLIDE] != slide_note_out) {
-    slide_off();
-    printf("slide: %d\n", slide_note_out);
-    send_midi(MIDI_ON, slide_note_out, MIDI_MAX, ENDPOINT_SLIDE);
-    current_note[ENDPOINT_SLIDE] = slide_note_out;
   }
 
   if (breath < MIN_TROMBONE) {
@@ -327,9 +271,7 @@ void update_bass() {
   if (trombone_note < 40) {
     trombone_note += 12;
   }
-  if (bass_trombone_up_8) {
-    trombone_note += 12;
-  }
+  trombone_note += 12;
   if (bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
     bass_trombone_off();
     send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
@@ -339,9 +281,7 @@ void update_bass() {
   if (bass_trombone_note < 32) {
     bass_trombone_note += 12;
   }
-  if (vbass_trombone_up_8) {
-    bass_trombone_note += 12;
-  }
+  bass_trombone_note += 12;
   if (vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
     vbass_trombone_off();
     send_midi(MIDI_ON, bass_trombone_note, piano_left_hand_velocity, ENDPOINT_BASS_TROMBONE);
@@ -351,104 +291,119 @@ void update_bass() {
 
 char mapping(unsigned char note_in) {
   switch(note_in) {
-  case 1: return 1;  // Db
-  case 2: return 3;  // Eb
-  case 3: return 5;  // F
-  case 4: return 7;  // G
-  case 5: return 9;  // A
-  case 6: return 11;  // B
-  case 7: return 13;  // C#
-  case 8: return 8;  // Ab
-  case 9: return 10;  // Bb
-  case 10: return 12;  // C
-  case 11: return 14;  // D
-  case 12: return 16;  // E
-  case 13: return 18;  // F#
-  case 14: return 20;  // G#
-  case 15: return 13;  // Db
-  case 16: return 15;  // Eb
-  case 17: return 17;  // F
-  case 18: return 19;  // G
-  case 19: return 21;  // A
-  case 20: return 23;  // B
-  case 21: return 25;  // C#
-  case 22: return 20;  // Ab
-  case 23: return 22;  // Bb
-  case 24: return 24;  // C
-  case 25: return 26;  // D
-  case 26: return 28;  // E
-  case 27: return 30;  // F#
-  case 28: return 32;  // G#
-  case 29: return 25;  // Db
-  case 30: return 27;  // Eb
-  case 31: return 29;  // F
-  case 32: return 31;  // G
-  case 33: return 33;  // A
-  case 34: return 35;  // B
-  case 35: return 37;  // C#
-  case 36: return 32;  // Ab
-  case 37: return 34;  // Bb
-  case 38: return 36;  // C
-  case 39: return 38;  // D
-  case 40: return 40;  // E
-  case 41: return 42;  // F#
-  case 42: return 44;  // G#
-  case 43: return 37;  // Db
-  case 44: return 39;  // Eb
-  case 45: return 41;  // F
-  case 46: return 43;  // G
-  case 47: return 45;  // A
-  case 48: return 47;  // B
-  case 49: return 49;  // C#
-  case 50: return 44;  // Ab
-  case 51: return 46;  // Bb
-  case 52: return 48;  // C
-  case 53: return 50;  // D
-  case 54: return 52;  // E
-  case 55: return 54;  // F#
-  case 56: return 56;  // G#
+  case 98: return 10;  // Bb
+  case 97: return 12;  // C
+  case 96: return 14;  // D
+  case 95: return 16;  // E
+  case 94: return 18;  // F#
+  case 93: return 20;  // G#
+  case 92: return 22;  // Bb
+
+  case 91: return 15;  // Eb
+  case 90: return 17;  // F
+  case 89: return 19;  // G
+  case 88: return 21;  // A
+  case 87: return 23;  // B
+  case 86: return 25;  // C#
+  case 85: return 27;  // Eb
+
+  case 84: return 22;  // Bb
+  case 83: return 24;  // C
+  case 82: return 26;  // D
+  case 81: return 28;  // E
+  case 80: return 30;  // F#
+  case 79: return 32;  // G#
+  case 78: return 34;  // Bb
+
+  case 77: return 27;  // Eb
+  case 76: return 29;  // F
+  case 75: return 31;  // G
+  case 74: return 33;  // A
+  case 73: return 35;  // B
+  case 72: return 37;  // C#
+  case 71: return 39;  // Eb
+
+  case 70: return 34;  // Bb
+  case 69: return 36;  // C
+  case 68: return 38;  // D
+  case 67: return 40;  // E
+  case 66: return 42;  // F#
+  case 65: return 44;  // G#
+  case 64: return 46;  // Bb
+
+  case 63: return 39;  // Eb
+  case 62: return 41;  // F
+  case 61: return 43;  // G
+  case 60: return 45;  // A
+  case 59: return 47;  // B
+  case 58: return 49;  // C#
   case 57: return 51;  // Eb
-  case 58: return 53;  // F
-  case 59: return 55;  // G
-  case 60: return 57;  // A
-  case 61: return 59;  // B
-  case 62: return 61;  // C#
-  case 63: return 63;  // D#
-  case 64: return 56;  // Ab
-  case 65: return 58;  // Bb
-  case 66: return 60;  // C
-  case 67: return 62;  // D
-  case 68: return 64;  // E
-  case 69: return 66;  // F#
-  case 70: return 68;  // G#
-  case 71: return 63;  // Eb
-  case 72: return 65;  // F
-  case 73: return 67;  // G
-  case 74: return 69;  // A
-  case 75: return 71;  // B
-  case 76: return 73;  // C#
-  case 77: return 75;  // D#
-  case 78: return 68;  // Ab
-  case 79: return 70;  // Bb
-  case 80: return 72;  // C
-  case 81: return 74;  // D
-  case 82: return 76;  // E
-  case 83: return 78;  // F#
-  case 84: return 80;  // G#
-  case 85: return 75;  // Eb
-  case 86: return 77;  // F
-  case 87: return 79;  // G
-  case 88: return 81;  // A
-  case 89: return 83;  // B
-  case 90: return 85;  // C#
-  case 91: return 87;  // D#
-  case 92: return 80;  // Ab
-  case 93: return 82;  // Bb
-  case 94: return 84;  // C
-  case 95: return 86;  // D
-  case 96: return 88;  // E
-  case 97: return 90;  // F#
-  case 98: return 92;  // G
+
+  case 56: return 46;  // Bb
+  case 55: return 48;  // C
+  case 54: return 50;  // D
+  case 53: return 52;  // E
+  case 52: return 54;  // F#
+  case 51: return 56;  // G#
+  case 50: return 58;  // Bb
+
+  case 49: return 53;  // F
+  case 48: return 55;  // G
+  case 47: return 57;  // A
+  case 46: return 59;  // B
+  case 45: return 61;  // C#
+  case 44: return 63;  // Eb
+  case 43: return 65;  // F
+
+  case 42: return 58;  // Bb
+  case 41: return 60;  // C
+  case 40: return 62;  // D
+  case 39: return 64;  // E
+  case 38: return 66;  // F#
+  case 37: return 68;  // G#
+  case 36: return 70;  // Bb
+
+  case 35: return 65;  // F
+  case 34: return 67;  // G
+  case 33: return 69;  // A
+  case 32: return 71;  // B
+  case 31: return 73;  // C#
+  case 30: return 75;  // Eb
+  case 29: return 77;  // F
+
+  case 28: return 70;  // Bb
+  case 27: return 72;  // C
+  case 26: return 74;  // D
+  case 25: return 76;  // E
+  case 24: return 78;  // F#
+  case 23: return 80;  // G#
+  case 22: return 82;  // Bb
+
+  case 21: return 77;  // F
+  case 20: return 79;  // G
+  case 19: return 81;  // A
+  case 18: return 82;  // B
+  case 17: return 84;  // C#
+  case 16: return 86;  // Eb
+  case 15: return 88;  // F
+
+  case 14: return 82;  // Bb
+  case 13: return 84;  // C
+  case 12: return 86;  // D
+  case 11: return 88;  // E
+  case 10: return 90;  // F#
+  case  9: return 92;  // G#
+  case  8: return 94;  // Bb
+
+  case  7: return 88;  // F
+  case  6: return 90;  // G
+  case  5: return 92;  // A
+  case  4: return 94;  // B
+  case  3: return 96;  // C#
+  case  2: return 98;  // Eb
+  case  1: return 100;  // F
+
+
   default:
     return 0;
   }
@@ -499,8 +454,8 @@ void endpoint_notes_off(int endpoint) {
   send_midi(MIDI_CC, 123, 0, endpoint);
 }
 
-void all_notes_off(int max_endpoint) {
-  for (int endpoint = 0; endpoint < max_endpoint; endpoint++) {
+void all_notes_off() {
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     endpoint_notes_off(endpoint);
   }
 }
@@ -543,6 +498,9 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (sine_pad_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SINE_PAD);
   }
+  if (sweep_pad_on) {
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SWEEP_PAD);
+  }
   if (overdriven_rhodes_on) {
     send_midi(mode, note_in, val, ENDPOINT_OVERDRIVEN_RHODES);
   }
@@ -562,14 +520,14 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 
 void full_reset() {
   voices_reset();
-  all_notes_off(N_ENDPOINTS);
+  all_notes_off();
 }
 
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
   case ALL_NOTES_OFF:
-    all_notes_off(N_ENDPOINTS);
+    all_notes_off();
     return;
 
   case FULL_RESET:
@@ -577,7 +535,7 @@ void handle_control_helper(unsigned int note_in) {
     return;
 
   case SELECT_SAX_TROMBONE:
-    all_notes_off(N_BUTTON_ENDPOINTS);
+    all_notes_off();
     sax_on = !sax_on;
     button_endpoint = sax_on ? ENDPOINT_SAX : ENDPOINT_TROMBONE;
     return;
@@ -596,27 +554,11 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_SLIDE:
-    endpoint_notes_off(ENDPOINT_SLIDE);
-    slide_on = !slide_on;
-    if (slide_on) {
-      update_bass();
-    } else {
-      slide_off();
-    }
-    if (!piano_on) {
-      button_endpoint = ENDPOINT_SLIDE;
-    }
-    return;
-
   case TOGGLE_BASS_TROMBONE:
-  case TOGGLE_BT_UP_8:
     endpoint_notes_off(ENDPOINT_TROMBONE);
 
     if (note_in == TOGGLE_BASS_TROMBONE) {
       bass_trombone_on = !bass_trombone_on;
-    } else if (note_in == TOGGLE_BT_UP_8) {
-      bass_trombone_up_8 = !bass_trombone_up_8;
     }
 
     if (bass_trombone_on) {
@@ -627,13 +569,10 @@ void handle_control_helper(unsigned int note_in) {
     return;
 
   case TOGGLE_VBASS_TROMBONE:
-  case TOGGLE_VBT_UP_8:
     endpoint_notes_off(ENDPOINT_BASS_TROMBONE);
 
     if (note_in == TOGGLE_VBASS_TROMBONE) {
       vbass_trombone_on = !vbass_trombone_on;
-    } else if (note_in == TOGGLE_VBT_UP_8) {
-      vbass_trombone_up_8 = !vbass_trombone_up_8;
     }
 
     if (vbass_trombone_on) {
@@ -672,6 +611,14 @@ void handle_control_helper(unsigned int note_in) {
     sine_pad_on = !sine_pad_on;
     if (!piano_on) {
       button_endpoint = ENDPOINT_SINE_PAD;
+    }
+    return;
+
+  case TOGGLE_SWEEP_PAD:
+    endpoint_notes_off(ENDPOINT_SWEEP_PAD);
+    sweep_pad_on = !sweep_pad_on;
+    if (!piano_on) {
+      button_endpoint = ENDPOINT_SWEEP_PAD;
     }
     return;
 
@@ -715,11 +662,6 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_BREATH_RIDE:
-    endpoint_notes_off(ENDPOINT_BREATH_DRUM);
-    breath_ride_on = !breath_ride_on;
-    return;
-
   case TOGGLE_BREATH_HIHAT:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
     breath_hihat_on = !breath_hihat_on;
@@ -739,29 +681,7 @@ int remap(int val, int min, int max) {
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
-  unsigned char note_out = mapping(note_in) + 12 + 2;
-  if (note_in >= BASS_MIN) {
-    if (mode == MIDI_ON) {
-      root_note = to_root(note_out);
-      update_bass();
-    }
-
-    if (vbass_trombone_on) {
-      send_midi(mode, note_out - (12*4) +
-                (vbass_trombone_up_8 ? 12 : 0),
-                val, ENDPOINT_BASS_TROMBONE);
-    }
-    if (bass_trombone_on) {
-      send_midi(mode, note_out - (12*3) +
-                (bass_trombone_up_8 ? 12 : 0),
-                val, ENDPOINT_TROMBONE);
-    }
-
-    return;
-  }
-
-  // At this point, the signal is telling us to play a button instrument.
-
+  unsigned char note_out = mapping(note_in);
   int chosen_endpoint = button_endpoint;
   if (button_endpoint == ENDPOINT_SAX) {
     note_out += 24;
@@ -790,8 +710,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  if (button_endpoint == ENDPOINT_SLIDE ||
-      button_endpoint == ENDPOINT_TBD_A ||
+  if (button_endpoint == ENDPOINT_TBD_A ||
       button_endpoint == ENDPOINT_TBD_B ||
       button_endpoint == ENDPOINT_TBD_C) {
     val = breath;
@@ -799,20 +718,18 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
              button_endpoint == ENDPOINT_HAMMOND ||
              button_endpoint == ENDPOINT_ORGAN_FLEX ||
              button_endpoint == ENDPOINT_JAWHARP ||
-             button_endpoint == ENDPOINT_SINE_PAD) {
+             button_endpoint == ENDPOINT_SINE_PAD ||
+             button_endpoint == ENDPOINT_SWEEP_PAD) {
     val = MIDI_MAX;
   }
 
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
-bool breath_ride_triggered = false;
 bool breath_hihat_triggered = false;
 
-int breath_ride_note = 51;
 int breath_hihat_note = 42;
 
-int breath_ride_threshold = 20;
 int breath_hihat_threshold = 100;
 
 void handle_cc(unsigned int cc, unsigned int val) {
@@ -832,15 +749,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
 
   breath = val;
 
-  if (breath_ride_triggered && breath < breath_ride_threshold - 10) {
-    send_midi(MIDI_OFF, breath_ride_note, 0, ENDPOINT_BREATH_DRUM);
-    breath_ride_triggered = false;
-  } else if (breath_ride_on && !breath_ride_triggered &&
-             breath > breath_ride_threshold) {
-    send_midi(MIDI_ON, breath_ride_note, 50, ENDPOINT_BREATH_DRUM);
-    breath_ride_triggered = true;
-  }
-
   if (breath_hihat_triggered && breath < breath_hihat_threshold - 10) {
     send_midi(MIDI_OFF, breath_hihat_note, 0, ENDPOINT_BREATH_DRUM);
     breath_hihat_triggered = false;
@@ -859,7 +767,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (endpoint != ENDPOINT_SAX &&
         endpoint != ENDPOINT_TROMBONE &&
         endpoint != ENDPOINT_JAWHARP &&
-        endpoint != ENDPOINT_SLIDE &&
         endpoint != ENDPOINT_ORGAN_FLEX &&
         endpoint != ENDPOINT_BASS_SAX &&
         endpoint != ENDPOINT_BASS_TROMBONE) {
@@ -885,16 +792,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
         send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
                   ENDPOINT_JAWHARP);
         current_note[ENDPOINT_JAWHARP] = -1;
-      } else if (breath > 20) {
-        update_bass();
-      }
-    }
-    if (endpoint == ENDPOINT_SLIDE) {
-      if (breath < 10 &&
-          current_note[ENDPOINT_SLIDE] != -1) {
-        send_midi(MIDI_OFF, current_note[ENDPOINT_SLIDE], 0,
-                  ENDPOINT_SLIDE);
-        current_note[ENDPOINT_SLIDE] = -1;
       } else if (breath > 20) {
         update_bass();
       }
@@ -961,20 +858,6 @@ const char* note_str(int note) {
   }
 }
 
-void print_status() {
-  printf("%s %s %s %s %s %s %s %s %3d %.2f\n",
-         (jawharp_on ? "J" : " "),
-         (slide_on ? "S" : " "),
-         (bass_trombone_on ? "bT" : "  "),
-         (bass_trombone_up_8 ? "b8" : "  "),
-         (vbass_trombone_on ? "BT" : "  "),
-         (vbass_trombone_up_8 ? "v8" : "  "),
-         button_endpoint_str(),
-         note_str(active_note()),
-         breath,
-         air);
-}
-
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
@@ -991,9 +874,9 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned int note_in = packet->data[1];
       unsigned int val = packet->data[2];
 
-//      if (val > 0) {
-//        printf("got packet %u %u %u\n", mode, note_in, val);
-//      }
+      if (val > 0) {
+        printf("got packet %u %u %u\n", mode, note_in, val);
+      }
 
       //unsigned int channel = mode & 0x0F;
       mode = mode & 0xF0;
@@ -1007,8 +890,7 @@ void read_midi(const MIDIPacketList *pktlist,
       } else if (srcConnRefCon == &midiport_imitone) {
         handle_imitone(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-        if (note_in <= LOW_CONTROL_MAX ||
-            note_in >= HIGH_CONTROL_MIN) {
+        if (note_in <= CONTROL_MAX) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
           }
@@ -1020,7 +902,6 @@ void read_midi(const MIDIPacketList *pktlist,
       } else {
         printf("ignored\n");
       }
-      //print_status();
     }
     packet = MIDIPacketNext(packet);
   }
@@ -1148,13 +1029,13 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_SAX],               CFSTR("jammer-sax"));
   create_source(&endpoints[ENDPOINT_TROMBONE],          CFSTR("jammer-trombone"));
   create_source(&endpoints[ENDPOINT_JAWHARP],           CFSTR("jammer-jawharp"));
-  create_source(&endpoints[ENDPOINT_SLIDE],             CFSTR("jammer-slide"));
   create_source(&endpoints[ENDPOINT_BASS_SAX],          CFSTR("jammer-bass-sax"));
   create_source(&endpoints[ENDPOINT_BASS_TROMBONE],     CFSTR("jammer-bass-trombone"));
   create_source(&endpoints[ENDPOINT_HAMMOND],           CFSTR("jammer-hammond"));
   create_source(&endpoints[ENDPOINT_ORGAN_LOW],         CFSTR("jammer-organ-low"));
   create_source(&endpoints[ENDPOINT_ORGAN_FLEX],        CFSTR("jammer-organ-flex"));
   create_source(&endpoints[ENDPOINT_SINE_PAD],          CFSTR("jammer-sine-pad"));
+  create_source(&endpoints[ENDPOINT_SWEEP_PAD],         CFSTR("jammer-sweep-pad"));
   create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES], CFSTR("jammer-overdriven-rhodes"));
   create_source(&endpoints[ENDPOINT_RHODES],            CFSTR("jammer-rhodes"));
   create_source(&endpoints[ENDPOINT_TBD_A],             CFSTR("jammer-tbd-a"));
@@ -1190,7 +1071,7 @@ void forward_air() {
   if (val != last_air_val) {
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
     if (piano_on) {
       send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
