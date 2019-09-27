@@ -57,7 +57,129 @@ void send_midi(char actionType, int noteNo, int v, int endpoint) {
   attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
 }
 
-char mapping(unsigned char note_in) {
+
+char mapping_transpose_buttons_up(unsigned char note_in) {
+  switch(note_in) {
+  case 98: return 10;  // Bb
+  case 97: return 12;  // C
+  case 96: return 14;  // D
+  case 95: return 16;  // E
+  case 94: return 18;  // F#
+  case 93: return 20;  // G#
+  case 92: return 22;  // Bb
+
+  case 91: return 15;  // Eb
+  case 90: return 17;  // F
+  case 89: return 19;  // G
+  case 88: return 21;  // A
+  case 87: return 23;  // B
+  case 86: return 25;  // C#
+  case 85: return 27;  // Eb
+
+  case 84: return 22;  // Bb
+  case 83: return 24;  // C
+  case 82: return 26;  // D
+  case 81: return 28;  // E
+  case 80: return 30;  // F#
+  case 79: return 32;  // G#
+  case 78: return 34;  // Bb
+
+  case 77: return 27;  // Eb
+  case 76: return 29;  // F
+  case 75: return 31;  // G
+  case 74: return 33;  // A
+  case 73: return 35;  // B
+  case 72: return 37;  // C#
+  case 71: return 39;  // Eb
+
+  case 70: return 34;  // Bb
+  case 69: return 36;  // C
+  case 68: return 38;  // D
+  case 67: return 40;  // E
+  case 66: return 42;  // F#
+  case 65: return 44;  // G#
+  case 64: return 46;  // Bb
+
+  case 63: return 39;  // Eb
+  case 62: return 41;  // F
+  case 61: return 43;  // G
+  case 60: return 45;  // A
+  case 59: return 47;  // B
+  case 58: return 49;  // C#
+  case 57: return 51;  // Eb
+
+  case 56: return 46;  // Bb
+  case 55: return 48;  // C
+  case 54: return 50;  // D
+  case 53: return 52;  // E
+  case 52: return 54;  // F#
+  case 51: return 56;  // G#
+  case 50: return 58;  // Bb
+
+  case 49: return 53;  // F
+  case 48: return 55;  // G
+  case 47: return 57;  // A
+  case 46: return 59;  // B
+  case 45: return 61;  // C#
+  case 44: return 63;  // Eb
+  case 43: return 65;  // F
+
+  case 42: return 58;  // Bb
+  case 41: return 60;  // C
+  case 40: return 62;  // D
+  case 39: return 64;  // E
+  case 38: return 66;  // F#
+  case 37: return 68;  // G#
+  case 36: return 70;  // Bb
+
+  case 35: return 65;  // F
+  case 34: return 67;  // G
+  case 33: return 69;  // A
+  case 32: return 71;  // B
+  case 31: return 73;  // C#
+  case 30: return 75;  // Eb
+  case 29: return 77;  // F
+
+  case 28: return 70;  // Bb
+  case 27: return 72;  // C
+  case 26: return 74;  // D
+  case 25: return 76;  // E
+  case 24: return 78;  // F#
+  case 23: return 80;  // G#
+  case 22: return 82;  // Bb
+
+  case 21: return 77;  // F
+  case 20: return 79;  // G
+  case 19: return 81;  // A
+  case 18: return 82;  // B
+  case 17: return 84;  // C#
+  case 16: return 86;  // Eb
+  case 15: return 88;  // F
+
+  case 14: return 82;  // Bb
+  case 13: return 84;  // C
+  case 12: return 86;  // D
+  case 11: return 88;  // E
+  case 10: return 90;  // F#
+  case  9: return 92;  // G#
+  case  8: return 94;  // Bb
+
+  case  7: return 89;  // F
+  case  6: return 91;  // G
+  case  5: return 93;  // A
+  case  4: return 95;  // B
+  case  3: return 97;  // C#
+  case  2: return 99;  // Eb
+  case  1: return 101; // F
+
+  default:
+    return 0;
+  }
+}
+
+
+
+char mapping_transpose_buttons_down_helper(unsigned char note_in) {
   switch(note_in) {
   case 1: return 1;  // Db
   case 2: return 3;  // Eb
@@ -66,6 +188,7 @@ char mapping(unsigned char note_in) {
   case 5: return 9;  // A
   case 6: return 11;  // B
   case 7: return 13;  // C#
+
   case 8: return 8;  // Ab
   case 9: return 10;  // Bb
   case 10: return 12;  // C
@@ -73,6 +196,7 @@ char mapping(unsigned char note_in) {
   case 12: return 16;  // E
   case 13: return 18;  // F#
   case 14: return 20;  // G#
+
   case 15: return 13;  // Db
   case 16: return 15;  // Eb
   case 17: return 17;  // F
@@ -80,6 +204,7 @@ char mapping(unsigned char note_in) {
   case 19: return 21;  // A
   case 20: return 23;  // B
   case 21: return 25;  // C#
+
   case 22: return 20;  // Ab
   case 23: return 22;  // Bb
   case 24: return 24;  // C
@@ -87,6 +212,7 @@ char mapping(unsigned char note_in) {
   case 26: return 28;  // E
   case 27: return 30;  // F#
   case 28: return 32;  // G#
+
   case 29: return 25;  // Db
   case 30: return 27;  // Eb
   case 31: return 29;  // F
@@ -94,6 +220,7 @@ char mapping(unsigned char note_in) {
   case 33: return 33;  // A
   case 34: return 35;  // B
   case 35: return 37;  // C#
+
   case 36: return 32;  // Ab
   case 37: return 34;  // Bb
   case 38: return 36;  // C
@@ -101,6 +228,7 @@ char mapping(unsigned char note_in) {
   case 40: return 40;  // E
   case 41: return 42;  // F#
   case 42: return 44;  // G#
+
   case 43: return 37;  // Db
   case 44: return 39;  // Eb
   case 45: return 41;  // F
@@ -108,6 +236,7 @@ char mapping(unsigned char note_in) {
   case 47: return 45;  // A
   case 48: return 47;  // B
   case 49: return 49;  // C#
+
   case 50: return 44;  // Ab
   case 51: return 46;  // Bb
   case 52: return 48;  // C
@@ -115,6 +244,7 @@ char mapping(unsigned char note_in) {
   case 54: return 52;  // E
   case 55: return 54;  // F#
   case 56: return 56;  // G#
+
   case 57: return 51;  // Eb
   case 58: return 53;  // F
   case 59: return 55;  // G
@@ -122,6 +252,7 @@ char mapping(unsigned char note_in) {
   case 61: return 59;  // B
   case 62: return 61;  // C#
   case 63: return 63;  // D#
+
   case 64: return 56;  // Ab
   case 65: return 58;  // Bb
   case 66: return 60;  // C
@@ -129,6 +260,7 @@ char mapping(unsigned char note_in) {
   case 68: return 64;  // E
   case 69: return 66;  // F#
   case 70: return 68;  // G#
+
   case 71: return 63;  // Eb
   case 72: return 65;  // F
   case 73: return 67;  // G
@@ -136,6 +268,7 @@ char mapping(unsigned char note_in) {
   case 75: return 71;  // B
   case 76: return 73;  // C#
   case 77: return 75;  // D#
+
   case 78: return 68;  // Ab
   case 79: return 70;  // Bb
   case 80: return 72;  // C
@@ -143,6 +276,7 @@ char mapping(unsigned char note_in) {
   case 82: return 76;  // E
   case 83: return 78;  // F#
   case 84: return 80;  // G#
+
   case 85: return 75;  // Eb
   case 86: return 77;  // F
   case 87: return 79;  // G
@@ -150,6 +284,7 @@ char mapping(unsigned char note_in) {
   case 89: return 83;  // B
   case 90: return 85;  // C#
   case 91: return 87;  // D#
+
   case 92: return 80;  // Ab
   case 93: return 82;  // Bb
   case 94: return 84;  // C
@@ -160,6 +295,12 @@ char mapping(unsigned char note_in) {
   default:
     return 0;
   }
+}
+
+char mapping_transpose_buttons_down(unsigned char note_in) {
+  // I initially mapped it too low and based on a central key of C instead of
+  // D.
+  return mapping_transpose_buttons_down_helper(note_in) + 12 + 2;
 }
 
 void print_endpoints() {
@@ -196,7 +337,8 @@ bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
-  unsigned char note_out = mapping(note_in) + 12 + 2;
+  //unsigned char note_out = mapping_transpose_buttons_up(note_in);
+  unsigned char note_out = mapping_transpose_buttons_down(note_in);
   send_midi(mode, note_out, val, ENDPOINT_JAMMER);
 }
 
