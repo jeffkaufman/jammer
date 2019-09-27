@@ -1,16 +1,8 @@
-# The code behind my live stage setup
+# Simple MIDI Mapper for AXIS-49
 
-This isn't really intended for other people to use directly, because it's very
-tied to my specific equipment and the kind of music I'm playing.  But it may
-still be useful if you want to build something similar.
+Run `make run` or download the binary from https://www.jefftk.com/simple-jammer-binary.zip
 
-Run `make run` to build this software and run it.  It will look for various
-midi devices:
+It looks for an AXIS-49 and presents a virtual midi keyboard called "jammer".
 
-* AXIS 49 Keyboard
-* MIO USB-MIDI representing a Yamaha DTX 500 used as foot pedals
-* TE-Control breath controller
-* Tilt sensor: https://github.com/jeffkaufman/yoctomidi
-* Game controller: https://github.com/jeffkaufman/gcmidi (unused)
-
-and present several virtual midi devices named "jammer-_foo_".
+There are two potential orientations for a jammer-layout AXIS-49, and this
+implements the one with the transpose keys at the bottom.
