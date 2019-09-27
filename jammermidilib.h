@@ -395,14 +395,13 @@ char mapping(unsigned char note_in) {
   case  9: return 92;  // G#
   case  8: return 94;  // Bb
 
-  case  7: return 88;  // F
-  case  6: return 90;  // G
-  case  5: return 92;  // A
-  case  4: return 94;  // B
-  case  3: return 96;  // C#
-  case  2: return 98;  // Eb
-  case  1: return 100;  // F
-
+  case  7: return 89;  // F
+  case  6: return 91;  // G
+  case  5: return 93;  // A
+  case  4: return 95;  // B
+  case  3: return 97;  // C#
+  case  2: return 99;  // Eb
+  case  1: return 101; // F
 
   default:
     return 0;
