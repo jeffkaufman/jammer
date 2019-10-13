@@ -473,9 +473,16 @@ void handle_imitone(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
+  int endpoint = sax_on ? ENDPOINT_SAX : ENDPOINT_TROMBONE;
   if (whistle_on) {
-    send_midi(mode, note_in, 20, ENDPOINT_TROMBONE);
-    send_midi(MIDI_CC, CC_11, 40, ENDPOINT_TROMBONE);
+    if (mode == MIDI_ON || mode == MIDI_OFF) {
+      send_midi(mode, note_in, 20, endpoint);
+      send_midi(MIDI_CC, CC_11, 40, endpoint);
+    } else if (mode == MIDI_PITCH_BEND) {
+      send_midi(mode, note_in, val, endpoint);
+    } else {
+      printf("Unknown whistle mode %d\n", mode);
+    }
   }
 }
 
