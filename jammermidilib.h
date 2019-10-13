@@ -43,9 +43,9 @@ off  rho  ham  bt2  pd2  flx  bHH
 
 #define TOGGLE_TBD_A                17
 #define TOGGLE_TBD_B                16
-#define TOGGLE_TBD_C                15
+#define TOGGLE_WHISTLE              15
 
-#define CONTROL_MAX TOGGLE_TBD_C
+#define CONTROL_MAX TOGGLE_TBD_A
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -61,7 +61,6 @@ off  rho  ham  bt2  pd2  flx  bHH
 #define ENDPOINT_RHODES 10
 #define ENDPOINT_TBD_A 12
 #define ENDPOINT_TBD_B 13
-#define ENDPOINT_TBD_C 14
 #define ENDPOINT_SWEEP_PAD 15
 #define ENDPOINT_BREATH_DRUM 16
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
@@ -125,6 +124,7 @@ MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_piano;
 MIDIPortRef midiport_imitone;
+MIDIPortRef midiport_whistle;
 
 bool piano_on = false;  // Initialized based on availablity of piano.
 
@@ -142,7 +142,7 @@ bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
-bool tbd_c_on;
+bool whistle_on;
 bool breath_hihat_on;
 bool sax_on;
 int button_endpoint;
@@ -162,7 +162,7 @@ void voices_reset() {
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
-  tbd_c_on = false;
+  whistle_on = false;
   breath_hihat_on = false;
 
   button_endpoint = ENDPOINT_SAX;
@@ -472,6 +472,13 @@ void handle_imitone(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
+void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (whistle_on) {
+    send_midi(mode, note_in, 20, ENDPOINT_TROMBONE);
+    send_midi(MIDI_CC, CC_11, 40, ENDPOINT_TROMBONE);
+  }
+}
+
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_bass = note_in < 50;
 
@@ -511,9 +518,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
   if (tbd_b_on) {
     send_midi(mode, note_in, val, ENDPOINT_TBD_B);
-  }
-  if (tbd_c_on) {
-    send_midi(mode, note_in, val, ENDPOINT_TBD_C);
   }
 }
 
@@ -653,12 +657,9 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_TBD_C:
-    endpoint_notes_off(ENDPOINT_TBD_C);
-    tbd_c_on = !tbd_c_on;
-    if (!piano_on) {
-      button_endpoint = ENDPOINT_TBD_C;
-    }
+  case TOGGLE_WHISTLE:
+    endpoint_notes_off(ENDPOINT_TROMBONE);
+    whistle_on = !whistle_on;
     return;
 
   case TOGGLE_BREATH_HIHAT:
@@ -666,8 +667,6 @@ void handle_control_helper(unsigned int note_in) {
     breath_hihat_on = !breath_hihat_on;
     return;
   }
-
-
 }
 
 void handle_control(unsigned int note_in) {
@@ -710,8 +709,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   if (button_endpoint == ENDPOINT_TBD_A ||
-      button_endpoint == ENDPOINT_TBD_B ||
-      button_endpoint == ENDPOINT_TBD_C) {
+      button_endpoint == ENDPOINT_TBD_B) {
     val = breath;
   } else if (button_endpoint == ENDPOINT_ORGAN_LOW ||
              button_endpoint == ENDPOINT_HAMMOND ||
@@ -888,6 +886,8 @@ void read_midi(const MIDIPacketList *pktlist,
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_imitone) {
         handle_imitone(mode, note_in, val);
+      } else if (srcConnRefCon == &midiport_whistle) {
+        handle_whistle(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in <= CONTROL_MAX) {
           if (mode == MIDI_ON) {
@@ -998,6 +998,7 @@ void jml_setup() {
     breath_controller,
     game_controller,
     tilt_controller,
+    whistle_controller,
     piano_controller,
     imitone_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
@@ -1011,6 +1012,9 @@ void jml_setup() {
   }
   if (get_endpoint_ref(CFSTR("yocto 3d v2"), &tilt_controller)) {
     connect_source(tilt_controller, &midiport_tilt_controller);
+  }
+  if (get_endpoint_ref(CFSTR("whistle-pitch"), &whistle_controller)) {
+    connect_source(whistle_controller, &midiport_whistle);
   }
   // The piano at work is "Roland Digital Piano"
   if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
@@ -1039,7 +1043,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_RHODES],            CFSTR("jammer-rhodes"));
   create_source(&endpoints[ENDPOINT_TBD_A],             CFSTR("jammer-tbd-a"));
   create_source(&endpoints[ENDPOINT_TBD_B],             CFSTR("jammer-tbd-b"));
-  create_source(&endpoints[ENDPOINT_TBD_C],             CFSTR("jammer-tbd-c"));
   create_source(&endpoints[ENDPOINT_BREATH_DRUM],       CFSTR("jammer-drum"));
 }
 
@@ -1079,7 +1082,6 @@ void forward_air() {
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_A);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_B);
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_C);
     last_air_val = val;
   }
   if (organ_flex_value != last_organ_flex_val) {
