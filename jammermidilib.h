@@ -13,6 +13,9 @@
 // https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
 
 
+// #define PIANO_MIDI_NAME "Roland Digital Piano"
+#define PIANO_MIDI_NAME "USB MIDI Interface"
+
 /*
  Controls:
 
@@ -1023,8 +1026,7 @@ void jml_setup() {
   if (get_endpoint_ref(CFSTR("whistle-pitch"), &whistle_controller)) {
     connect_source(whistle_controller, &midiport_whistle);
   }
-  // The piano at work is "Roland Digital Piano"
-  if (get_endpoint_ref(CFSTR("USB MIDI Interface"), &piano_controller)) {
+  if (get_endpoint_ref(CFSTR(PIANO_MIDI_NAME), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
     piano_on = true;
   }
