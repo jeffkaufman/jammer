@@ -536,6 +536,14 @@ void full_reset() {
   all_notes_off();
 }
 
+void change_button_endpoint(int endpoint) {
+  if (!piano_on && endpoint != ENDPOINT_JAWHARP) {
+    jawharp_on = false;
+    jawharp_off();
+  }
+  button_endpoint = endpoint;
+}
+
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
@@ -550,20 +558,22 @@ void handle_control_helper(unsigned int note_in) {
   case SELECT_SAX_TROMBONE:
     all_notes_off();
     sax_on = !sax_on;
-    button_endpoint = sax_on ? ENDPOINT_SAX : ENDPOINT_TROMBONE;
+    change_button_endpoint(sax_on ? ENDPOINT_SAX : ENDPOINT_TROMBONE);
     return;
 
   case TOGGLE_JAWHARP:
     endpoint_notes_off(ENDPOINT_JAWHARP);
     if (piano_on) {
       jawharp_on = !jawharp_on;
-      if (jawharp_on) {
-        update_bass();
-      } else {
-        jawharp_off();
-      }
     } else {
-      button_endpoint = ENDPOINT_JAWHARP;
+      jawharp_on = true;
+      change_button_endpoint(ENDPOINT_JAWHARP);
+    }
+
+    if (jawharp_on) {
+      update_bass();
+    } else {
+      jawharp_off();
     }
     return;
 
@@ -599,7 +609,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_HAMMOND);
     hammond_on = !hammond_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_HAMMOND;
+      change_button_endpoint(ENDPOINT_HAMMOND);
     }
     return;
 
@@ -607,7 +617,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
     organ_flex_on = !organ_flex_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_ORGAN_FLEX;
+      change_button_endpoint(ENDPOINT_ORGAN_FLEX);
     }
     return;
 
@@ -615,7 +625,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_ORGAN_LOW);
     organ_low_on = !organ_low_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_ORGAN_LOW;
+      change_button_endpoint(ENDPOINT_ORGAN_LOW);
     }
     return;
 
@@ -623,7 +633,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_SINE_PAD);
     sine_pad_on = !sine_pad_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_SINE_PAD;
+      change_button_endpoint(ENDPOINT_SINE_PAD);
     }
     return;
 
@@ -631,7 +641,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_SWEEP_PAD);
     sweep_pad_on = !sweep_pad_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_SWEEP_PAD;
+      change_button_endpoint(ENDPOINT_SWEEP_PAD);
     }
     return;
 
@@ -639,7 +649,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_OVERDRIVEN_RHODES);
     overdriven_rhodes_on = !overdriven_rhodes_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_OVERDRIVEN_RHODES;
+      change_button_endpoint(ENDPOINT_OVERDRIVEN_RHODES);
     }
     return;
 
@@ -647,7 +657,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_RHODES);
     rhodes_on = !rhodes_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_RHODES;
+      change_button_endpoint(ENDPOINT_RHODES);
     }
     return;
 
@@ -655,7 +665,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_TBD_A);
     tbd_a_on = !tbd_a_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_TBD_A;
+      change_button_endpoint(ENDPOINT_TBD_A);
     }
     return;
 
@@ -663,7 +673,7 @@ void handle_control_helper(unsigned int note_in) {
     endpoint_notes_off(ENDPOINT_TBD_B);
     tbd_b_on = !tbd_b_on;
     if (!piano_on) {
-      button_endpoint = ENDPOINT_TBD_B;
+      change_button_endpoint(ENDPOINT_TBD_B);
     }
     return;
 
@@ -690,6 +700,13 @@ int remap(int val, int min, int max) {
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
+
+  if (button_endpoint == ENDPOINT_JAWHARP) {
+    root_note = note_out;
+    update_bass();
+    return;
+  }
+
   int chosen_endpoint = button_endpoint;
   if (button_endpoint == ENDPOINT_SAX) {
     note_out += 24;
@@ -724,7 +741,6 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   } else if (button_endpoint == ENDPOINT_ORGAN_LOW ||
              button_endpoint == ENDPOINT_HAMMOND ||
              button_endpoint == ENDPOINT_ORGAN_FLEX ||
-             button_endpoint == ENDPOINT_JAWHARP ||
              button_endpoint == ENDPOINT_SINE_PAD ||
              button_endpoint == ENDPOINT_SWEEP_PAD) {
     val = MIDI_MAX;
