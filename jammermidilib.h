@@ -46,7 +46,7 @@ off  rho  ham  bt2  pd2  flx  bHH
 
 #define TOGGLE_TBD_A                17
 #define TOGGLE_TBD_B                16
-#define TOGGLE_WHISTLE              15
+#define TOGGLE_TBD_C                15
 
 #define CONTROL_MAX TOGGLE_TBD_A
 
@@ -126,8 +126,6 @@ MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_piano;
-MIDIPortRef midiport_imitone;
-MIDIPortRef midiport_whistle;
 
 bool piano_on = false;  // Initialized based on availablity of piano.
 
@@ -145,7 +143,6 @@ bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
-bool whistle_on;
 bool breath_hihat_on;
 bool sax_on;
 int button_endpoint;
@@ -165,7 +162,6 @@ void voices_reset() {
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
-  whistle_on = false;
   breath_hihat_on = false;
 
   button_endpoint = ENDPOINT_SAX;
@@ -466,29 +462,6 @@ int to_root(note_out) {
   return (note_out - 2) % 12 + 26;
 }
 
-void handle_imitone(unsigned int mode, unsigned int note_in, unsigned int val) {
-  // printf("imitone "BYTE_TO_BINARY_PATTERN" %u %u\n",
-  //         BYTE_TO_BINARY(mode), note_in, val);
-
-  if (mode == MIDI_ON) {
-    root_note = note_in;
-  }
-}
-
-void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
-  int endpoint = sax_on ? ENDPOINT_SAX : ENDPOINT_TROMBONE;
-  if (whistle_on) {
-    if (mode == MIDI_ON || mode == MIDI_OFF) {
-      send_midi(mode, note_in, 20, endpoint);
-      send_midi(MIDI_CC, CC_11, 40, endpoint);
-    } else if (mode == MIDI_PITCH_BEND) {
-      send_midi(mode, note_in, val, endpoint);
-    } else {
-      printf("Unknown whistle mode %d\n", mode);
-    }
-  }
-}
-
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   bool is_bass = note_in < 50;
 
@@ -675,11 +648,6 @@ void handle_control_helper(unsigned int note_in) {
     if (!piano_on) {
       change_button_endpoint(ENDPOINT_TBD_B);
     }
-    return;
-
-  case TOGGLE_WHISTLE:
-    endpoint_notes_off(ENDPOINT_TROMBONE);
-    whistle_on = !whistle_on;
     return;
 
   case TOGGLE_BREATH_HIHAT:
@@ -910,10 +878,6 @@ void read_midi(const MIDIPacketList *pktlist,
 
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
-      } else if (srcConnRefCon == &midiport_imitone) {
-        handle_imitone(mode, note_in, val);
-      } else if (srcConnRefCon == &midiport_whistle) {
-        handle_whistle(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
         if (note_in <= CONTROL_MAX) {
           if (mode == MIDI_ON) {
@@ -1024,9 +988,7 @@ void jml_setup() {
     breath_controller,
     game_controller,
     tilt_controller,
-    whistle_controller,
-    piano_controller,
-    imitone_controller;
+    piano_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
     connect_source(axis49, &midiport_axis_49);
   }
@@ -1039,15 +1001,9 @@ void jml_setup() {
   if (get_endpoint_ref(CFSTR("yocto 3d v2"), &tilt_controller)) {
     connect_source(tilt_controller, &midiport_tilt_controller);
   }
-  if (get_endpoint_ref(CFSTR("whistle-pitch"), &whistle_controller)) {
-    connect_source(whistle_controller, &midiport_whistle);
-  }
   if (get_endpoint_ref(CFSTR(PIANO_MIDI_NAME), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
     piano_on = true;
-  }
-  if (get_endpoint_ref(CFSTR("imitone"), &imitone_controller)) {
-    connect_source(imitone_controller, &midiport_imitone);
   }
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
