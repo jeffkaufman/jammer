@@ -124,13 +124,11 @@ MIDIEndpointRef endpoints[N_ENDPOINTS];
 MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
-MIDIPortRef midiport_tilt_controller;
 MIDIPortRef midiport_piano;
 
 bool piano_on = false;  // Initialized based on availablity of piano.
 
 /* Anything mentioned here should be initialized in voices_reset */
-bool tilt_on;
 bool jawharp_on;
 bool bass_trombone_on;
 bool vbass_trombone_on;
@@ -149,7 +147,6 @@ int button_endpoint;
 int root_note;
 
 void voices_reset() {
-  tilt_on = false;
   jawharp_on = false;
   bass_trombone_on = false;
   vbass_trombone_on = false;
@@ -987,7 +984,6 @@ void jml_setup() {
   MIDIEndpointRef axis49,
     breath_controller,
     game_controller,
-    tilt_controller,
     piano_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
     connect_source(axis49, &midiport_axis_49);
@@ -997,9 +993,6 @@ void jml_setup() {
   }
   if (get_endpoint_ref(CFSTR("game controller"), &game_controller)) {
     connect_source(game_controller, &midiport_game_controller);
-  }
-  if (get_endpoint_ref(CFSTR("yocto 3d v2"), &tilt_controller)) {
-    connect_source(tilt_controller, &midiport_tilt_controller);
   }
   if (get_endpoint_ref(CFSTR(PIANO_MIDI_NAME), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
