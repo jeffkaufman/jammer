@@ -21,7 +21,7 @@
 
    rst  odr  low  bt1  pd1  jaw  s/t
 off  rho  ham  bt2  pd2  flx  bHH
-                       tbA  tbB  tbC
+                       tbA  tbB  ftb
  */
 #define FULL_RESET                  7
 #define ALL_NOTES_OFF            14
@@ -46,7 +46,7 @@ off  rho  ham  bt2  pd2  flx  bHH
 
 #define TOGGLE_TBD_A                17
 #define TOGGLE_TBD_B                16
-#define TOGGLE_TBD_C                15
+#define TOGGLE_FOOTBASS             15
 
 #define CONTROL_MAX TOGGLE_TBD_A
 
@@ -68,6 +68,9 @@ off  rho  ham  bt2  pd2  flx  bHH
 #define ENDPOINT_BREATH_DRUM 16
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
 
+// Footbass is just an alias for synth bass / low organ
+#define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
+
 /* midi values */
 #define MIDI_OFF 0x80
 #define MIDI_ON 0x90
@@ -82,6 +85,9 @@ off  rho  ham  bt2  pd2  flx  bHH
 #define MIN_TROMBONE 30  // need to be blowing this hard to make the trombone make noise
 #define MAX_TROMBONE 100  // cap midi breath to the trombone at this, or it gets blatty
 
+#define FOOTBASS_VELOCITY 100
+#define FOOTBASS_VOLUME 120
+
 // gcmidi sends on CC 20 through 29
 #define GCMIDI_MIN 20
 #define GCMIDI_MAX 29
@@ -89,8 +95,8 @@ off  rho  ham  bt2  pd2  flx  bHH
 #define CC_ROLL 30
 #define CC_PITCH 31
 
-#define MIDI_DRUM_LOW 36  // Acoustic Bass Drum
-#define MIDI_DRUM_HIGH 42  // Closed Hi-Hat
+#define MIDI_DRUM_KICK  106
+#define MIDI_DRUM_HIHAT 46
 
 #define MIDI_MAX 127
 
@@ -124,6 +130,7 @@ MIDIEndpointRef endpoints[N_ENDPOINTS];
 MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
+MIDIPortRef midiport_feet_controller;
 MIDIPortRef midiport_piano;
 
 bool piano_on = false;  // Initialized based on availablity of piano.
@@ -143,6 +150,7 @@ bool tbd_a_on;
 bool tbd_b_on;
 bool breath_hihat_on;
 bool sax_on;
+bool footbass_on;
 int button_endpoint;
 int root_note;
 
@@ -160,6 +168,7 @@ void voices_reset() {
   tbd_a_on = false;
   tbd_b_on = false;
   breath_hihat_on = false;
+  footbass_on = false;
 
   button_endpoint = ENDPOINT_SAX;
   sax_on = true;
@@ -177,7 +186,13 @@ int organ_flex_val() {
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
+//  * Not in use for footbass
 int current_note[N_ENDPOINTS];
+
+// Footbass needs to track two notes, because each pedal stays on either until
+// we receive MIDI_OFF for it or we get a new MIDI_ON from it.
+int footbass_low_note = -1;
+int footbass_high_note = -1;
 
 int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
 
@@ -224,6 +239,17 @@ void send_midi(char actionType, int noteNo, int v, int endpoint) {
 
 char active_note() {
   return root_note;
+}
+
+void footbass_off() {
+  if (footbass_low_note != -1) {
+    send_midi(MIDI_OFF, footbass_low_note, 0, ENDPOINT_FOOTBASS);
+    footbass_low_note = -1;
+  }
+  if (footbass_high_note != -1) {
+    send_midi(MIDI_OFF, footbass_high_note, 0, ENDPOINT_FOOTBASS);
+    footbass_high_note = -1;
+  }
 }
 
 void jawharp_off() {
@@ -647,6 +673,14 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
+  case TOGGLE_FOOTBASS:
+    footbass_off();
+    footbass_on = !footbass_on;
+    if (footbass_on) {
+      send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
+    }
+    return;
+
   case TOGGLE_BREATH_HIHAT:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
     breath_hihat_on = !breath_hihat_on;
@@ -712,6 +746,47 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   send_midi(mode, note_out, val, chosen_endpoint);
+}
+
+void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
+
+  bool is_low;
+  if (note_in == MIDI_DRUM_KICK) {
+    is_low = true;
+  } else if (note_in == MIDI_DRUM_HIHAT) {
+    is_low = false;
+  } else {
+    return;
+  }
+
+  if (!footbass_on) {
+    return;
+  }
+
+  // val is entirely ignored, replaced with a hard-coded velocity.
+  val = FOOTBASS_VELOCITY;
+
+  int* footbass_note = is_low ? &footbass_low_note : &footbass_high_note;
+  int* other_footbass_note = is_low ? &footbass_high_note : &footbass_low_note;
+
+  int note_out = active_note();
+  if (!is_low) {
+    note_out += 12;
+  }
+
+  if (*footbass_note != -1) {
+    send_midi(MIDI_OFF, *footbass_note, 0, ENDPOINT_FOOTBASS);
+    *footbass_note = -1;
+  }
+  if (mode == MIDI_ON) {
+    send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
+    *footbass_note = note_out;
+    if (*footbass_note == *other_footbass_note) {
+      // take ownership of this note, so the MIDI_OFF from the other bass
+      // doesn't end this note early.
+      *other_footbass_note = -1;
+    }
+  }
 }
 
 bool breath_hihat_triggered = false;
@@ -883,6 +958,8 @@ void read_midi(const MIDIPacketList *pktlist,
         } else {
           handle_button(mode, note_in, val);
         }
+      } else if (srcConnRefCon == &midiport_feet_controller) {
+        handle_feet(mode, note_in, val);
       } else if (mode == MIDI_CC) {
         handle_cc(note_in, val);
       } else {
@@ -984,6 +1061,7 @@ void jml_setup() {
   MIDIEndpointRef axis49,
     breath_controller,
     game_controller,
+    feet_controller,
     piano_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
     connect_source(axis49, &midiport_axis_49);
@@ -993,6 +1071,9 @@ void jml_setup() {
   }
   if (get_endpoint_ref(CFSTR("game controller"), &game_controller)) {
     connect_source(game_controller, &midiport_game_controller);
+  }
+  if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
+    connect_source(feet_controller, &midiport_feet_controller);
   }
   if (get_endpoint_ref(CFSTR(PIANO_MIDI_NAME), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
@@ -1045,7 +1126,9 @@ void forward_air() {
   }
 
   if (val != last_air_val) {
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
+    if (!footbass_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
+      send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
+    }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
