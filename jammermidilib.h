@@ -1131,6 +1131,7 @@ void forward_air() {
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
     if (piano_on) {
       send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
