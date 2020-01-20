@@ -1124,15 +1124,21 @@ void update_air() {
 
 int last_air_val = 0;
 void forward_air() {
-  int val = air_locked ? locked_air : air;
-  if (val > MIDI_MAX) {
-    val = MIDI_MAX;
-  }
+  int val = air;
+
   organ_flex_base = val;
   int organ_flex_value = organ_flex_val();
 
-  if (!piano_on) {
+  if (piano_on) {
+    if (air_locked) {
+      val = locked_air;
+    }
+  } else {
     val = organ_flex_value;
+  }
+
+  if (val > MIDI_MAX) {
+    val = MIDI_MAX;
   }
 
   if (val != last_air_val) {
