@@ -24,7 +24,7 @@ off  rho  ham  bt2  pd2  flx  bHH
                        tbA  tbB  ftb
  */
 #define FULL_RESET                  7
-#define ALL_NOTES_OFF            14
+#define AIR_LOCK                 14
 
 #define TOGGLE_OVERDRIVEN_RHODES     6
 #define TOGGLE_RHODES            13
@@ -153,6 +153,8 @@ bool sax_on;
 bool footbass_on;
 int button_endpoint;
 int root_note;
+bool air_locked;
+double locked_air;
 
 void voices_reset() {
   jawharp_on = false;
@@ -173,6 +175,9 @@ void voices_reset() {
   button_endpoint = ENDPOINT_SAX;
   sax_on = true;
   root_note = 26;  // D @ 37Hz
+
+  air_locked = false;
+  locked_air = 0;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -540,15 +545,20 @@ void change_button_endpoint(int endpoint) {
   button_endpoint = endpoint;
 }
 
+void air_lock() {
+  air_locked = !air_locked;
+  locked_air = air;
+}
+
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
-  case ALL_NOTES_OFF:
-    all_notes_off();
-    return;
-
   case FULL_RESET:
     full_reset();
+    return;
+
+  case AIR_LOCK:
+    air_lock();
     return;
 
   case SELECT_SAX_TROMBONE:
@@ -1114,7 +1124,7 @@ void update_air() {
 
 int last_air_val = 0;
 void forward_air() {
-  int val = air;
+  int val = air_locked ? locked_air : air;
   if (val > MIDI_MAX) {
     val = MIDI_MAX;
   }
