@@ -20,8 +20,8 @@
  Controls:
 
    rst  odr  low  bt1  pd1  jaw  s/t
-off  rho  ham  bt2  pd2  flx  bHH
-                       tbA  tbB  ftb
+arl  rho  ham  bt2  pd2  flx  bHH
+   lwh                 tbA  tbB  ftb
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -43,6 +43,8 @@ off  rho  ham  bt2  pd2  flx  bHH
 
 #define SELECT_SAX_TROMBONE          1
 #define TOGGLE_BREATH_HIHAT       8
+
+#define TOGGLE_LISTEN_WHISTLE       21
 
 #define TOGGLE_TBD_A                17
 #define TOGGLE_TBD_B                16
@@ -154,6 +156,7 @@ bool tbd_b_on;
 bool breath_hihat_on;
 bool sax_on;
 bool footbass_on;
+bool listen_whistle;
 int button_endpoint;
 int root_note;
 bool air_locked;
@@ -178,6 +181,7 @@ void voices_reset() {
   tbd_b_on = false;
   breath_hihat_on = false;
   footbass_on = false;
+  listen_whistle = false;
 
   button_endpoint = ENDPOINT_SAX;
   sax_on = true;
@@ -255,7 +259,18 @@ void send_midi(char actionType, int noteNo, int v, int endpoint) {
   attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
 }
 
+int current_whistle_note() {
+  double whistle_sum = 0;
+  for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
+    whistle_sum += recent_whistle_notes[i];
+  }
+  return (int)(whistle_sum/WHISTLE_HISTORY_LENGTH + 0.5);
+}
+
 char active_note() {
+  if (listen_whistle) {
+    return current_whistle_note();
+  }
   return root_note;
 }
 
@@ -704,6 +719,10 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
+  case TOGGLE_LISTEN_WHISTLE:
+    listen_whistle = !listen_whistle;
+    return;
+
   case TOGGLE_BREATH_HIHAT:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
     breath_hihat_on = !breath_hihat_on;
@@ -812,14 +831,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-int current_whistle_note() {
-  double whistle_sum = 0;
-  for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
-    whistle_sum += recent_whistle_notes[i];
-  }
-  return (int)(whistle_sum/WHISTLE_HISTORY_LENGTH + 0.5);
-}
-
 void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
   //printf("%x %x %x\n", mode, note_in, val);
 
@@ -844,7 +855,7 @@ void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
     recent_whistle_notes_index =
       (recent_whistle_notes_index + 1) % WHISTLE_HISTORY_LENGTH;
   }
-  printf("%d\n", current_whistle_note());
+  //printf("%d\n", current_whistle_note());
 }
 
 bool breath_hihat_triggered = false;
