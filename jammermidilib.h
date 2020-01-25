@@ -102,6 +102,8 @@ off  rho  ham  bt2  pd2  flx  bHH
 
 #define TICK_MS 10  // try to tick every N milliseconds
 
+#define WHISTLE_HISTORY_LENGTH 16
+
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte) \
   (byte & 0x80 ? '1' : '0'), \
@@ -131,6 +133,7 @@ MIDIPortRef midiport_axis_49;
 MIDIPortRef midiport_breath_controller;
 MIDIPortRef midiport_game_controller;
 MIDIPortRef midiport_feet_controller;
+MIDIPortRef midiport_whistle;
 MIDIPortRef midiport_piano;
 
 bool piano_on = false;  // Initialized based on availablity of piano.
@@ -156,6 +159,10 @@ int root_note;
 bool air_locked;
 double locked_air;
 
+unsigned int whistle_anchor_note;
+int recent_whistle_notes_index;
+double recent_whistle_notes[WHISTLE_HISTORY_LENGTH];
+
 void voices_reset() {
   jawharp_on = false;
   bass_trombone_on = false;
@@ -178,6 +185,12 @@ void voices_reset() {
 
   air_locked = false;
   locked_air = 0;
+
+  whistle_anchor_note = 60; // this is arbitrary
+  recent_whistle_notes_index = 0;
+  for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
+    recent_whistle_notes[i] = whistle_anchor_note;
+  }
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -799,6 +812,41 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
+int current_whistle_note() {
+  double whistle_sum = 0;
+  for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
+    whistle_sum += recent_whistle_notes[i];
+  }
+  return (int)(whistle_sum/WHISTLE_HISTORY_LENGTH + 0.5);
+}
+
+void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
+  //printf("%x %x %x\n", mode, note_in, val);
+
+  if (mode == MIDI_OFF) {
+    return;
+  } else if (mode == MIDI_ON) {
+    whistle_anchor_note = note_in;
+  } else if (mode == MIDI_PITCH_BEND) {
+    unsigned int lsb = note_in;
+    unsigned int msb = val;
+    unsigned int bend = lsb + (msb << 7);
+
+    /* bend = (1 + f_bend/2) * 8192 - 0.5
+       bend + 0.5 = (1 + f_bend/2) * 8192
+       (bend + 0.5) / 8192 = 1 + f_bend/2
+       (bend + 0.5) / 8192 - 1 = f_bend/2
+       ((bend + 0.5) / 8192 - 1)*2 = f_bend */
+    double midi_space_bend = ((((double)bend + 0.5) / 8192) - 1)*2;
+    double midi_space_note = whistle_anchor_note + midi_space_bend;
+    //printf("%.2f\n", midi_space_note);
+    recent_whistle_notes[recent_whistle_notes_index] = midi_space_note;
+    recent_whistle_notes_index =
+      (recent_whistle_notes_index + 1) % WHISTLE_HISTORY_LENGTH;
+  }
+  printf("%d\n", current_whistle_note());
+}
+
 bool breath_hihat_triggered = false;
 
 int breath_hihat_note = 42;
@@ -947,9 +995,9 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned int note_in = packet->data[1];
       unsigned int val = packet->data[2];
 
-      if (val > 0) {
-        printf("got packet %u %u %u\n", mode, note_in, val);
-      }
+      //if (val > 0) {
+      //  printf("got packet %u %u %u\n", mode, note_in, val);
+      //}
 
       //unsigned int channel = mode & 0x0F;
       mode = mode & 0xF0;
@@ -970,6 +1018,8 @@ void read_midi(const MIDIPacketList *pktlist,
         }
       } else if (srcConnRefCon == &midiport_feet_controller) {
         handle_feet(mode, note_in, val);
+      } else if (srcConnRefCon == &midiport_whistle) {
+        handle_whistle(mode, note_in, val);
       } else if (mode == MIDI_CC) {
         handle_cc(note_in, val);
       } else {
@@ -1072,6 +1122,7 @@ void jml_setup() {
     breath_controller,
     game_controller,
     feet_controller,
+    whistle,
     piano_controller;
   if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
     connect_source(axis49, &midiport_axis_49);
@@ -1084,6 +1135,9 @@ void jml_setup() {
   }
   if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
     connect_source(feet_controller, &midiport_feet_controller);
+  }
+  if (get_endpoint_ref(CFSTR("whistle-pitch"), &whistle)) {
+    connect_source(whistle, &midiport_whistle);
   }
   if (get_endpoint_ref(CFSTR(PIANO_MIDI_NAME), &piano_controller)) {
     connect_source(piano_controller, &midiport_piano);
