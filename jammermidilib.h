@@ -1006,9 +1006,9 @@ void read_midi(const MIDIPacketList *pktlist,
       unsigned int note_in = packet->data[1];
       unsigned int val = packet->data[2];
 
-      //if (val > 0) {
-      //  printf("got packet %u %u %u\n", mode, note_in, val);
-      //}
+      if (val > 0) {
+        printf("got packet %u %u %u\n", mode, note_in, val);
+      }
 
       //unsigned int channel = mode & 0x0F;
       mode = mode & 0xF0;
