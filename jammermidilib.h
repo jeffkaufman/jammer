@@ -97,7 +97,8 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define CC_ROLL 30
 #define CC_PITCH 31
 
-#define MIDI_DRUM_KICK  106
+#define MIDI_DRUM_KICK_A  106
+#define MIDI_DRUM_KICK_B  36
 #define MIDI_DRUM_HIHAT 46
 
 #define MIDI_MAX 127
@@ -793,7 +794,8 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   bool is_low;
-  if (note_in == MIDI_DRUM_KICK) {
+  if (note_in == MIDI_DRUM_KICK_A ||
+      note_in == MIDI_DRUM_KICK_B) {
     is_low = true;
   } else if (note_in == MIDI_DRUM_HIHAT) {
     is_low = false;
