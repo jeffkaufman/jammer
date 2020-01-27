@@ -82,7 +82,9 @@ intended to drive.  This section will probably get out of date.
       * Reverb > Amount > 0%
     * Tube Amplifier > Drive > half notch CCW from top
   * Organ Low: ReaControlMIDI > General MIDI Bank 01 > Synth Bass 101
+    * or Sforzando > Converted > sf2 > FluidR3_GM_sf2 > 008 > 039_Synth_Bass_4
   * Organ Flex: ReaControlMIDI > General MIDI Bank 02 > Doctor Solo
+    * or Sforzando > Converted > sf2 > FluidR3_GM_sf2 > 000 > 081_Saw_Wave
   * Sine Pad: ReaControlMIDI > General MIDI Bank 01 > Sine Pad
   * Sweep Pad: ReaControlMIDI > General MIDI > Pad 8 (sweep)
   * Rhodes:
@@ -109,4 +111,4 @@ intended to drive.  This section will probably get out of date.
     * Add AUi Kontakt > Trombone > Tenor Trombone 1
   * Bass Trombone
     * Add AUi Kontakt > Trombone > Bass Trombone
-  * Jawharp: Sforzando > Converted > sf2 > FluidR3_GM_sf2 > 000 > 004_Rhodes_EP
+  * Jawharp: Sforzando > Converted > sf2 > FluidR3_GM_sf2 > 000 > 004_Rhodes_EP with CC7 vol max
