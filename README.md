@@ -112,3 +112,13 @@ intended to drive.  This section will probably get out of date.
   * Bass Trombone
     * Add AUi Kontakt > Trombone > Bass Trombone
   * Jawharp: Sforzando > Converted > sf2 > FluidR3_GM_sf2 > 000 > 004_Rhodes_EP with CC7 vol max
+
+
+## Dealing with a Cracked Macbook Screen
+
+* Audacity, Export Multiple: shift + command + L
+
+* Reaper, open preferences: command + comma
+
+
+ 
