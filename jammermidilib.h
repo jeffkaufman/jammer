@@ -265,7 +265,7 @@ int current_whistle_note() {
   for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
     whistle_sum += recent_whistle_notes[i];
   }
-  return (int)(whistle_sum/WHISTLE_HISTORY_LENGTH + 0.5);
+  return (int)(whistle_sum/WHISTLE_HISTORY_LENGTH + 0.5) - 24;
 }
 
 char active_note() {
@@ -1022,7 +1022,7 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-        if (note_in <= CONTROL_MAX) {
+        if (note_in <= CONTROL_MAX || note_in == TOGGLE_LISTEN_WHISTLE) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
           }
