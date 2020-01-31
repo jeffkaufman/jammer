@@ -21,7 +21,7 @@
 
    rst  odr  low  bt1  pd1  jaw  s/t
 arl  rho  ham  bt2  pd2  flx  bHH
-   lwh                 tbA  tbB  ftb
+   lwh  atd            tbA  tbB  ftb
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -45,6 +45,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define TOGGLE_BREATH_HIHAT       8
 
 #define TOGGLE_LISTEN_WHISTLE       21
+#define TOGGLE_ATMOSPHERIC_DRONE    20
 
 #define TOGGLE_TBD_A                17
 #define TOGGLE_TBD_B                16
@@ -70,8 +71,9 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define ENDPOINT_BREATH_DRUM 16
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
 
-// Footbass is just an alias for synth bass / low organ
+// aliases
 #define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
+#define ENDPOINT_ATMOSPHERIC_DRONE ENDPOINT_SINE_PAD
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -158,6 +160,8 @@ bool breath_hihat_on;
 bool sax_on;
 bool footbass_on;
 bool listen_whistle;
+bool atmospheric_drone;
+bool atmospheric_drone_notes[MIDI_MAX];
 int button_endpoint;
 int root_note;
 bool air_locked;
@@ -183,6 +187,10 @@ void voices_reset() {
   breath_hihat_on = false;
   footbass_on = false;
   listen_whistle = false;
+  atmospheric_drone = false;
+  for (int i = 0; i < MIDI_MAX; i++) {
+    atmospheric_drone_notes[i] = false;
+  }
 
   button_endpoint = ENDPOINT_SAX;
   sax_on = true;
@@ -293,6 +301,21 @@ void jawharp_off() {
   }
 }
 
+void atmospheric_drone_off() {
+  for (int i = 0 ; i < MIDI_MAX; i++) {
+    if (atmospheric_drone_notes[i]) {
+      atmospheric_drone_notes[i] = false;
+      send_midi(MIDI_OFF, i, 0, ENDPOINT_ATMOSPHERIC_DRONE);
+    }
+  }
+  current_note[ENDPOINT_ATMOSPHERIC_DRONE] = -1;
+}
+
+void atmospheric_drone_note_on(int note) {
+  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_ATMOSPHERIC_DRONE);
+  atmospheric_drone_notes[note] = true;
+}
+
 void bass_trombone_off() {
   if (current_note[ENDPOINT_TROMBONE] != -1) {
     send_midi(MIDI_OFF, current_note[ENDPOINT_TROMBONE], 0, ENDPOINT_TROMBONE);
@@ -308,9 +331,20 @@ void vbass_trombone_off() {
 }
 
 void update_bass() {
+  int note_out = active_note();
+
+  if (atmospheric_drone && current_note[ENDPOINT_ATMOSPHERIC_DRONE] != note_out) {
+    atmospheric_drone_off();
+    current_note[ENDPOINT_ATMOSPHERIC_DRONE] = note_out;
+    atmospheric_drone_note_on(note_out);
+    atmospheric_drone_note_on(note_out + 12);
+    atmospheric_drone_note_on(note_out + 12 + 7);
+    atmospheric_drone_note_on(note_out + 12 + 12);
+    atmospheric_drone_note_on(note_out + 12 + 12 + 7);
+  }
+
   if (breath < 3) return;
 
-  int note_out = active_note();
   if (jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
     jawharp_off();
     send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
@@ -724,6 +758,15 @@ void handle_control_helper(unsigned int note_in) {
     listen_whistle = !listen_whistle;
     return;
 
+  case TOGGLE_ATMOSPHERIC_DRONE:
+    atmospheric_drone = !atmospheric_drone;
+    if (atmospheric_drone) {
+      send_midi(MIDI_CC, CC_11, 80, ENDPOINT_ATMOSPHERIC_DRONE);
+    } else {
+      atmospheric_drone_off();
+    }
+    return;
+
   case TOGGLE_BREATH_HIHAT:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
     breath_hihat_on = !breath_hihat_on;
@@ -792,6 +835,10 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (atmospheric_drone) {
+    update_bass();
+  }
+
 
   bool is_low;
   if (note_in == MIDI_DRUM_KICK_A ||
@@ -1022,7 +1069,9 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-        if (note_in <= CONTROL_MAX || note_in == TOGGLE_LISTEN_WHISTLE) {
+        if (note_in <= CONTROL_MAX ||
+	    note_in == TOGGLE_LISTEN_WHISTLE ||
+	    note_in == TOGGLE_ATMOSPHERIC_DRONE) {
           if (mode == MIDI_ON) {
             handle_control(note_in);
           }
@@ -1214,7 +1263,9 @@ void forward_air() {
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
     send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
+    if (!atmospheric_drone && ENDPOINT_ATMOSPHERIC_DRONE == ENDPOINT_SINE_PAD) {
+      send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
+    }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
     if (piano_on) {
       send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
