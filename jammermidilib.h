@@ -53,6 +53,9 @@ arl  rho  ham  bt2  pd2  flx  bHH
 
 #define CONTROL_MAX TOGGLE_TBD_A
 
+#define BUTTON_MAJOR 98
+#define BUTTON_MIXO 97
+
 /* endpoints */
 #define ENDPOINT_SAX 0
 #define ENDPOINT_TROMBONE 1
@@ -108,6 +111,13 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define TICK_MS 10  // try to tick every N milliseconds
 
 #define WHISTLE_HISTORY_LENGTH 16
+
+#define MODE_MAJOR 0
+#define MODE_MIXO 1
+
+#define STATE_NORMAL 0
+#define STATE_AWAIT_KEY 1
+#define STATE_AWAIT_MODE 2
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte) \
@@ -166,6 +176,9 @@ int button_endpoint;
 int root_note;
 bool air_locked;
 double locked_air;
+int key;
+int musical_mode;
+int state;
 
 unsigned int whistle_anchor_note;
 int recent_whistle_notes_index;
@@ -204,6 +217,10 @@ void voices_reset() {
   for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
     recent_whistle_notes[i] = whistle_anchor_note;
   }
+
+  musical_mode = MODE_MAJOR;
+  key = root_note;
+  state = STATE_NORMAL;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -268,12 +285,55 @@ void send_midi(char actionType, int noteNo, int v, int endpoint) {
   attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
 }
 
+// Return the distance between two notes in MIDI space, ignoring
+// octave.  For example, if noteA is A57, then G55, G67, and G79 are
+// all two notes away.
+double distance(double noteA, double noteB) {
+  double dist = noteA - noteB;
+  while (dist < -6) {
+    dist += 12;
+  }
+  while (dist > 6) {
+    dist -= 12;
+  }
+  return fabs(dist);
+}
+
 int current_whistle_note() {
   double whistle_sum = 0;
   for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
     whistle_sum += recent_whistle_notes[i];
   }
-  return (int)(whistle_sum/WHISTLE_HISTORY_LENGTH + 0.5) - 24;
+  
+  double avg = whistle_sum/WHISTLE_HISTORY_LENGTH;
+
+  int note1 = key;
+  int note4 = key + 5;
+  int note5 = key + 7;
+  int note67 = key - (musical_mode == MODE_MAJOR ? 3 : 2);
+
+  double dist1 = distance(note1, avg);
+  double dist4 = distance(note4, avg);
+  double dist5 = distance(note5, avg);
+  double dist67 = distance(note67, avg);
+
+  int best_note = key;
+  double best_dist = dist1;
+  
+  if (dist4 < best_dist) {
+    best_note = note4;
+    best_dist = dist4;
+  }
+  if (dist5 < best_dist) {
+    best_note = note5;
+    best_dist = dist5;
+  }
+  if (dist67 < best_dist) {
+    best_note = note67;
+    best_dist = dist67;
+  }
+
+  return best_note;
 }
 
 char active_note() {
@@ -756,6 +816,9 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_LISTEN_WHISTLE:
     listen_whistle = !listen_whistle;
+    if (listen_whistle) {
+      state = STATE_AWAIT_KEY;
+    }
     return;
 
   case TOGGLE_ATMOSPHERIC_DRONE:
@@ -1069,15 +1132,29 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-        if (note_in <= CONTROL_MAX ||
-	    note_in == TOGGLE_LISTEN_WHISTLE ||
-	    note_in == TOGGLE_ATMOSPHERIC_DRONE) {
-          if (mode == MIDI_ON) {
-            handle_control(note_in);
+	if (state == STATE_AWAIT_KEY && mode == MIDI_ON) {
+	  key = mapping(note_in);
+	  printf("Chose key %d (%s)\n", key, note_str(key));
+	  state = STATE_AWAIT_MODE;
+	} else if (state == STATE_AWAIT_MODE && mode == MIDI_ON) {
+	  if (note_in == BUTTON_MAJOR) {
+	    musical_mode = MODE_MAJOR;
+	  } else if (note_in == BUTTON_MIXO) {
+	    musical_mode = MODE_MIXO;
+	  }
+	  printf("Chose mode %d\n", musical_mode);
+	  state = STATE_NORMAL;
+	} else {
+          if (note_in <= CONTROL_MAX ||
+	      note_in == TOGGLE_LISTEN_WHISTLE ||
+	      note_in == TOGGLE_ATMOSPHERIC_DRONE) {
+            if (mode == MIDI_ON) {
+              handle_control(note_in);
+            }
+          } else {
+            handle_button(mode, note_in, val);
           }
-        } else {
-          handle_button(mode, note_in, val);
-        }
+	}
       } else if (srcConnRefCon == &midiport_feet_controller) {
         handle_feet(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_whistle) {
