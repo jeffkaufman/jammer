@@ -21,7 +21,7 @@
 
    rst  odr  low  bt1  pd1  jaw  s/t
 arl  rho  ham  bt2  pd2  flx  bHH
-   lwh  atd            tbA  tbB  ftb
+   lwh  atd  ldp  tdk  tdr  tds  ftb
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -46,12 +46,13 @@ arl  rho  ham  bt2  pd2  flx  bHH
 
 #define TOGGLE_LISTEN_WHISTLE       21
 #define TOGGLE_ATMOSPHERIC_DRONE    20
-
-#define TOGGLE_TBD_A                17
-#define TOGGLE_TBD_B                16
+#define TOGGLE_LISTEN_DRUM_PEDAL    19
+#define TOGGLE_DRUM_PEDAL_KICK      18
+#define TOGGLE_DRUM_PEDAL_RIM       17
+#define TOGGLE_DRUM_PEDAL_SNARE     16
 #define TOGGLE_FOOTBASS             15
 
-#define CONTROL_MAX TOGGLE_TBD_A
+#define CONTROL_MAX TOGGLE_LISTEN_WHISTLE
 
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
@@ -68,8 +69,6 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define ENDPOINT_SINE_PAD 8
 #define ENDPOINT_OVERDRIVEN_RHODES 9
 #define ENDPOINT_RHODES 10
-#define ENDPOINT_TBD_A 12
-#define ENDPOINT_TBD_B 13
 #define ENDPOINT_SWEEP_PAD 15
 #define ENDPOINT_BREATH_DRUM 16
 #define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
@@ -102,9 +101,17 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define CC_ROLL 30
 #define CC_PITCH 31
 
+#define MIDI_DRUM_KICK  35
 #define MIDI_DRUM_KICK_A  106
 #define MIDI_DRUM_KICK_B  36
+#define MIDI_DRUM_RIM 37
+#define MIDI_DRUM_SNARE 38
 #define MIDI_DRUM_HIHAT 46
+
+#define MIDI_DRUM_PEDAL_1 46
+#define MIDI_DRUM_PEDAL_2 38
+#define MIDI_DRUM_PEDAL_3 51
+#define MIDI_DRUM_PEDAL_4 59
 
 #define MIDI_MAX 127
 
@@ -170,6 +177,10 @@ bool breath_hihat_on;
 bool sax_on;
 bool footbass_on;
 bool listen_whistle;
+bool listen_drum_pedal;
+int most_recent_drum_pedal;
+int current_drum_pedal_kick_note;
+int current_drum_pedal_tss_note;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 int button_endpoint;
@@ -200,6 +211,10 @@ void voices_reset() {
   breath_hihat_on = false;
   footbass_on = false;
   listen_whistle = false;
+  listen_drum_pedal = false;
+  most_recent_drum_pedal = MIDI_DRUM_PEDAL_1;
+  current_drum_pedal_kick_note = MIDI_DRUM_KICK;
+  current_drum_pedal_tss_note = 0;
   atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
     atmospheric_drone_notes[i] = false;
@@ -330,9 +345,23 @@ int current_whistle_note() {
   return best_note;
 }
 
+int current_drum_pedal_note() {
+  int note = key;
+  if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+    note = key - (musical_mode == MODE_MAJOR ? 3 : 2); // vi or VII
+  } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+    note = key + 5;  // IV
+  } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+    note = key + 7;  // V
+  }
+  return note;
+}
+
 char active_note() {
   if (listen_whistle) {
     return current_whistle_note();
+  } else if (listen_drum_pedal) {
+    return current_drum_pedal_note();
   }
   return root_note;
 }
@@ -645,12 +674,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (rhodes_on) {
     send_midi(mode, note_in, val, ENDPOINT_RHODES);
   }
-  if (tbd_a_on) {
-    send_midi(mode, note_in, val, ENDPOINT_TBD_A);
-  }
-  if (tbd_b_on) {
-    send_midi(mode, note_in, val, ENDPOINT_TBD_B);
-  }
 }
 
 void full_reset() {
@@ -788,22 +811,6 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_TBD_A:
-    endpoint_notes_off(ENDPOINT_TBD_A);
-    tbd_a_on = !tbd_a_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_TBD_A);
-    }
-    return;
-
-  case TOGGLE_TBD_B:
-    endpoint_notes_off(ENDPOINT_TBD_B);
-    tbd_b_on = !tbd_b_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_TBD_B);
-    }
-    return;
-
   case TOGGLE_FOOTBASS:
     footbass_off();
     footbass_on = !footbass_on;
@@ -812,9 +819,44 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
+  case TOGGLE_DRUM_PEDAL_KICK:
+    if (current_drum_pedal_kick_note != MIDI_DRUM_KICK) {
+      current_drum_pedal_kick_note = MIDI_DRUM_KICK;
+    } else {
+      current_drum_pedal_kick_note = 0;
+    }
+    return;
+
+  case TOGGLE_DRUM_PEDAL_RIM:
+    printf("toggle rim\n");
+    if (current_drum_pedal_tss_note != MIDI_DRUM_RIM) {
+      current_drum_pedal_tss_note = MIDI_DRUM_RIM;
+    } else {
+      current_drum_pedal_tss_note = 0;
+    }
+    return;
+
+  case TOGGLE_DRUM_PEDAL_SNARE:
+    printf("toggle snare\n");
+    if (current_drum_pedal_tss_note != MIDI_DRUM_SNARE) {
+      current_drum_pedal_tss_note = MIDI_DRUM_SNARE;
+    } else {
+      current_drum_pedal_tss_note = 0;
+    }
+    return;
+
   case TOGGLE_LISTEN_WHISTLE:
     listen_whistle = !listen_whistle;
     if (listen_whistle) {
+      printf("listen whistle, enter key:\n");
+      state = STATE_AWAIT_KEY;
+    }
+    return;
+
+  case TOGGLE_LISTEN_DRUM_PEDAL:
+    listen_drum_pedal = !listen_drum_pedal;
+    if (listen_drum_pedal) {
+      printf("listen drum pedal, enter key:\n");
       state = STATE_AWAIT_KEY;
     }
     return;
@@ -881,14 +923,11 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  if (button_endpoint == ENDPOINT_TBD_A ||
-      button_endpoint == ENDPOINT_TBD_B) {
-    val = breath;
-  } else if (button_endpoint == ENDPOINT_ORGAN_LOW ||
-             button_endpoint == ENDPOINT_HAMMOND ||
-             button_endpoint == ENDPOINT_ORGAN_FLEX ||
-             button_endpoint == ENDPOINT_SINE_PAD ||
-             button_endpoint == ENDPOINT_SWEEP_PAD) {
+  if (button_endpoint == ENDPOINT_ORGAN_LOW ||
+      button_endpoint == ENDPOINT_HAMMOND ||
+      button_endpoint == ENDPOINT_ORGAN_FLEX ||
+      button_endpoint == ENDPOINT_SINE_PAD ||
+      button_endpoint == ENDPOINT_SWEEP_PAD) {
     val = MIDI_MAX;
   }
 
@@ -896,19 +935,59 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
+  // Handle pedals after determining the active note, so that only
+  // future notes are affected.
+  if (listen_drum_pedal) {
+    if (note_in == MIDI_DRUM_PEDAL_1 ||
+	note_in == MIDI_DRUM_PEDAL_2 ||
+	note_in == MIDI_DRUM_PEDAL_3 ||
+	note_in == MIDI_DRUM_PEDAL_4) {
+      most_recent_drum_pedal = note_in;
+    }
+  }			    
+
   if (atmospheric_drone) {
     update_bass();
   }
 
+  int note_out = active_note();
 
   bool is_low;
   if (note_in == MIDI_DRUM_KICK_A ||
       note_in == MIDI_DRUM_KICK_B) {
     is_low = true;
-  } else if (note_in == MIDI_DRUM_HIHAT) {
+  } else if (note_in == MIDI_DRUM_PEDAL_1 ||
+	     note_in == MIDI_DRUM_PEDAL_2 ||
+	     note_in == MIDI_DRUM_PEDAL_3 ||
+	     note_in == MIDI_DRUM_PEDAL_4) {
     is_low = false;
   } else {
     return;
+  }
+
+  if (listen_drum_pedal) {
+    // When using the drum pedals for note selection, left and right
+    // are reversed.  It's terrible, but it's much easier than having
+    // to switch the feet ahead of the beat.
+    is_low = !is_low;
+
+    // In this mode the drum synth is silent and we synthesize drums
+    // on the computer.
+    int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
+    if (drum_note != 0) {
+      printf("sending %d to drum\n", drum_note);
+      send_midi(mode, drum_note, is_low ? 100 : 60, ENDPOINT_BREATH_DRUM);
+    }
+
+    if (current_drum_pedal_tss_note != 0 && !is_low) {
+      // when the tss pedal is on, we don't also want the high bass
+      return;
+    }
+
+    if (current_drum_pedal_tss_note == MIDI_DRUM_RIM) {
+      // when the tss pedal is set to rim, we don't even want the low bass
+      return;
+    }
   }
 
   if (!footbass_on) {
@@ -921,7 +1000,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   int* footbass_note = is_low ? &footbass_low_note : &footbass_high_note;
   int* other_footbass_note = is_low ? &footbass_high_note : &footbass_low_note;
 
-  int note_out = active_note();
   if (!is_low) {
     note_out += 12;
   }
@@ -1145,6 +1223,7 @@ void read_midi(const MIDIPacketList *pktlist,
 	} else {
           if (note_in <= CONTROL_MAX ||
 	      note_in == TOGGLE_LISTEN_WHISTLE ||
+	      note_in == TOGGLE_LISTEN_DRUM_PEDAL ||
 	      note_in == TOGGLE_ATMOSPHERIC_DRONE) {
             if (mode == MIDI_ON) {
               handle_control(note_in);
@@ -1297,8 +1376,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_SWEEP_PAD],         CFSTR("jammer-sweep-pad"));
   create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES], CFSTR("jammer-overdriven-rhodes"));
   create_source(&endpoints[ENDPOINT_RHODES],            CFSTR("jammer-rhodes"));
-  create_source(&endpoints[ENDPOINT_TBD_A],             CFSTR("jammer-tbd-a"));
-  create_source(&endpoints[ENDPOINT_TBD_B],             CFSTR("jammer-tbd-b"));
   create_source(&endpoints[ENDPOINT_BREATH_DRUM],       CFSTR("jammer-drum"));
 }
 
@@ -1347,8 +1424,6 @@ void forward_air() {
     } else {
       // handled in handle_cc
     }
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_A);
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_TBD_B);
     last_air_val = val;
   }
   if (organ_flex_value != last_organ_flex_val) {
