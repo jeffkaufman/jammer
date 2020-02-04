@@ -307,32 +307,26 @@ int current_whistle_note() {
   
   double avg = whistle_sum/WHISTLE_HISTORY_LENGTH;
 
-  int note1 = key;
-  int note4 = key + 5;
-  int note5 = key + 7;
-  int note67 = key - (musical_mode == MODE_MAJOR ? 3 : 2);
+  int n_notes = 5;
+  int notes[n_notes];
 
-  double dist1 = distance(note1, avg);
-  double dist4 = distance(note4, avg);
-  double dist5 = distance(note5, avg);
-  double dist67 = distance(note67, avg);
-
-  int best_note = key;
-  double best_dist = dist1;
+  notes[0] = key; // I
+  notes[1] = key + 2; // ii
+  //notes[2] = key + 4; // III
+  notes[2] = key + 5; // IV
+  notes[3] = key + 7; // V
+  notes[4] = key - (musical_mode == MODE_MAJOR ? 3 : 2); // vi or VII
   
-  if (dist4 < best_dist) {
-    best_note = note4;
-    best_dist = dist4;
-  }
-  if (dist5 < best_dist) {
-    best_note = note5;
-    best_dist = dist5;
-  }
-  if (dist67 < best_dist) {
-    best_note = note67;
-    best_dist = dist67;
-  }
+  int best_note = key;
+  float best_dist = 12;  // all real dists are <= 6
 
+  for (int i = 0 ; i < n_notes; i++) {
+    float dist = distance(notes[i], avg);
+    if (dist < best_dist) {
+      best_note = notes[i];
+      best_dist = dist;
+    }
+  }
   return best_note;
 }
 
@@ -396,10 +390,14 @@ void update_bass() {
   if (atmospheric_drone && current_note[ENDPOINT_ATMOSPHERIC_DRONE] != note_out) {
     atmospheric_drone_off();
     current_note[ENDPOINT_ATMOSPHERIC_DRONE] = note_out;
+
+    //bool is_minor = (note_out == key + 2 ||  // ii
+    //  note_out == key - 3);  // iv
     atmospheric_drone_note_on(note_out);
     atmospheric_drone_note_on(note_out + 12);
     atmospheric_drone_note_on(note_out + 12 + 7);
     atmospheric_drone_note_on(note_out + 12 + 12);
+    //atmospheric_drone_note_on(note_out + 12 + 12 + (is_minor ? 3 : 4));
     atmospheric_drone_note_on(note_out + 12 + 12 + 7);
   }
 
