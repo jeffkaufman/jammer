@@ -976,7 +976,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
     if (drum_note != 0) {
       printf("sending %d to drum\n", drum_note);
-      send_midi(mode, drum_note, is_low ? 100 : 60, ENDPOINT_BREATH_DRUM);
+      send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_BREATH_DRUM);
     }
 
     if (current_drum_pedal_tss_note != 0 && !is_low) {
