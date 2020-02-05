@@ -121,10 +121,6 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define MODE_MAJOR 0
 #define MODE_MIXO 1
 
-#define STATE_NORMAL 0
-#define STATE_AWAIT_KEY 1
-#define STATE_AWAIT_MODE 2
-
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte) \
   (byte & 0x80 ? '1' : '0'), \
@@ -186,9 +182,7 @@ int button_endpoint;
 int root_note;
 bool air_locked;
 double locked_air;
-int key;
 int musical_mode;
-int state;
 
 unsigned int whistle_anchor_note;
 int recent_whistle_notes_index;
@@ -233,8 +227,6 @@ void voices_reset() {
   }
 
   musical_mode = MODE_MAJOR;
-  key = root_note;
-  state = STATE_NORMAL;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -321,6 +313,8 @@ int current_whistle_note() {
   
   double avg = whistle_sum/WHISTLE_HISTORY_LENGTH;
 
+  int key = root_note;
+
   int n_notes = 5;
   int notes[n_notes];
 
@@ -345,13 +339,13 @@ int current_whistle_note() {
 }
 
 int current_drum_pedal_note() {
-  int note = key;
+  int note = root_note;
   if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-    note = key - (musical_mode == MODE_MAJOR ? 3 : 2); // vi or VII
+    note = root_note - (musical_mode == MODE_MAJOR ? 3 : 2); // vi or VII
   } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-    note = key + 5;  // IV
+    note = root_note + 5;  // IV
   } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-    note = key + 7;  // V
+    note = root_note + 7;  // V
   }
   return note;
 }
@@ -848,18 +842,10 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_LISTEN_WHISTLE:
     listen_whistle = !listen_whistle;
-    if (listen_whistle) {
-      printf("listen whistle, enter key:\n");
-      state = STATE_AWAIT_KEY;
-    }
     return;
 
   case TOGGLE_LISTEN_DRUM_PEDAL:
     listen_drum_pedal = !listen_drum_pedal;
-    if (listen_drum_pedal) {
-      printf("listen drum pedal, enter key:\n");
-      state = STATE_AWAIT_KEY;
-    }
     return;
 
   case TOGGLE_ATMOSPHERIC_DRONE:
@@ -1210,29 +1196,20 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-	if (state == STATE_AWAIT_KEY && mode == MIDI_ON) {
-	  key = mapping(note_in);
-	  printf("Chose key %d (%s)\n", key, note_str(key));
-	  state = STATE_AWAIT_MODE;
-	} else if (state == STATE_AWAIT_MODE && mode == MIDI_ON) {
+	if ((listen_whistle || listen_drum_pedal) &&
+	    (note_in == BUTTON_MAJOR || note_in == BUTTON_MIXO)) {
 	  if (note_in == BUTTON_MAJOR) {
 	    musical_mode = MODE_MAJOR;
 	  } else if (note_in == BUTTON_MIXO) {
 	    musical_mode = MODE_MIXO;
 	  }
 	  printf("Chose mode %d\n", musical_mode);
-	  state = STATE_NORMAL;
-	} else {
-          if (note_in <= CONTROL_MAX ||
-	      note_in == TOGGLE_LISTEN_WHISTLE ||
-	      note_in == TOGGLE_LISTEN_DRUM_PEDAL ||
-	      note_in == TOGGLE_ATMOSPHERIC_DRONE) {
-            if (mode == MIDI_ON) {
-              handle_control(note_in);
-            }
-          } else {
-            handle_button(mode, note_in, val);
+	} else if (note_in <= CONTROL_MAX) {
+          if (mode == MIDI_ON) {
+            handle_control(note_in);
           }
+        } else {
+          handle_button(mode, note_in, val);
 	}
       } else if (srcConnRefCon == &midiport_feet_controller) {
         handle_feet(mode, note_in, val);
