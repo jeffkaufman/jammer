@@ -75,7 +75,6 @@ arl  rho  ham  bt2  pd2  flx  bHH
 
 // aliases
 #define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
-#define ENDPOINT_ATMOSPHERIC_DRONE ENDPOINT_SINE_PAD
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -388,14 +387,16 @@ void atmospheric_drone_off() {
   for (int i = 0 ; i < MIDI_MAX; i++) {
     if (atmospheric_drone_notes[i]) {
       atmospheric_drone_notes[i] = false;
-      send_midi(MIDI_OFF, i, 0, ENDPOINT_ATMOSPHERIC_DRONE);
+      send_midi(MIDI_OFF, i, 0, ENDPOINT_SINE_PAD);
+      send_midi(MIDI_OFF, i, 0, ENDPOINT_SWEEP_PAD);
     }
   }
-  current_note[ENDPOINT_ATMOSPHERIC_DRONE] = -1;
+  current_note[ENDPOINT_SINE_PAD] = -1;
 }
 
 void atmospheric_drone_note_on(int note) {
-  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_ATMOSPHERIC_DRONE);
+  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SINE_PAD);
+  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SWEEP_PAD);
   atmospheric_drone_notes[note] = true;
 }
 
@@ -416,18 +417,18 @@ void vbass_trombone_off() {
 void update_bass() {
   int note_out = active_note();
 
-  if (atmospheric_drone && current_note[ENDPOINT_ATMOSPHERIC_DRONE] != note_out) {
+  if (atmospheric_drone && current_note[ENDPOINT_SINE_PAD] != note_out) {
     atmospheric_drone_off();
-    current_note[ENDPOINT_ATMOSPHERIC_DRONE] = note_out;
+    current_note[ENDPOINT_SINE_PAD] = note_out;
 
     //bool is_minor = (note_out == key + 2 ||  // ii
     //  note_out == key - 3);  // iv
     atmospheric_drone_note_on(note_out);
     atmospheric_drone_note_on(note_out + 12);
     atmospheric_drone_note_on(note_out + 12 + 7);
-    atmospheric_drone_note_on(note_out + 12 + 12);
+    //atmospheric_drone_note_on(note_out + 12 + 12);
     //atmospheric_drone_note_on(note_out + 12 + 12 + (is_minor ? 3 : 4));
-    atmospheric_drone_note_on(note_out + 12 + 12 + 7);
+    //atmospheric_drone_note_on(note_out + 12 + 12 + 7);
   }
 
   if (breath < 3) return;
@@ -864,7 +865,8 @@ void handle_control_helper(unsigned int note_in) {
   case TOGGLE_ATMOSPHERIC_DRONE:
     atmospheric_drone = !atmospheric_drone;
     if (atmospheric_drone) {
-      send_midi(MIDI_CC, CC_11, 80, ENDPOINT_ATMOSPHERIC_DRONE);
+      send_midi(MIDI_CC, CC_11, 80, ENDPOINT_SWEEP_PAD);
+      send_midi(MIDI_CC, CC_11, 80, ENDPOINT_SINE_PAD);
     } else {
       atmospheric_drone_off();
     }
@@ -1414,9 +1416,9 @@ void forward_air() {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
-    if (!atmospheric_drone && ENDPOINT_ATMOSPHERIC_DRONE == ENDPOINT_SINE_PAD) {
+    if (!atmospheric_drone) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
+      send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
     if (piano_on) {
