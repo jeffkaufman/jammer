@@ -56,6 +56,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
+#define BUTTON_MINOR 96
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -120,6 +121,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 
 #define MODE_MAJOR 0
 #define MODE_MIXO 1
+#define MODE_MINOR 2
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte) \
@@ -319,11 +321,23 @@ int current_whistle_note() {
   int notes[n_notes];
 
   notes[0] = key; // I
-  notes[1] = key + 2; // ii
-  //notes[2] = key + 4; // III
-  notes[2] = key + 5; // IV
-  notes[3] = key + 7; // V
-  notes[4] = key - (musical_mode == MODE_MAJOR ? 3 : 2); // vi or VII
+
+  if (musical_mode == MODE_MAJOR) {
+    notes[1] = key + 2; // ii
+    notes[2] = key + 5; // IV
+    notes[3] = key + 7; // V
+    notes[4] = key - 3; // vi
+  } else if (musical_mode == MODE_MIXO) {
+    notes[1] = key + 2; // ii
+    notes[2] = key + 5; // IV
+    notes[3] = key + 7; // V
+    notes[4] = key - 2; // VII
+  } else if (musical_mode == MODE_MINOR) {
+    notes[1] = key - 2; // VII
+    notes[2] = key - 4; // VI
+    notes[3] = key - 5; // V
+    notes[4] = key; // unused
+  }
   
   int best_note = key;
   float best_dist = 12;  // all real dists are <= 6
@@ -340,13 +354,33 @@ int current_whistle_note() {
 
 int current_drum_pedal_note() {
   int note = root_note;
-  if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-    note = root_note - (musical_mode == MODE_MAJOR ? 3 : 2); // vi or VII
-  } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-    note = root_note + 5;  // IV
-  } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-    note = root_note + 7;  // V
+
+  if (musical_mode == MODE_MAJOR) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 3;  // vi
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note + 5;  // IV
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note = root_note + 7;  // V
+    }
+  } else if (musical_mode == MODE_MIXO) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 2; // vi or VII
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note + 5;  // IV
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note = root_note + 7;  // V
+    }
+  } else if (musical_mode == MODE_MINOR) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note - 2;  // VII
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_2) {
+      note = root_note - 4;  // VI
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 5;  // V
+    }
   }
+
   return note;
 }
 
@@ -1197,11 +1231,15 @@ void read_midi(const MIDIPacketList *pktlist,
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
 	if ((listen_whistle || listen_drum_pedal) &&
-	    (note_in == BUTTON_MAJOR || note_in == BUTTON_MIXO)) {
+	    (note_in == BUTTON_MAJOR ||
+	     note_in == BUTTON_MIXO || 
+	     note_in == BUTTON_MINOR)) {
 	  if (note_in == BUTTON_MAJOR) {
 	    musical_mode = MODE_MAJOR;
 	  } else if (note_in == BUTTON_MIXO) {
 	    musical_mode = MODE_MIXO;
+	  } else if (note_in == BUTTON_MINOR) {
+	    musical_mode = MODE_MINOR;
 	  }
 	  printf("Chose mode %d\n", musical_mode);
 	} else if (note_in <= CONTROL_MAX) {
