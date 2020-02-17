@@ -898,9 +898,9 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   // future notes are affected.
   if (listen_drum_pedal) {
     if (note_in == MIDI_DRUM_PEDAL_1 ||
-	note_in == MIDI_DRUM_PEDAL_2 ||
-	note_in == MIDI_DRUM_PEDAL_3 ||
-	note_in == MIDI_DRUM_PEDAL_4) {
+        note_in == MIDI_DRUM_PEDAL_2 ||
+        note_in == MIDI_DRUM_PEDAL_3 ||
+        note_in == MIDI_DRUM_PEDAL_4) {
       most_recent_drum_pedal = note_in;
     }
   }			    
@@ -916,9 +916,9 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
       note_in == MIDI_DRUM_KICK_B) {
     is_low = true;
   } else if (note_in == MIDI_DRUM_PEDAL_1 ||
-	     note_in == MIDI_DRUM_PEDAL_2 ||
-	     note_in == MIDI_DRUM_PEDAL_3 ||
-	     note_in == MIDI_DRUM_PEDAL_4) {
+             note_in == MIDI_DRUM_PEDAL_2 ||
+             note_in == MIDI_DRUM_PEDAL_3 ||
+             note_in == MIDI_DRUM_PEDAL_4) {
     is_low = false;
   } else {
     return;
