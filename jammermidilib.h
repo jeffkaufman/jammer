@@ -44,7 +44,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define SELECT_SAX_TROMBONE          1
 #define TOGGLE_BREATH_HIHAT       8
 
-#define TOGGLE_LISTEN_WHISTLE       21
+//      AVAILABLE                   21
 #define TOGGLE_ATMOSPHERIC_DRONE    20
 #define TOGGLE_LISTEN_DRUM_PEDAL    19
 #define TOGGLE_DRUM_PEDAL_KICK      18
@@ -52,7 +52,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define TOGGLE_DRUM_PEDAL_SNARE     16
 #define TOGGLE_FOOTBASS             15
 
-#define CONTROL_MAX TOGGLE_LISTEN_WHISTLE
+#define CONTROL_MAX TOGGLE_ATMOSPHERIC_DRONE
 
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
@@ -117,8 +117,6 @@ arl  rho  ham  bt2  pd2  flx  bHH
 
 #define TICK_MS 10  // try to tick every N milliseconds
 
-#define WHISTLE_HISTORY_LENGTH 16
-
 #define MODE_MAJOR 0
 #define MODE_MIXO 1
 #define MODE_MINOR 2
@@ -173,7 +171,6 @@ bool tbd_b_on;
 bool breath_hihat_on;
 bool sax_on;
 bool footbass_on;
-bool listen_whistle;
 bool listen_drum_pedal;
 int most_recent_drum_pedal;
 int current_drum_pedal_kick_note;
@@ -185,10 +182,7 @@ int root_note;
 bool air_locked;
 double locked_air;
 int musical_mode;
-
 unsigned int whistle_anchor_note;
-int recent_whistle_notes_index;
-double recent_whistle_notes[WHISTLE_HISTORY_LENGTH];
 
 void voices_reset() {
   jawharp_on = false;
@@ -205,7 +199,6 @@ void voices_reset() {
   tbd_b_on = false;
   breath_hihat_on = false;
   footbass_on = false;
-  listen_whistle = false;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_1;
   current_drum_pedal_kick_note = MIDI_DRUM_KICK;
@@ -222,13 +215,8 @@ void voices_reset() {
   air_locked = false;
   locked_air = 0;
 
-  whistle_anchor_note = 60; // this is arbitrary
-  recent_whistle_notes_index = 0;
-  for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
-    recent_whistle_notes[i] = whistle_anchor_note;
-  }
-
   musical_mode = MODE_MAJOR;
+  whistle_anchor_note = 60; // this is arbitrary
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -307,51 +295,6 @@ double distance(double noteA, double noteB) {
   return fabs(dist);
 }
 
-int current_whistle_note() {
-  double whistle_sum = 0;
-  for (int i = 0 ; i < WHISTLE_HISTORY_LENGTH; i++) {
-    whistle_sum += recent_whistle_notes[i];
-  }
-  
-  double avg = whistle_sum/WHISTLE_HISTORY_LENGTH;
-
-  int key = root_note;
-
-  int n_notes = 5;
-  int notes[n_notes];
-
-  notes[0] = key; // I
-
-  if (musical_mode == MODE_MAJOR) {
-    notes[1] = key + 2; // ii
-    notes[2] = key + 5; // IV
-    notes[3] = key + 7; // V
-    notes[4] = key - 3; // vi
-  } else if (musical_mode == MODE_MIXO) {
-    notes[1] = key + 2; // ii
-    notes[2] = key + 5; // IV
-    notes[3] = key + 7; // V
-    notes[4] = key - 2; // VII
-  } else if (musical_mode == MODE_MINOR) {
-    notes[1] = key - 2; // VII
-    notes[2] = key - 4; // VI
-    notes[3] = key - 5; // V
-    notes[4] = key; // unused
-  }
-  
-  int best_note = key;
-  float best_dist = 12;  // all real dists are <= 6
-
-  for (int i = 0 ; i < n_notes; i++) {
-    float dist = distance(notes[i], avg);
-    if (dist < best_dist) {
-      best_note = notes[i];
-      best_dist = dist;
-    }
-  }
-  return best_note;
-}
-
 int current_drum_pedal_note() {
   int note = root_note;
 
@@ -385,9 +328,7 @@ int current_drum_pedal_note() {
 }
 
 char active_note() {
-  if (listen_whistle) {
-    return current_whistle_note();
-  } else if (listen_drum_pedal) {
+  if (listen_drum_pedal) {
     return current_drum_pedal_note();
   }
   return root_note;
@@ -874,10 +815,6 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_LISTEN_WHISTLE:
-    listen_whistle = !listen_whistle;
-    return;
-
   case TOGGLE_LISTEN_DRUM_PEDAL:
     listen_drum_pedal = !listen_drum_pedal;
     return;
@@ -1042,8 +979,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
-  //printf("%x %x %x\n", mode, note_in, val);
-
   if (mode == MIDI_OFF) {
     return;
   } else if (mode == MIDI_ON) {
@@ -1053,19 +988,15 @@ void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
     unsigned int msb = val;
     unsigned int bend = lsb + (msb << 7);
 
-    /* bend = (1 + f_bend/2) * 8192 - 0.5
-       bend + 0.5 = (1 + f_bend/2) * 8192
-       (bend + 0.5) / 8192 = 1 + f_bend/2
-       (bend + 0.5) / 8192 - 1 = f_bend/2
-       ((bend + 0.5) / 8192 - 1)*2 = f_bend */
+    // bend = (1 + f_bend/2) * 8192 - 0.5
+    // bend + 0.5 = (1 + f_bend/2) * 8192
+    // (bend + 0.5) / 8192 = 1 + f_bend/2
+    // (bend + 0.5) / 8192 - 1 = f_bend/2
+    // ((bend + 0.5) / 8192 - 1)*2 = f_bend
     double midi_space_bend = ((((double)bend + 0.5) / 8192) - 1)*2;
     double midi_space_note = whistle_anchor_note + midi_space_bend;
-    //printf("%.2f\n", midi_space_note);
-    recent_whistle_notes[recent_whistle_notes_index] = midi_space_note;
-    recent_whistle_notes_index =
-      (recent_whistle_notes_index + 1) % WHISTLE_HISTORY_LENGTH;
+    printf("whistle: %lf", midi_space_note);
   }
-  //printf("%d\n", current_whistle_note());
 }
 
 bool breath_hihat_triggered = false;
@@ -1230,7 +1161,7 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-	if ((listen_whistle || listen_drum_pedal) &&
+	if (listen_drum_pedal &&
 	    (note_in == BUTTON_MAJOR ||
 	     note_in == BUTTON_MIXO || 
 	     note_in == BUTTON_MINOR)) {
