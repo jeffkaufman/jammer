@@ -3,6 +3,7 @@
 
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <time.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/MIDIServices.h>
 #include <CoreAudio/HostTime.h>
@@ -121,6 +122,10 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define MODE_MIXO 1
 #define MODE_MINOR 2
 
+#define KICK_TIMES_LENGTH 8
+
+#define NS_PER_SEC 1000000000L
+
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte) \
   (byte & 0x80 ? '1' : '0'), \
@@ -183,6 +188,8 @@ bool air_locked;
 double locked_air;
 int musical_mode;
 unsigned int whistle_anchor_note;
+uint64_t kick_times[KICK_TIMES_LENGTH];
+int kick_times_index;
 
 void voices_reset() {
   jawharp_on = false;
@@ -217,6 +224,11 @@ void voices_reset() {
 
   musical_mode = MODE_MAJOR;
   whistle_anchor_note = 60; // this is arbitrary
+
+  for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
+    kick_times[i] = 0;
+  }
+  kick_times_index = 0;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -381,6 +393,58 @@ void vbass_trombone_off() {
     send_midi(MIDI_OFF, current_note[ENDPOINT_BASS_TROMBONE], 0, ENDPOINT_BASS_TROMBONE);
     current_note[ENDPOINT_BASS_TROMBONE] = -1;
   }
+}
+
+void estimate_tempo(uint64_t current_time) {
+  // The model here is that kicks are approximately correctly timed, but
+  // sometimes dropped or doubled, and that the target tempo is between 100 and
+  // 140.  Take a super naive approach: for each candidate tempo, consider how
+  // much error that would imply for each recent kick we've seen, and take the
+  // tempo with the lowest error.
+  float best_bpm = -1;
+  float best_error = -1;
+  uint64_t max_history_ns = 8L * NS_PER_SEC;
+  for (float candidate_bpm = 100;
+       candidate_bpm <= 140;
+       candidate_bpm += 0.25) {
+    uint64_t candidate_tempo_interval_ns = 60L * NS_PER_SEC / candidate_bpm;
+
+    int included_kicks = 0;
+    float candidate_error = 0;
+    for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
+      uint64_t delta_ns = current_time - kick_times[i];
+      if (delta_ns > max_history_ns) {
+        continue;
+      }
+
+      uint64_t raw_error = delta_ns % candidate_tempo_interval_ns;
+      if (raw_error > candidate_tempo_interval_ns / 2) {
+        raw_error = candidate_tempo_interval_ns - raw_error;
+      }
+
+      candidate_error += raw_error;
+      included_kicks++;
+    }
+
+    if (included_kicks > 0) {
+      candidate_error = candidate_error / included_kicks;
+
+      if (best_bpm < 0 || candidate_error < best_error) {
+        best_bpm = candidate_bpm;
+        best_error = candidate_error;
+      }
+    }
+  }
+  printf("Bpm estimate: %f  (error: %f)\n",
+         best_bpm, best_error);
+}
+
+void record_kick() {
+  kick_times[kick_times_index] = clock_gettime_nsec_np(
+      CLOCK_MONOTONIC);
+  estimate_tempo(kick_times[kick_times_index]);
+  kick_times_index++;
+  kick_times_index = kick_times_index % KICK_TIMES_LENGTH;
 }
 
 void update_bass() {
@@ -929,7 +993,11 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     // are reversed.  It's terrible, but it's much easier than having
     // to switch the feet ahead of the beat.
     is_low = !is_low;
+  }
 
+  record_kick();
+
+  if (listen_drum_pedal) {
     // In this mode the drum synth is silent and we synthesize drums
     // on the computer.
     int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
