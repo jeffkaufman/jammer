@@ -333,10 +333,10 @@ int current_whistle_note() {
     notes[3] = key + 7; // V
     notes[4] = key - 2; // VII
   } else if (musical_mode == MODE_MINOR) {
-    notes[1] = key - 2; // VII
-    notes[2] = key - 4; // VI
-    notes[3] = key - 5; // V
-    notes[4] = key; // unused
+    notes[1] = 12 + key - 2; // VII
+    notes[2] = 12 + key - 4; // VI
+    notes[3] = 12 + key - 5; // V
+    notes[4] = 12 + key; // unused
   }
   
   int best_note = key;
@@ -379,6 +379,7 @@ int current_drum_pedal_note() {
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
       note = root_note - 5;  // V
     }
+    note += 12;
   }
 
   return note;
