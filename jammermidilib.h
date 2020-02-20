@@ -436,7 +436,8 @@ void estimate_tempo(uint64_t current_time) {
       }
     }
   }
-  printf("Bpm estimate: %f  (error: %f)\n",
+  printf("%c BPM estimate: %f  (error: %f)\n",
+         best_error < 20000000 ? ' ' : '!',
          best_bpm, best_error);
 }
 
@@ -996,7 +997,9 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     is_low = !is_low;
   }
 
-  record_kick();
+  if (mode == MIDI_ON) {
+    record_kick();
+  }
 
   if (listen_drum_pedal) {
     // In this mode the drum synth is silent and we synthesize drums
