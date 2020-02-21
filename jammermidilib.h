@@ -21,7 +21,7 @@
  Controls:
 
    rst  odr  low  bt1  pd1  jaw  s/t
-arl  rho  ham  bt2  pd2  flx   HH
+arl  rho  ham       pd2  flx   HH
    arp  atd  ldp  tdk  tdr  tds  ftb
  */
 #define FULL_RESET                  7
@@ -43,7 +43,7 @@ arl  rho  ham  bt2  pd2  flx   HH
 #define TOGGLE_ORGAN_FLEX         9
 
 #define SELECT_SAX_TROMBONE          1
-#define TOGGLE_AUTO_HIHAT       8
+#define ROTATE_AUTO_HIHAT         8
 
 #define TOGGLE_ARPEGGIATOR          21
 #define TOGGLE_ATMOSPHERIC_DRONE    20
@@ -176,7 +176,10 @@ bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
-bool auto_hihat_on;
+bool auto_hihat_1_on;
+bool auto_hihat_2_on;
+bool auto_hihat_3_on;
+bool auto_hihat_4_on;
 bool sax_on;
 bool footbass_on;
 bool listen_drum_pedal;
@@ -211,7 +214,10 @@ void voices_reset() {
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
-  auto_hihat_on = false;
+  auto_hihat_1_on = false;
+  auto_hihat_2_on = false;
+  auto_hihat_3_on = false;
+  auto_hihat_4_on = false;
   footbass_on = false;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_1;
@@ -913,9 +919,32 @@ void handle_control_helper(unsigned int note_in) {
   case TOGGLE_ARPEGGIATOR:
     arpeggiator_on = !arpeggiator_on;
 
-  case TOGGLE_AUTO_HIHAT:
+  case ROTATE_AUTO_HIHAT:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
-    auto_hihat_on = !auto_hihat_on;
+
+    // Rotate between:
+    //   a: 3
+    //   b: 3 & 4
+    //   c: 1 & 3
+    //   d: off
+
+    if (!auto_hihat_3_on) {                            // d -> a
+      auto_hihat_1_on = false;
+      auto_hihat_3_on = true;
+      auto_hihat_4_on = false;
+    } else if (!auto_hihat_1_on && !auto_hihat_4_on) { // a -> b
+      auto_hihat_1_on = false;
+      auto_hihat_3_on = true;
+      auto_hihat_4_on = true;
+    } else if (auto_hihat_4_on) {                      // b -> c
+      auto_hihat_1_on = true;
+      auto_hihat_4_on = false;
+      auto_hihat_3_on = true;
+    } else {                                           // c -> d
+      auto_hihat_1_on = false;
+      auto_hihat_3_on = false;
+      auto_hihat_4_on = false;
+    }
     return;
   }
 }
@@ -1003,11 +1032,12 @@ void arpeggiate(int subbeat) {
     current_arpeggiator_note = note_out;
   }
 
-  if (auto_hihat_on) {
-    if (subbeat == 3 || subbeat == 4) {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_BREATH_DRUM);
-      current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
-    }
+  if ((auto_hihat_1_on && subbeat == 1) ||
+      (auto_hihat_2_on && subbeat == 2) ||
+      (auto_hihat_3_on && subbeat == 3) ||
+      (auto_hihat_4_on && subbeat == 4)) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_BREATH_DRUM);
+    current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
   }
 }
 
