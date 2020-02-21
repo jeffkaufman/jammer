@@ -34,7 +34,7 @@ arl  rho  ham  bt2  pd2  flx   HH
 #define TOGGLE_HAMMOND           12
 
 #define TOGGLE_BASS_TROMBONE         4
-#define TOGGLE_VBASS_TROMBONE    11
+// AVAILABLE                     11
 
 #define TOGGLE_SINE_PAD              3
 #define TOGGLE_SWEEP_PAD         10
@@ -791,28 +791,17 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_BASS_TROMBONE:
     endpoint_notes_off(ENDPOINT_TROMBONE);
+    endpoint_notes_off(ENDPOINT_BASS_TROMBONE);
 
     if (note_in == TOGGLE_BASS_TROMBONE) {
       bass_trombone_on = !bass_trombone_on;
+      vbass_trombone_on = !vbass_trombone_on;
     }
 
     if (bass_trombone_on) {
       update_bass();
     } else {
       bass_trombone_off();
-    }
-    return;
-
-  case TOGGLE_VBASS_TROMBONE:
-    endpoint_notes_off(ENDPOINT_BASS_TROMBONE);
-
-    if (note_in == TOGGLE_VBASS_TROMBONE) {
-      vbass_trombone_on = !vbass_trombone_on;
-    }
-
-    if (vbass_trombone_on) {
-      update_bass();
-    } else {
       vbass_trombone_off();
     }
     return;
