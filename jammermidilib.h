@@ -21,7 +21,7 @@
  Controls:
 
    rst  odr  low  bt1  pd1  jaw  s/t
-arl  rho  ham  bt2  pd2  flx  bHH
+arl  rho  ham  bt2  pd2  flx   HH
    arp  atd  ldp  tdk  tdr  tds  ftb
  */
 #define FULL_RESET                  7
@@ -43,7 +43,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define TOGGLE_ORGAN_FLEX         9
 
 #define SELECT_SAX_TROMBONE          1
-#define TOGGLE_BREATH_HIHAT       8
+#define TOGGLE_AUTO_HIHAT       8
 
 #define TOGGLE_ARPEGGIATOR          21
 #define TOGGLE_ATMOSPHERIC_DRONE    20
@@ -108,6 +108,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define MIDI_DRUM_RIM 37
 #define MIDI_DRUM_SNARE 38
 #define MIDI_DRUM_HIHAT 46
+#define MIDI_DRUM_HIHAT_CLOSED 42
 
 #define MIDI_DRUM_PEDAL_1 46
 #define MIDI_DRUM_PEDAL_2 38
@@ -175,7 +176,7 @@ bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
-bool breath_hihat_on;
+bool auto_hihat_on;
 bool sax_on;
 bool footbass_on;
 bool listen_drum_pedal;
@@ -186,6 +187,7 @@ bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool arpeggiator_on;
 int current_arpeggiator_note;
+int current_drum_note;
 int button_endpoint;
 int root_note;
 bool air_locked;
@@ -209,7 +211,7 @@ void voices_reset() {
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
-  breath_hihat_on = false;
+  auto_hihat_on = false;
   footbass_on = false;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_1;
@@ -221,6 +223,7 @@ void voices_reset() {
   }
   arpeggiator_on = false;
   current_arpeggiator_note = -1;
+  current_drum_note = -1;
 
   button_endpoint = ENDPOINT_SAX;
   sax_on = true;
@@ -921,9 +924,9 @@ void handle_control_helper(unsigned int note_in) {
   case TOGGLE_ARPEGGIATOR:
     arpeggiator_on = !arpeggiator_on;
 
-  case TOGGLE_BREATH_HIHAT:
+  case TOGGLE_AUTO_HIHAT:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
-    breath_hihat_on = !breath_hihat_on;
+    auto_hihat_on = !auto_hihat_on;
     return;
   }
 }
@@ -985,27 +988,38 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
-void arpeggiate(int quarter_beat) {
+void arpeggiate(int subbeat) {
   if (current_arpeggiator_note != -1) {
     send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
     current_arpeggiator_note = -1;
   }
 
-  if (!arpeggiator_on) {
-    return;
-  }
-  int note_out = active_note();
-  
-  if (quarter_beat == 2) {
-    note_out += 12;
-  } else if (quarter_beat == 3) {
-    note_out += 12 + 7;
-  } else if (quarter_beat == 4) {
-    note_out += 12 + 12;
+  if (current_drum_note != -1) {
+    send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_BREATH_DRUM);
+    current_drum_note = -1;
   }
 
-  send_midi(MIDI_ON, note_out, 90, ENDPOINT_FOOTBASS);
-  current_arpeggiator_note = note_out;
+  if (arpeggiator_on) {
+    int note_out = active_note();
+  
+    if (subbeat == 2) {
+      note_out += 12;
+    } else if (subbeat == 3) {
+      note_out += 12 + 7;
+    } else if (subbeat == 4) {
+      note_out += 12 + 12;
+    }
+
+    send_midi(MIDI_ON, note_out, 90, ENDPOINT_FOOTBASS);
+    current_arpeggiator_note = note_out;
+  }
+
+  if (auto_hihat_on) {
+    if (subbeat == 3 || subbeat == 4) {
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_BREATH_DRUM);
+      current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
+    }
+  }
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -1121,12 +1135,6 @@ void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-bool breath_hihat_triggered = false;
-
-int breath_hihat_note = 42;
-
-int breath_hihat_threshold = 100;
-
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
     send_midi(MIDI_CC, cc, val, ENDPOINT_SAX);
@@ -1143,15 +1151,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
   send_midi(MIDI_CC, CC_MOD, val, ENDPOINT_HAMMOND);
 
   breath = val;
-
-  if (breath_hihat_triggered && breath < breath_hihat_threshold - 10) {
-    send_midi(MIDI_OFF, breath_hihat_note, 0, ENDPOINT_BREATH_DRUM);
-    breath_hihat_triggered = false;
-  } else if (breath_hihat_on && !breath_hihat_triggered &&
-             breath > breath_hihat_threshold) {
-    send_midi(MIDI_ON, breath_hihat_note, 100, ENDPOINT_BREATH_DRUM);
-    breath_hihat_triggered = true;
-  }
 
   if (!piano_on && button_endpoint == ENDPOINT_OVERDRIVEN_RHODES) {
     send_midi(MIDI_CC, CC_07, MIDI_MAX, ENDPOINT_RHODES);
@@ -1502,7 +1501,7 @@ void forward_air() {
   }
 }
 
-void trigger_quarter_beats() {
+void trigger_subbeats() {
   uint64_t current_time = now();
   if (next_2_ns > 0 && current_time > next_2_ns) {
     arpeggiate(2);
@@ -1522,7 +1521,7 @@ void jml_tick() {
   // Called every TICK_MS
   update_air();
   forward_air();
-  trigger_quarter_beats();
+  trigger_subbeats();
 }
 
 #endif
