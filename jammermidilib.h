@@ -22,7 +22,7 @@
 
    rst  odr  low  bt1  pd1  jaw  s/t
 arl  rho  ham  bt2  pd2  flx  bHH
-   lwh  atd  ldp  tdk  tdr  tds  ftb
+   arp  atd  ldp  tdk  tdr  tds  ftb
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -45,7 +45,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define SELECT_SAX_TROMBONE          1
 #define TOGGLE_BREATH_HIHAT       8
 
-//      AVAILABLE                   21
+#define TOGGLE_ARPEGGIATOR          21
 #define TOGGLE_ATMOSPHERIC_DRONE    20
 #define TOGGLE_LISTEN_DRUM_PEDAL    19
 #define TOGGLE_DRUM_PEDAL_KICK      18
@@ -53,7 +53,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 #define TOGGLE_DRUM_PEDAL_SNARE     16
 #define TOGGLE_FOOTBASS             15
 
-#define CONTROL_MAX TOGGLE_ATMOSPHERIC_DRONE
+#define CONTROL_MAX TOGGLE_ARPEGGIATOR
 
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
@@ -116,7 +116,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
 
 #define MIDI_MAX 127
 
-#define TICK_MS 10  // try to tick every N milliseconds
+#define TICK_MS 1  // try to tick every N milliseconds
 
 #define MODE_MAJOR 0
 #define MODE_MIXO 1
@@ -136,6 +136,7 @@ arl  rho  ham  bt2  pd2  flx  bHH
   (byte & 0x04 ? '1' : '0'), \
   (byte & 0x02 ? '1' : '0'), \
   (byte & 0x01 ? '1' : '0')
+
 
 void die(char *errmsg) {
   printf("%s\n",errmsg);
@@ -160,6 +161,7 @@ MIDIPortRef midiport_piano;
 
 bool piano_on = false;  // Initialized based on availablity of piano.
 
+
 /* Anything mentioned here should be initialized in voices_reset */
 bool jawharp_on;
 bool bass_trombone_on;
@@ -182,6 +184,8 @@ int current_drum_pedal_kick_note;
 int current_drum_pedal_tss_note;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
+bool arpeggiator_on;
+int current_arpeggiator_note;
 int button_endpoint;
 int root_note;
 bool air_locked;
@@ -190,6 +194,7 @@ int musical_mode;
 unsigned int whistle_anchor_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
+uint64_t next_2_ns, next_3_ns, next_4_ns;
 
 void voices_reset() {
   jawharp_on = false;
@@ -214,6 +219,8 @@ void voices_reset() {
   for (int i = 0; i < MIDI_MAX; i++) {
     atmospheric_drone_notes[i] = false;
   }
+  arpeggiator_on = false;
+  current_arpeggiator_note = -1;
 
   button_endpoint = ENDPOINT_SAX;
   sax_on = true;
@@ -229,6 +236,8 @@ void voices_reset() {
     kick_times[i] = 0;
   }
   kick_times_index = 0;
+
+  next_2_ns = next_3_ns = next_4_ns = 0;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -436,14 +445,28 @@ void estimate_tempo(uint64_t current_time) {
       }
     }
   }
+  bool acceptable_error = best_error < 20000000;
+
   printf("%c BPM estimate: %f  (error: %f)\n",
-         best_error < 20000000 ? ' ' : '!',
+         acceptable_error ? ' ' : '!',
          best_bpm, best_error);
+  
+  if (acceptable_error) {
+    uint64_t quarter_beat = NS_PER_SEC * 60 / best_bpm / 4;
+    next_2_ns = current_time + quarter_beat;
+    next_3_ns = next_2_ns + quarter_beat;
+    next_4_ns = next_3_ns + quarter_beat;
+  } else {
+    next_2_ns = next_3_ns = next_4_ns = 0;
+  }
+}
+
+uint64_t now() {
+  return clock_gettime_nsec_np(CLOCK_MONOTONIC);
 }
 
 void record_kick() {
-  kick_times[kick_times_index] = clock_gettime_nsec_np(
-      CLOCK_MONOTONIC);
+  kick_times[kick_times_index] = now();
   estimate_tempo(kick_times[kick_times_index]);
   kick_times_index++;
   kick_times_index = kick_times_index % KICK_TIMES_LENGTH;
@@ -895,6 +918,9 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
+  case TOGGLE_ARPEGGIATOR:
+    arpeggiator_on = !arpeggiator_on;
+
   case TOGGLE_BREATH_HIHAT:
     endpoint_notes_off(ENDPOINT_BREATH_DRUM);
     breath_hihat_on = !breath_hihat_on;
@@ -959,6 +985,29 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
+void arpeggiate(int quarter_beat) {
+  if (current_arpeggiator_note != -1) {
+    send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
+    current_arpeggiator_note = -1;
+  }
+
+  if (!arpeggiator_on) {
+    return;
+  }
+  int note_out = active_note();
+  
+  if (quarter_beat == 2) {
+    note_out += 12;
+  } else if (quarter_beat == 3) {
+    note_out += 12 + 7;
+  } else if (quarter_beat == 4) {
+    note_out += 12 + 12;
+  }
+
+  send_midi(MIDI_ON, note_out, 90, ENDPOINT_FOOTBASS);
+  current_arpeggiator_note = note_out;
+}
+
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   // Handle pedals after determining the active note, so that only
   // future notes are affected.
@@ -971,7 +1020,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }			    
 
-  if (atmospheric_drone) {
+  if (atmospheric_drone || arpeggiator_on) {
     update_bass();
   }
 
@@ -999,6 +1048,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   if (mode == MIDI_ON) {
     record_kick();
+    arpeggiate(1);
   }
 
   if (listen_drum_pedal) {
@@ -1452,10 +1502,27 @@ void forward_air() {
   }
 }
 
+void trigger_quarter_beats() {
+  uint64_t current_time = now();
+  if (next_2_ns > 0 && current_time > next_2_ns) {
+    arpeggiate(2);
+    next_2_ns = 0;
+  }
+  if (next_3_ns > 0 && current_time > next_3_ns) {
+    arpeggiate(3);
+    next_3_ns = 0;
+  }
+  if (next_4_ns > 0 && current_time > next_4_ns) {
+    arpeggiate(4);
+    next_4_ns = 0;
+  }
+}
+
 void jml_tick() {
   // Called every TICK_MS
   update_air();
   forward_air();
+  trigger_quarter_beats();
 }
 
 #endif
