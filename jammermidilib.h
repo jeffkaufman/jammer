@@ -23,6 +23,7 @@
    rst  odr  low  bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  tdk  tdr  tds  ftb
+                               fcf
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -53,7 +54,9 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_DRUM_PEDAL_SNARE     16
 #define TOGGLE_FOOTBASS             15
 
-#define CONTROL_MAX TOGGLE_ARPEGGIATOR
+#define TOGGLE_FC_FEET              22
+
+#define CONTROL_MAX TOGGLE_FC_FEET
 
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
@@ -75,7 +78,11 @@ arl  rho  ham  atd  pd2  flx   HH
 #define ENDPOINT_RHODES 10
 #define ENDPOINT_SWEEP_PAD 15
 #define ENDPOINT_BREATH_DRUM 16
-#define N_ENDPOINTS (ENDPOINT_BREATH_DRUM+1)
+// These three play samples from https://www.jefftk.com/Foot-Percussion--Nightingale--La-Belle-Rose
+#define ENDPOINT_FOOT_1 17 // 1-b
+#define ENDPOINT_FOOT_3 18 // 3-a
+#define ENDPOINT_FOOT_4 19 // 4-a
+#define N_ENDPOINTS (ENDPOINT_FOOT_4+1)
 
 // aliases
 #define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
@@ -205,6 +212,7 @@ unsigned int whistle_anchor_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
 uint64_t next_ns[N_SUBBEATS];
+bool fc_feet_on = false;
 
 void voices_reset() {
   jawharp_on = false;
@@ -255,6 +263,8 @@ void voices_reset() {
   for (int i = 0; i < N_SUBBEATS; i++) {
     next_ns[i] = 0;
   }
+
+  fc_feet_on = false;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -965,6 +975,11 @@ void handle_control_helper(unsigned int note_in) {
       auto_hihat_4_on = false;
     }
     return;
+
+  case TOGGLE_FC_FEET:
+    fc_feet_on = !fc_feet_on;
+    return;
+
   }
 }
 
@@ -1103,7 +1118,15 @@ void arpeggiate(int subbeat) {
       (auto_hihat_2_on && subbeat == 2) ||
       (auto_hihat_3_on && subbeat == 4) ||
       (auto_hihat_4_on && subbeat == 6)) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_BREATH_DRUM);
+    if (fc_feet_on) {
+      if (subbeat == 4) {
+	send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_FOOT_3);
+      } else {
+	send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_FOOT_4);
+      }	
+    } else {
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_BREATH_DRUM);
+    }
     current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
   }
 }
@@ -1157,7 +1180,11 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
     if (drum_note != 0) {
       printf("sending %d to drum\n", drum_note);
-      send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_BREATH_DRUM);
+      if (fc_feet_on) {
+	send_midi(mode, drum_note, 100, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
+      } else {
+	send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_BREATH_DRUM);
+      }
     }
 
     if (current_drum_pedal_tss_note != 0 && !is_low) {
@@ -1532,6 +1559,9 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES], CFSTR("jammer-overdriven-rhodes"));
   create_source(&endpoints[ENDPOINT_RHODES],            CFSTR("jammer-rhodes"));
   create_source(&endpoints[ENDPOINT_BREATH_DRUM],       CFSTR("jammer-drum"));
+  create_source(&endpoints[ENDPOINT_FOOT_1],            CFSTR("jammer-foot-1"));
+  create_source(&endpoints[ENDPOINT_FOOT_3],            CFSTR("jammer-foot-3"));
+  create_source(&endpoints[ENDPOINT_FOOT_4],            CFSTR("jammer-foot-4"));
 }
 
 void update_air() {
