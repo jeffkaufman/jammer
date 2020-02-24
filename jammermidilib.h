@@ -22,8 +22,7 @@
 
    rst  odr  low  bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
-   arp  app  ldp  tdk  tdr  tds  ftb
-                               fcf
+   arp  app  ldp  tdk  tdr  tds  fcf
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -49,14 +48,12 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_ARPEGGIATOR          21
 #define ROTATE_ARPEGGIATOR_PATTERN  20
 #define TOGGLE_LISTEN_DRUM_PEDAL    19
-#define TOGGLE_DRUM_PEDAL_KICK      18
-#define TOGGLE_DRUM_PEDAL_RIM       17
-#define TOGGLE_DRUM_PEDAL_SNARE     16
-#define TOGGLE_FOOTBASS             15
+//                                  18
+#define ROTATE_DRUM_PEDAL_TSS       17
+#define TOGGLE_DRUM_PEDAL_KICK      16
+#define TOGGLE_FC_FEET              15
 
-#define TOGGLE_FC_FEET              22
-
-#define CONTROL_MAX TOGGLE_FC_FEET
+#define CONTROL_MAX TOGGLE_ARPEGGIATOR
 
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
@@ -77,7 +74,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define ENDPOINT_OVERDRIVEN_RHODES 9
 #define ENDPOINT_RHODES 10
 #define ENDPOINT_SWEEP_PAD 15
-#define ENDPOINT_BREATH_DRUM 16
+#define ENDPOINT_DRUM 16
 // These three play samples from https://www.jefftk.com/Foot-Percussion--Nightingale--La-Belle-Rose
 #define ENDPOINT_FOOT_1 17 // 1-b
 #define ENDPOINT_FOOT_3 18 // 3-a
@@ -101,7 +98,6 @@ arl  rho  ham  atd  pd2  flx   HH
 #define MIN_TROMBONE 30  // need to be blowing this hard to make the trombone make noise
 #define MAX_TROMBONE 100  // cap midi breath to the trombone at this, or it gets blatty
 
-#define FOOTBASS_VELOCITY 100
 #define FOOTBASS_VOLUME 120
 
 // gcmidi sends on CC 20 through 29
@@ -137,6 +133,19 @@ arl  rho  ham  atd  pd2  flx   HH
 #define NS_PER_SEC 1000000000L
 
 #define N_SUBBEATS 8
+
+/**
+ * Drum settings
+ *  - regular: left is kick, right are tss, computer interprets left for kick, sound is from drumkit brain
+ *  - chordal: right is kick and chord, left is snare or bass, computer interprets right for kick, sound is from computer
+ *  - hybrid: left is kick, right are tss, computer interprets left for kick, left sound is from computer right sound is from drumkit brain
+ *
+ * These are implemented as:
+ *
+ * - kit 62 or 64: regular
+ * - kit 63 + listen_drum_pedal: chordal
+ * - kit 61: hybrid
+ */
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte) \
@@ -192,7 +201,6 @@ bool auto_hihat_2_on;
 bool auto_hihat_3_on;
 bool auto_hihat_4_on;
 bool sax_on;
-bool footbass_on;
 bool listen_drum_pedal;
 int most_recent_drum_pedal;
 int current_drum_pedal_kick_note;
@@ -231,10 +239,9 @@ void voices_reset() {
   auto_hihat_2_on = false;
   auto_hihat_3_on = false;
   auto_hihat_4_on = false;
-  footbass_on = false;
   listen_drum_pedal = false;
-  most_recent_drum_pedal = MIDI_DRUM_PEDAL_1;
-  current_drum_pedal_kick_note = MIDI_DRUM_KICK;
+  most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
+  current_drum_pedal_kick_note = 0;
   current_drum_pedal_tss_note = 0;
   atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
@@ -278,13 +285,7 @@ int organ_flex_val() {
 
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
-//  * Not in use for footbass
 int current_note[N_ENDPOINTS];
-
-// Footbass needs to track two notes, because each pedal stays on either until
-// we receive MIDI_OFF for it or we get a new MIDI_ON from it.
-int footbass_low_note = -1;
-int footbass_high_note = -1;
 
 int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
 
@@ -381,17 +382,6 @@ char active_note() {
     return current_drum_pedal_note();
   }
   return root_note;
-}
-
-void footbass_off() {
-  if (footbass_low_note != -1) {
-    send_midi(MIDI_OFF, footbass_low_note, 0, ENDPOINT_FOOTBASS);
-    footbass_low_note = -1;
-  }
-  if (footbass_high_note != -1) {
-    send_midi(MIDI_OFF, footbass_high_note, 0, ENDPOINT_FOOTBASS);
-    footbass_high_note = -1;
-  }
 }
 
 void jawharp_off() {
@@ -889,14 +879,6 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_FOOTBASS:
-    footbass_off();
-    footbass_on = !footbass_on;
-    if (footbass_on) {
-      send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
-    }
-    return;
-
   case TOGGLE_DRUM_PEDAL_KICK:
     if (current_drum_pedal_kick_note != MIDI_DRUM_KICK) {
       current_drum_pedal_kick_note = MIDI_DRUM_KICK;
@@ -905,26 +887,20 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_DRUM_PEDAL_RIM:
-    printf("toggle rim\n");
+  case ROTATE_DRUM_PEDAL_TSS:
     if (current_drum_pedal_tss_note != MIDI_DRUM_RIM) {
       current_drum_pedal_tss_note = MIDI_DRUM_RIM;
     } else {
-      current_drum_pedal_tss_note = 0;
-    }
-    return;
-
-  case TOGGLE_DRUM_PEDAL_SNARE:
-    printf("toggle snare\n");
-    if (current_drum_pedal_tss_note != MIDI_DRUM_SNARE) {
       current_drum_pedal_tss_note = MIDI_DRUM_SNARE;
-    } else {
-      current_drum_pedal_tss_note = 0;
     }
     return;
 
   case TOGGLE_LISTEN_DRUM_PEDAL:
     listen_drum_pedal = !listen_drum_pedal;
+    if (listen_drum_pedal) {
+      current_drum_pedal_kick_note = MIDI_DRUM_KICK;
+      current_drum_pedal_tss_note = MIDI_DRUM_RIM;
+    } 
     return;
 
   case TOGGLE_ATMOSPHERIC_DRONE:
@@ -949,7 +925,7 @@ void handle_control_helper(unsigned int note_in) {
     return;
 
   case ROTATE_AUTO_HIHAT:
-    endpoint_notes_off(ENDPOINT_BREATH_DRUM);
+    endpoint_notes_off(ENDPOINT_DRUM);
 
     // Rotate between:
     //   a: 3
@@ -1041,74 +1017,70 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void arpeggiate(int subbeat) {
-  if (current_arpeggiator_note != -1) {
-    send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
-    current_arpeggiator_note = -1;
-  }
-
   if (current_drum_note != -1) {
-    send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_BREATH_DRUM);
+    send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_DRUM);
     current_drum_note = -1;
   }
 
+  bool send_note = true;
+  bool end_note = true;
+  int note_out = -1;
   if (arpeggiator_on) {
-    int note_out = active_note();
-    bool send_note = true;
+    note_out = active_note();
   
     if (current_arpeggiator_pattern == 0) {
+      if (subbeat == 0) {
+      } else {
+	send_note = false;
+	end_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 1) {
+      if (subbeat == 0) {
+      } else if (subbeat == 4) {
+	note_out += 12;
+      } else {
+	send_note = false;
+	end_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 2) {
       if (subbeat == 0 || subbeat == 2) {
       } else if (subbeat == 4 || subbeat == 6) {
 	note_out += 12;
       } else {
 	send_note = false;
       }
-    } else if (current_arpeggiator_pattern == 1) {
-      if (subbeat == 0) {
-      } else if (subbeat == 2) {
-	note_out += 12;
-      } else if (subbeat == 4) {
-	note_out += 12 + 7;
-      } else if (subbeat == 6) {
-	note_out += 12 + 12;
-      } else {
-	send_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 2) {
-      if (subbeat == 0) {
-      } else if (subbeat == 2) {
-	note_out += 12;
-      } else if (subbeat == 4) {
-	note_out += 12 + 12;
-      } else if (subbeat == 6) {
-	note_out += 12 + 12 + 12;
-      } else {
-	send_note = false;
-      }
     } else if (current_arpeggiator_pattern == 3) {
-      if (subbeat == 0 || subbeat == 1) {
-      } else if (subbeat == 2 || subbeat == 3) {
+      if (subbeat == 0) {
+      } else if (subbeat == 2) {
 	note_out += 12;
-      } else if (subbeat == 4 || subbeat == 5) {
+      } else if (subbeat == 4) {
 	note_out += 12 + 7;
-      } else if (subbeat == 6 || subbeat == 7) {
+      } else if (subbeat == 6) {
 	note_out += 12 + 12;
       } else {
 	send_note = false;
       }
     } else if (current_arpeggiator_pattern == 4) {
-      if (subbeat == 0 || subbeat == 1) {
-      } else if (subbeat == 2 || subbeat == 3) {
+      if (subbeat == 0) {
+      } else if (subbeat == 2) {
 	note_out += 12;
-      } else if (subbeat == 4 || subbeat == 5) {
+      } else if (subbeat == 4) {
 	note_out += 12 + 12;
-      } else if (subbeat == 6 || subbeat == 7) {
+      } else if (subbeat == 6) {
 	note_out += 12 + 12 + 12;
       } else {
 	send_note = false;
       }
     }
+  }
 
-    if (send_note) {
+  if (end_note && current_arpeggiator_note != -1) {
+    send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
+    current_arpeggiator_note = -1;
+  }
+
+  if (send_note) {
+    if (note_out != -1) {
       send_midi(MIDI_ON, note_out, 90, ENDPOINT_FOOTBASS);
       current_arpeggiator_note = note_out;
     }
@@ -1125,7 +1097,7 @@ void arpeggiate(int subbeat) {
 	send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_FOOT_4);
       }	
     } else {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_BREATH_DRUM);
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_DRUM);
     }
     current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
   }
@@ -1147,8 +1119,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     update_bass();
   }
 
-  int note_out = active_note();
-
   bool is_low;
   if (note_in == MIDI_DRUM_KICK_A ||
       note_in == MIDI_DRUM_KICK_B) {
@@ -1169,60 +1139,22 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     is_low = !is_low;
   }
 
-  if (mode == MIDI_ON) {
+  if (mode == MIDI_ON && is_low) {
     record_kick();
     arpeggiate(0);
   }
 
-  if (listen_drum_pedal) {
-    // In this mode the drum synth is silent and we synthesize drums
-    // on the computer.
-    int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
-    if (drum_note != 0) {
-      printf("sending %d to drum\n", drum_note);
-      if (fc_feet_on) {
-	send_midi(mode, drum_note, 100, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
-      } else {
-	send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_BREATH_DRUM);
-      }
-    }
-
-    if (current_drum_pedal_tss_note != 0 && !is_low) {
-      // when the tss pedal is on, we don't also want the high bass
-      return;
-    }
-
-    if (current_drum_pedal_tss_note == MIDI_DRUM_RIM) {
-      // when the tss pedal is set to rim, we don't even want the low bass
-      return;
-    }
+  if (!current_drum_pedal_kick_note) {
+    return;  // If the computer isn't synthesizing drums then we don't need any of this.
   }
-
-  if (!footbass_on) {
-    return;
-  }
-
-  // val is entirely ignored, replaced with a hard-coded velocity.
-  val = FOOTBASS_VELOCITY;
-
-  int* footbass_note = is_low ? &footbass_low_note : &footbass_high_note;
-  int* other_footbass_note = is_low ? &footbass_high_note : &footbass_low_note;
-
-  if (!is_low) {
-    note_out += 12;
-  }
-
-  if (*footbass_note != -1) {
-    send_midi(MIDI_OFF, *footbass_note, 0, ENDPOINT_FOOTBASS);
-    *footbass_note = -1;
-  }
-  if (mode == MIDI_ON) {
-    send_midi(MIDI_ON, note_out, val, ENDPOINT_FOOTBASS);
-    *footbass_note = note_out;
-    if (*footbass_note == *other_footbass_note) {
-      // take ownership of this note, so the MIDI_OFF from the other bass
-      // doesn't end this note early.
-      *other_footbass_note = -1;
+  int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
+  if (drum_note != 0) {
+    printf("sending %d to drum\n", drum_note);
+    if (fc_feet_on) {
+      send_midi(mode, drum_note, 100, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
+    } else {
+      send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_DRUM);
+      current_drum_note = drum_note;
     }
   }
 }
@@ -1558,7 +1490,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_SWEEP_PAD],         CFSTR("jammer-sweep-pad"));
   create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES], CFSTR("jammer-overdriven-rhodes"));
   create_source(&endpoints[ENDPOINT_RHODES],            CFSTR("jammer-rhodes"));
-  create_source(&endpoints[ENDPOINT_BREATH_DRUM],       CFSTR("jammer-drum"));
+  create_source(&endpoints[ENDPOINT_DRUM],              CFSTR("jammer-drum"));
   create_source(&endpoints[ENDPOINT_FOOT_1],            CFSTR("jammer-foot-1"));
   create_source(&endpoints[ENDPOINT_FOOT_3],            CFSTR("jammer-foot-3"));
   create_source(&endpoints[ENDPOINT_FOOT_4],            CFSTR("jammer-foot-4"));
@@ -1595,7 +1527,7 @@ void forward_air() {
   }
 
   if (val != last_air_val) {
-    if (!footbass_on && !arpeggiator_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
+    if (!arpeggiator_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
