@@ -453,7 +453,11 @@ void estimate_tempo(uint64_t current_time) {
       included_kicks++;
     }
 
-    if (included_kicks > 0) {
+    if (included_kicks == 1) {
+      // We only have a single kick, guess a typical tempo
+      best_error = 0;
+      best_bpm = 117;
+    } else if (included_kicks > 1) {
       candidate_error = candidate_error / included_kicks;
 
       if (best_bpm < 0 || candidate_error < best_error) {
