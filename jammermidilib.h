@@ -207,6 +207,7 @@ int current_drum_pedal_kick_note;
 int current_drum_pedal_tss_note;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
+bool piano_notes[MIDI_MAX];
 bool arpeggiator_on;
 int current_arpeggiator_pattern;
 int current_arpeggiator_note;
@@ -246,6 +247,7 @@ void voices_reset() {
   atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
     atmospheric_drone_notes[i] = false;
+    piano_notes[i] = false;
   }
   arpeggiator_on = false;
   current_arpeggiator_pattern = 0;
@@ -724,15 +726,35 @@ int to_root(note_out) {
 }
 
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
-  bool is_bass = note_in < 50;
+  if (note_in > MIDI_MAX) {
+    return;
+  }
 
-  if (mode == MIDI_ON && is_bass) {
-    piano_left_hand_velocity = val;
-    int new_root = to_root(note_in);
-    if (new_root != root_note) {
-      //printf("New root: %d (vel=%d)\n", root_note, val);
-      root_note = new_root;
-      update_bass();
+  piano_notes[note_in] = (mode == MIDI_ON);
+
+  unsigned int max_bass = 50;
+  bool is_bass = note_in < max_bass;
+
+  // When lifting a finger off, fall back to the lowest finger that is still down.
+  if (is_bass) {
+    int root_candidate_note_in = -1;
+    if (mode == MIDI_ON) {
+      piano_left_hand_velocity = val;
+      root_candidate_note_in = note_in;
+    } else {
+      for (int i = 0; i < max_bass; i++) {
+	if (piano_notes[i]) {
+	  root_candidate_note_in = i;
+	  break;
+	}
+      }
+    }
+    if (root_candidate_note_in != -1) {
+      int new_root = to_root(root_candidate_note_in);
+      if (new_root != root_note) {
+	root_note = new_root;
+	update_bass();
+      }
     }
   }
 
