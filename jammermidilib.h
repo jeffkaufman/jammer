@@ -22,7 +22,7 @@
 
    rst  odr  low  bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
-   arp  app  ldp  tdk  tdr  tds  fcf
+   arp  app  ldp  rrm  tdt  tdk  fcf
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -48,7 +48,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_ARPEGGIATOR          21
 #define ROTATE_ARPEGGIATOR_PATTERN  20
 #define TOGGLE_LISTEN_DRUM_PEDAL    19
-//                                  18
+#define ROTATE_RHYTHM_MODE          18
 #define ROTATE_DRUM_PEDAL_TSS       17
 #define TOGGLE_DRUM_PEDAL_KICK      16
 #define TOGGLE_FC_FEET              15
@@ -60,6 +60,8 @@ arl  rho  ham  atd  pd2  flx   HH
 #define BUTTON_MINOR 96
 
 #define N_ARPEGGIATOR_PATTERNS 5
+#define N_RHYTHM_MODES 2
+#define N_AUTO_HIHAT_MODES 6
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -196,10 +198,11 @@ bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
-bool auto_hihat_1_on;
-bool auto_hihat_2_on;
-bool auto_hihat_3_on;
-bool auto_hihat_4_on;
+int auto_hihat_mode;
+int auto_hihat_1_vol;
+int auto_hihat_2_vol;
+int auto_hihat_3_vol;
+int auto_hihat_4_vol;
 bool sax_on;
 bool listen_drum_pedal;
 int most_recent_drum_pedal;
@@ -221,7 +224,8 @@ unsigned int whistle_anchor_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
 uint64_t next_ns[N_SUBBEATS];
-bool fc_feet_on = false;
+bool fc_feet_on;
+int rhythm_mode;
 
 void voices_reset() {
   jawharp_on = false;
@@ -236,10 +240,11 @@ void voices_reset() {
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
-  auto_hihat_1_on = false;
-  auto_hihat_2_on = false;
-  auto_hihat_3_on = false;
-  auto_hihat_4_on = false;
+  auto_hihat_mode = 0;
+  auto_hihat_1_vol = 0;
+  auto_hihat_2_vol = 0;
+  auto_hihat_3_vol = 0;
+  auto_hihat_4_vol = 0;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
   current_drum_pedal_kick_note = 0;
@@ -274,6 +279,7 @@ void voices_reset() {
   }
 
   fc_feet_on = false;
+  rhythm_mode = 0;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -475,11 +481,33 @@ void estimate_tempo(uint64_t current_time) {
          best_bpm, best_error);
   
   if (acceptable_error) {
-    uint64_t eighth_beat = NS_PER_SEC * 60 / best_bpm / 8;
+    uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
     next_ns[0] = current_time;
-    for (int i = 1; i < N_SUBBEATS; i++) {
-      next_ns[i] = next_ns[i-1] + eighth_beat;
-    }
+    if (rhythm_mode == 0) {
+      uint64_t eighth_beat = whole_beat / 8;
+      for (int i = 1; i < N_SUBBEATS; i++) {
+	next_ns[i] = next_ns[i-1] + eighth_beat;
+      }
+    } else if (rhythm_mode == 1) {
+      /* Sometimes we want even divisions, and that's simple, but other
+       * times we want it swung.  Here are some measurements from
+       * playing around on mandolin:
+       *
+       *  0    0.000   0.000   0.000     00.0%   00.0%   00.0%      00.0%
+       *  2    0.154   0.139   0.168     26.9%   26.0%   30.6%      27.8%
+       *  4    0.275   0.253   0.264     47.9%   47.3%   48.1%      47.8%
+       *  6    0.444   0.421   0.420     77.4%   78.7%   76.5%      77.5%
+       *  8    0.574   0.535   0.549    100.0%  100.0%  100.0%     100.0%
+       */
+      next_ns[2] = current_time + (0.278 * whole_beat);
+      next_ns[4] = current_time + (0.478 * whole_beat);
+      next_ns[6] = current_time + (0.775 * whole_beat);
+
+      next_ns[1] = 0;
+      next_ns[3] = 0;
+      next_ns[5] = 0;
+      next_ns[7] = 0;
+    }      
   } else {
     for (int i = 0; i < N_SUBBEATS; i++) {
       next_ns[i] = 0;
@@ -799,6 +827,33 @@ void air_lock() {
   locked_air = air;
 }
 
+void update_auto_hihat() {
+  auto_hihat_1_vol = 0;
+  auto_hihat_2_vol = 0;
+  auto_hihat_3_vol = 0;
+  auto_hihat_4_vol = 0;
+  if (auto_hihat_mode == 0) {
+  } else if (auto_hihat_mode == 1) {
+    auto_hihat_3_vol = 100;
+  } else if (auto_hihat_mode == 2) {
+    auto_hihat_1_vol = 100;
+    auto_hihat_3_vol = 100;
+  } else if (auto_hihat_mode == 3) {
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 90;
+  } else if (auto_hihat_mode == 4) {
+    auto_hihat_1_vol = 70;
+    auto_hihat_2_vol = 60;
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 60;
+  } else if (auto_hihat_mode == 5) {
+    auto_hihat_1_vol = 70;
+    auto_hihat_2_vol = 60;
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 100;
+  }
+}
+
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
@@ -921,6 +976,10 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
+  case ROTATE_RHYTHM_MODE:
+    rhythm_mode = (rhythm_mode + 1) % N_RHYTHM_MODES;
+    return;
+
   case TOGGLE_LISTEN_DRUM_PEDAL:
     listen_drum_pedal = !listen_drum_pedal;
     if (listen_drum_pedal) {
@@ -951,35 +1010,17 @@ void handle_control_helper(unsigned int note_in) {
     return;
 
   case ROTATE_AUTO_HIHAT:
-    endpoint_notes_off(ENDPOINT_DRUM);
-
-    // Rotate between:
-    //   a: 3
-    //   b: 3 & 4
-    //   c: 1 & 3
-    //   d: off
-
-    if (!auto_hihat_3_on) {                            // d -> a
-      auto_hihat_1_on = false;
-      auto_hihat_3_on = true;
-      auto_hihat_4_on = false;
-    } else if (!auto_hihat_1_on && !auto_hihat_4_on) { // a -> b
-      auto_hihat_1_on = false;
-      auto_hihat_3_on = true;
-      auto_hihat_4_on = true;
-    } else if (auto_hihat_4_on) {                      // b -> c
-      auto_hihat_1_on = true;
-      auto_hihat_4_on = false;
-      auto_hihat_3_on = true;
-    } else {                                           // c -> d
-      auto_hihat_1_on = false;
-      auto_hihat_3_on = false;
-      auto_hihat_4_on = false;
-    }
+    auto_hihat_mode = (auto_hihat_mode + 1) % N_AUTO_HIHAT_MODES;
+    update_auto_hihat();
     return;
 
   case TOGGLE_FC_FEET:
     fc_feet_on = !fc_feet_on;
+    if (fc_feet_on) {
+      auto_hihat_mode = 3;
+      current_drum_pedal_kick_note = MIDI_DRUM_KICK;
+      update_auto_hihat();
+    }      
     return;
 
   }
@@ -1112,19 +1153,23 @@ void arpeggiate(int subbeat) {
     }
   }
 
-  if ((auto_hihat_1_on && subbeat == 0) ||
-      (auto_hihat_2_on && subbeat == 2) ||
-      (auto_hihat_3_on && subbeat == 4) ||
-      (auto_hihat_4_on && subbeat == 6)) {
+  int auto_hihat_vol = 0;
+  if (subbeat == 0) {
+    auto_hihat_vol = auto_hihat_1_vol;
+  } else if (subbeat == 2) {
+    auto_hihat_vol = auto_hihat_2_vol;
+  } else if (subbeat == 4) {
+    auto_hihat_vol = auto_hihat_3_vol;
+  } else if (subbeat == 6) {
+    auto_hihat_vol = auto_hihat_4_vol;
+  }
+
+  if (auto_hihat_vol) {
+    int drum_endpoint = ENDPOINT_DRUM;
     if (fc_feet_on) {
-      if (subbeat == 4) {
-	send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_FOOT_3);
-      } else {
-	send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_FOOT_4);
-      }	
-    } else {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_DRUM);
+      drum_endpoint = subbeat == 4 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4;
     }
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, drum_endpoint);
     current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
   }
 }
