@@ -498,6 +498,13 @@ void estimate_tempo(uint64_t current_time) {
        *  4    0.275   0.253   0.264     47.9%   47.3%   48.1%      47.8%
        *  6    0.444   0.421   0.420     77.4%   78.7%   76.5%      77.5%
        *  8    0.574   0.535   0.549    100.0%  100.0%  100.0%     100.0%
+
+       * Here are some measurements of pushing the beat while playing strict
+       * upbeats:
+       *
+       * 47.2 49.2 48.0 49.8 -> 48.6
+       *
+       * These are just 3s; I wasn't playing 2 or 4.
        */
       next_ns[2] = current_time + (0.278 * whole_beat);
       next_ns[4] = current_time + (0.478 * whole_beat);
