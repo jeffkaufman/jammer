@@ -508,8 +508,8 @@ void estimate_tempo(uint64_t current_time) {
       next_ns[2] = current_time + 2*third_beat;
       next_ns[3] = 0;
 
-      next_ns[1] += (int64_t)(beat_location_3 * third_beat);
-      next_ns[2] += (int64_t)(beat_location_24 * third_beat);
+      next_ns[1] += (int64_t)(beat_location_24 * third_beat);
+      next_ns[2] += (int64_t)(beat_location_3 * third_beat);
     } else {
       uint64_t quarter_beat = whole_beat / 4;
       for (int i = 1; i < N_SUBBEATS; i++) {
@@ -981,8 +981,8 @@ void handle_control_helper(unsigned int note_in) {
        *
        * Let's set an easy way to go to the measured mandolin setup.
        */
-      beat_location_3 = jig_time ? 0.09 : -0.09;
-      beat_location_24 = jig_time ? -0.10 : 0.10;
+      beat_location_3 = -0.09;
+      beat_location_24 = 0.10;
     }
     return;
 
@@ -1092,10 +1092,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void arpeggiate_tambourine(int subbeat) {
-  if ((auto_hihat_mode == 1 && subbeat == 4) ||
-      (auto_hihat_mode == 2 && (subbeat == 4 || subbeat == 2)) ||
-      (auto_hihat_mode == 6 && (subbeat == 4 || subbeat == 2))) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_TAMBOURINE_FREE);
+  bool downbeat = subbeat == 4;
+  bool upbeat = (jig_time && subbeat == 1) || subbeat == 2;
+  bool emphasize = jig_time && subbeat == 2;
+    
+  if ((auto_hihat_mode == 1 && downbeat) ||
+      (auto_hihat_mode == 2 && (downbeat || upbeat)) ||
+      (auto_hihat_mode == 6 && (downbeat || upbeat))) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, emphasize ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
   }     
 }  
 
