@@ -23,7 +23,7 @@
    rst  odr  rg   bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rrm  tdt  tdk  fcf
-
+tmb
    ...
 
    maj min mix               b3  b24
@@ -68,7 +68,7 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define N_ARPEGGIATOR_PATTERNS 5
 #define N_RHYTHM_MODES 2
-#define N_AUTO_HIHAT_MODES 6
+#define N_AUTO_HIHAT_MODES 9
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -88,7 +88,10 @@ arl  rho  ham  atd  pd2  flx   HH
 #define ENDPOINT_FOOT_1 17 // 1-b
 #define ENDPOINT_FOOT_3 18 // 3-a
 #define ENDPOINT_FOOT_4 19 // 4-a
-#define N_ENDPOINTS (ENDPOINT_FOOT_4+1)
+// These two are from https://www.jefftk.com/p/what-noise-does-a-tambourine-make
+#define ENDPOINT_TAMBOURINE_FREE 20
+#define ENDPOINT_TAMBOURINE_STOPPED 21
+#define N_ENDPOINTS (ENDPOINT_TAMBOURINE_STOPPED+1)
 
 // aliases
 #define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
@@ -145,7 +148,7 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define NS_PER_SEC 1000000000L
 
-#define N_SUBBEATS 4
+#define N_SUBBEATS 5
 
 /**
  * Drum settings
@@ -210,10 +213,6 @@ bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
 int auto_hihat_mode;
-int auto_hihat_1_vol;
-int auto_hihat_2_vol;
-int auto_hihat_3_vol;
-int auto_hihat_4_vol;
 bool sax_on;
 bool listen_drum_pedal;
 int most_recent_drum_pedal;
@@ -235,6 +234,7 @@ unsigned int whistle_anchor_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
 uint64_t next_ns[N_SUBBEATS];
+uint64_t tambourine_next_ns[N_SUBBEATS];
 bool fc_feet_on;
 int rhythm_mode;
 float beat_location_3;
@@ -256,10 +256,6 @@ void voices_reset() {
   tbd_a_on = false;
   tbd_b_on = false;
   auto_hihat_mode = 0;
-  auto_hihat_1_vol = 0;
-  auto_hihat_2_vol = 0;
-  auto_hihat_3_vol = 0;
-  auto_hihat_4_vol = 0;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
   current_drum_pedal_kick_note = 0;
@@ -291,6 +287,7 @@ void voices_reset() {
 
   for (int i = 0; i < N_SUBBEATS; i++) {
     next_ns[i] = 0;
+    tambourine_next_ns[i] = 0;
   }
 
   fc_feet_on = false;
@@ -503,6 +500,7 @@ void estimate_tempo(uint64_t current_time) {
   if (acceptable_error) {
     uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
     next_ns[0] = current_time;
+    next_ns[4] = current_time + whole_beat;
 
     if (jig_rhythm) {
       uint64_t third_beat = whole_beat / 3;
@@ -520,6 +518,12 @@ void estimate_tempo(uint64_t current_time) {
       next_ns[1] += (int64_t)(beat_location_24 * quarter_beat);
       next_ns[2] += (int64_t)(beat_location_3 * quarter_beat);
       next_ns[3] += (int64_t)(beat_location_24 * quarter_beat);
+    }
+
+    for (int i = 0 ; i < N_SUBBEATS; i++) {
+      if (next_ns[i] > 0) {
+	tambourine_next_ns[i] = next_ns[i] - (uint64_t)(0.094 * NS_PER_SEC);
+      }
     }
   }
 }
@@ -836,33 +840,6 @@ void air_lock() {
   locked_air = air;
 }
 
-void update_auto_hihat() {
-  auto_hihat_1_vol = 0;
-  auto_hihat_2_vol = 0;
-  auto_hihat_3_vol = 0;
-  auto_hihat_4_vol = 0;
-  if (auto_hihat_mode == 0) {
-  } else if (auto_hihat_mode == 1) {
-    auto_hihat_3_vol = 100;
-  } else if (auto_hihat_mode == 2) {
-    auto_hihat_1_vol = 100;
-    auto_hihat_3_vol = 100;
-  } else if (auto_hihat_mode == 3) {
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 90;
-  } else if (auto_hihat_mode == 4) {
-    auto_hihat_1_vol = 70;
-    auto_hihat_2_vol = 60;
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 60;
-  } else if (auto_hihat_mode == 5) {
-    auto_hihat_1_vol = 70;
-    auto_hihat_2_vol = 60;
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 100;
-  }
-}
-
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
@@ -1040,15 +1017,13 @@ void handle_control_helper(unsigned int note_in) {
 
   case ROTATE_AUTO_HIHAT:
     auto_hihat_mode = (auto_hihat_mode + 1) % N_AUTO_HIHAT_MODES;
-    update_auto_hihat();
     return;
 
   case TOGGLE_FC_FEET:
     fc_feet_on = !fc_feet_on;
     if (fc_feet_on) {
-      auto_hihat_mode = 3;
+      auto_hihat_mode = 5;
       current_drum_pedal_kick_note = MIDI_DRUM_KICK;
-      update_auto_hihat();
     }      
     return;
 
@@ -1115,6 +1090,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   send_midi(mode, note_out, val, chosen_endpoint);
 }
+
+void arpeggiate_tambourine(int subbeat) {
+  if ((auto_hihat_mode == 1 && subbeat == 4) ||
+      (auto_hihat_mode == 2 && (subbeat == 4 || subbeat == 2)) ||
+      (auto_hihat_mode == 6 && (subbeat == 4 || subbeat == 2))) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, ENDPOINT_TAMBOURINE_FREE);
+  }     
+}  
 
 void arpeggiate(int subbeat) {
   if (current_drum_note != -1) {
@@ -1186,8 +1169,38 @@ void arpeggiate(int subbeat) {
     }
   }
 
+  int auto_hihat_1_vol = 0;
+  int auto_hihat_2_vol = 0;
+  int auto_hihat_3_vol = 0;
+  int auto_hihat_4_vol = 0;
+  if (auto_hihat_mode == 0 ||
+      auto_hihat_mode == 1 ||
+      auto_hihat_mode == 2) {
+  } else if (auto_hihat_mode == 3) {
+    auto_hihat_3_vol = 100;
+  } else if (auto_hihat_mode == 4) {
+    auto_hihat_1_vol = 100;
+    auto_hihat_3_vol = 100;
+  } else if (auto_hihat_mode == 5) {
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 90;
+  } else if (auto_hihat_mode == 6) {
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 90;
+  } else if (auto_hihat_mode == 7) {
+    auto_hihat_1_vol = 70;
+    auto_hihat_2_vol = 60;
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 60;
+  } else if (auto_hihat_mode == 8) {
+    auto_hihat_1_vol = 70;
+    auto_hihat_2_vol = 60;
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 100;
+  }
+
   int auto_hihat_vol = 0;
-  if (subbeat == 0) {
+  if (subbeat == 4) {
     auto_hihat_vol = auto_hihat_1_vol;
   } else if (subbeat == 1) {
     auto_hihat_vol = auto_hihat_2_vol;
@@ -1198,11 +1211,11 @@ void arpeggiate(int subbeat) {
   }
 
   if (auto_hihat_vol) {
-    int drum_endpoint = ENDPOINT_DRUM;
     if (fc_feet_on) {
-      drum_endpoint = subbeat == 2 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4;
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, subbeat == 2 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+    } else {
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, ENDPOINT_DRUM);
     }
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, drum_endpoint);
     current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
   }
 }
@@ -1607,22 +1620,24 @@ void jml_setup() {
     current_note[i] = -1;
   }
 
-  create_source(&endpoints[ENDPOINT_SAX],               CFSTR("jammer-sax"));
-  create_source(&endpoints[ENDPOINT_TROMBONE],          CFSTR("jammer-trombone"));
-  create_source(&endpoints[ENDPOINT_JAWHARP],           CFSTR("jammer-jawharp"));
-  create_source(&endpoints[ENDPOINT_BASS_SAX],          CFSTR("jammer-bass-sax"));
-  create_source(&endpoints[ENDPOINT_BASS_TROMBONE],     CFSTR("jammer-bass-trombone"));
-  create_source(&endpoints[ENDPOINT_HAMMOND],           CFSTR("jammer-hammond"));
-  create_source(&endpoints[ENDPOINT_ORGAN_LOW],         CFSTR("jammer-organ-low"));
-  create_source(&endpoints[ENDPOINT_ORGAN_FLEX],        CFSTR("jammer-organ-flex"));
-  create_source(&endpoints[ENDPOINT_SINE_PAD],          CFSTR("jammer-sine-pad"));
-  create_source(&endpoints[ENDPOINT_SWEEP_PAD],         CFSTR("jammer-sweep-pad"));
-  create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES], CFSTR("jammer-overdriven-rhodes"));
-  create_source(&endpoints[ENDPOINT_RHODES],            CFSTR("jammer-rhodes"));
-  create_source(&endpoints[ENDPOINT_DRUM],              CFSTR("jammer-drum"));
-  create_source(&endpoints[ENDPOINT_FOOT_1],            CFSTR("jammer-foot-1"));
-  create_source(&endpoints[ENDPOINT_FOOT_3],            CFSTR("jammer-foot-3"));
-  create_source(&endpoints[ENDPOINT_FOOT_4],            CFSTR("jammer-foot-4"));
+  create_source(&endpoints[ENDPOINT_SAX],                CFSTR("jammer-sax"));
+  create_source(&endpoints[ENDPOINT_TROMBONE],           CFSTR("jammer-trombone"));
+  create_source(&endpoints[ENDPOINT_JAWHARP],            CFSTR("jammer-jawharp"));
+  create_source(&endpoints[ENDPOINT_BASS_SAX],           CFSTR("jammer-bass-sax"));
+  create_source(&endpoints[ENDPOINT_BASS_TROMBONE],      CFSTR("jammer-bass-trombone"));
+  create_source(&endpoints[ENDPOINT_HAMMOND],            CFSTR("jammer-hammond"));
+  create_source(&endpoints[ENDPOINT_ORGAN_LOW],          CFSTR("jammer-organ-low"));
+  create_source(&endpoints[ENDPOINT_ORGAN_FLEX],         CFSTR("jammer-organ-flex"));
+  create_source(&endpoints[ENDPOINT_SINE_PAD],           CFSTR("jammer-sine-pad"));
+  create_source(&endpoints[ENDPOINT_SWEEP_PAD],          CFSTR("jammer-sweep-pad"));
+  create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES],  CFSTR("jammer-overdriven-rhodes"));
+  create_source(&endpoints[ENDPOINT_RHODES],             CFSTR("jammer-rhodes"));
+  create_source(&endpoints[ENDPOINT_DRUM],               CFSTR("jammer-drum"));
+  create_source(&endpoints[ENDPOINT_FOOT_1],             CFSTR("jammer-foot-1"));
+  create_source(&endpoints[ENDPOINT_FOOT_3],             CFSTR("jammer-foot-3"));
+  create_source(&endpoints[ENDPOINT_FOOT_4],             CFSTR("jammer-foot-4"));
+  create_source(&endpoints[ENDPOINT_TAMBOURINE_FREE],    CFSTR("jammer-tambourine-free"));
+  create_source(&endpoints[ENDPOINT_TAMBOURINE_STOPPED], CFSTR("jammer-tambourine-stopped"));
 }
 
 void update_air() {
@@ -1684,6 +1699,10 @@ void trigger_subbeats() {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
       arpeggiate(i);
       next_ns[i] = 0;
+    }
+    if (tambourine_next_ns[i] > 0 && current_time > tambourine_next_ns[i]) {
+      arpeggiate_tambourine(i);
+      tambourine_next_ns[i] = 0;
     }
   }
 }
