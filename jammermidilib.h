@@ -240,7 +240,7 @@ int rhythm_mode;
 float beat_location_3;
 float beat_location_24;
 int state;
-bool jig_rhythm;
+bool jig_time;
 
 void voices_reset() {
   jawharp_on = false;
@@ -296,7 +296,7 @@ void voices_reset() {
   beat_location_24 = 0;
 
   state = STATE_DEFAULT;
-  jig_rhythm = false;
+  jig_time = false;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -502,7 +502,7 @@ void estimate_tempo(uint64_t current_time) {
     next_ns[0] = current_time;
     next_ns[4] = current_time + whole_beat;
 
-    if (jig_rhythm) {
+    if (jig_time) {
       uint64_t third_beat = whole_beat / 3;
       next_ns[1] = current_time + third_beat;
       next_ns[2] = current_time + 2*third_beat;
@@ -981,8 +981,8 @@ void handle_control_helper(unsigned int note_in) {
        *
        * Let's set an easy way to go to the measured mandolin setup.
        */
-      beat_location_3 = jig_rhythm ? 0.09 : -0.09;
-      beat_location_24 = jig_rhythm ? -0.10 : 0.10;
+      beat_location_3 = jig_time ? 0.09 : -0.09;
+      beat_location_24 = jig_time ? -0.10 : 0.10;
     }
     return;
 
@@ -1028,7 +1028,7 @@ void handle_control_helper(unsigned int note_in) {
     return;
 
   case TOGGLE_REEL_JIG:
-    jig_rhythm = !jig_rhythm;
+    jig_time = !jig_time;
     return;
 
   }
