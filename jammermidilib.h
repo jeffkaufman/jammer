@@ -20,7 +20,7 @@
 /*
  Controls:
 
-   rst  odr  low  bt1  pd1  jaw  s/t
+   rst  odr  rg   bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rrm  tdt  tdk  fcf
 
@@ -34,7 +34,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_OVERDRIVEN_RHODES     6
 #define TOGGLE_RHODES            13
 
-#define TOGGLE_ORGAN_LOW             5 // synth bass
+#define TOGGLE_REEL_JIG             5
 #define TOGGLE_HAMMOND           12
 
 #define TOGGLE_BASS_TROMBONE         4
@@ -240,6 +240,7 @@ int rhythm_mode;
 float beat_location_3;
 float beat_location_24;
 int state;
+bool jig_rhythm;
 
 void voices_reset() {
   jawharp_on = false;
@@ -298,6 +299,7 @@ void voices_reset() {
   beat_location_24 = 0;
 
   state = STATE_DEFAULT;
+  jig_rhythm = false;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -501,14 +503,24 @@ void estimate_tempo(uint64_t current_time) {
   if (acceptable_error) {
     uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
     next_ns[0] = current_time;
-    uint64_t quarter_beat = whole_beat / 4;
-    for (int i = 1; i < N_SUBBEATS; i++) {
-      next_ns[i] = next_ns[i-1] + quarter_beat;
+
+    if (jig_rhythm) {
+      uint64_t third_beat = whole_beat / 3;
+      next_ns[1] = current_time + third_beat;
+      next_ns[2] = current_time + 2*third_beat;
+      next_ns[3] = 0;
+
+      next_ns[1] += (int64_t)(beat_location_3 * third_beat);
+      next_ns[2] += (int64_t)(beat_location_24 * third_beat);
+    } else {
+      uint64_t quarter_beat = whole_beat / 4;
+      for (int i = 1; i < N_SUBBEATS; i++) {
+	next_ns[i] = next_ns[i-1] + quarter_beat;
+      }
+      next_ns[1] += (int64_t)(beat_location_24 * quarter_beat);
+      next_ns[2] += (int64_t)(beat_location_3 * quarter_beat);
+      next_ns[3] += (int64_t)(beat_location_24 * quarter_beat);
     }
-    printf("%.2f  %.2f\n", beat_location_3, beat_location_24);
-    next_ns[1] += (int64_t)(beat_location_24 * quarter_beat);
-    next_ns[2] += (int64_t)(beat_location_3 * quarter_beat);
-    next_ns[3] += (int64_t)(beat_location_24 * quarter_beat);
   }
 }
 
@@ -917,14 +929,6 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_ORGAN_LOW:
-    endpoint_notes_off(ENDPOINT_ORGAN_LOW);
-    organ_low_on = !organ_low_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_ORGAN_LOW);
-    }
-    return;
-
   case TOGGLE_SINE_PAD:
     endpoint_notes_off(ENDPOINT_SINE_PAD);
     sine_pad_on = !sine_pad_on;
@@ -1000,8 +1004,8 @@ void handle_control_helper(unsigned int note_in) {
        *
        * Let's set an easy way to go to the measured mandolin setup.
        */
-      beat_location_3 = -0.09;
-      beat_location_24 = 0.10;
+      beat_location_3 = jig_rhythm ? 0.09 : -0.09;
+      beat_location_24 = jig_rhythm ? -0.10 : 0.10;
     }
     return;
 
@@ -1046,6 +1050,10 @@ void handle_control_helper(unsigned int note_in) {
       current_drum_pedal_kick_note = MIDI_DRUM_KICK;
       update_auto_hihat();
     }      
+    return;
+
+  case TOGGLE_REEL_JIG:
+    jig_rhythm = !jig_rhythm;
     return;
 
   }
