@@ -1375,6 +1375,28 @@ const char* note_str(int note) {
   }
 }
 
+void handle_axis_49(int mode, int note_in, int val) {
+  if (listen_drum_pedal &&
+      (note_in == BUTTON_MAJOR ||
+       note_in == BUTTON_MIXO || 
+       note_in == BUTTON_MINOR)) {
+    if (note_in == BUTTON_MAJOR) {
+      musical_mode = MODE_MAJOR;
+    } else if (note_in == BUTTON_MIXO) {
+      musical_mode = MODE_MIXO;
+    } else if (note_in == BUTTON_MINOR) {
+      musical_mode = MODE_MINOR;
+    }
+    printf("Chose mode %d\n", musical_mode);
+  } else if (note_in <= CONTROL_MAX) {
+    if (mode == MIDI_ON) {
+      handle_control(note_in);
+    }
+  } else {
+    handle_button(mode, note_in, val);
+  }
+}
+
 void read_midi(const MIDIPacketList *pktlist,
                void *readProcRefCon,
                void *srcConnRefCon) {
@@ -1405,25 +1427,7 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-	if (listen_drum_pedal &&
-	    (note_in == BUTTON_MAJOR ||
-	     note_in == BUTTON_MIXO || 
-	     note_in == BUTTON_MINOR)) {
-	  if (note_in == BUTTON_MAJOR) {
-	    musical_mode = MODE_MAJOR;
-	  } else if (note_in == BUTTON_MIXO) {
-	    musical_mode = MODE_MIXO;
-	  } else if (note_in == BUTTON_MINOR) {
-	    musical_mode = MODE_MINOR;
-	  }
-	  printf("Chose mode %d\n", musical_mode);
-	} else if (note_in <= CONTROL_MAX) {
-          if (mode == MIDI_ON) {
-            handle_control(note_in);
-          }
-        } else {
-          handle_button(mode, note_in, val);
-	}
+	handle_axis_49(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_feet_controller) {
         handle_feet(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_whistle) {
