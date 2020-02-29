@@ -23,6 +23,10 @@
    rst  odr  low  bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rrm  tdt  tdk  fcf
+
+   ...
+
+   maj min mix               b3  b24
  */
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
@@ -55,6 +59,9 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define CONTROL_MAX TOGGLE_ARPEGGIATOR
 
+#define BUTTON_ADJUST_3 93
+#define BUTTON_ADJUST_24 92
+
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
 #define BUTTON_MINOR 96
@@ -85,6 +92,10 @@ arl  rho  ham  atd  pd2  flx   HH
 
 // aliases
 #define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
+
+#define STATE_DEFAULT 0
+#define STATE_ADJUST_3 1
+#define STATE_ADJUST_24 2
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -134,7 +145,7 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define NS_PER_SEC 1000000000L
 
-#define N_SUBBEATS 8
+#define N_SUBBEATS 4
 
 /**
  * Drum settings
@@ -226,6 +237,9 @@ int kick_times_index;
 uint64_t next_ns[N_SUBBEATS];
 bool fc_feet_on;
 int rhythm_mode;
+float beat_location_3;
+float beat_location_24;
+int state;
 
 void voices_reset() {
   jawharp_on = false;
@@ -280,6 +294,10 @@ void voices_reset() {
 
   fc_feet_on = false;
   rhythm_mode = 0;
+  beat_location_3 = 0;
+  beat_location_24 = 0;
+
+  state = STATE_DEFAULT;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -483,42 +501,14 @@ void estimate_tempo(uint64_t current_time) {
   if (acceptable_error) {
     uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
     next_ns[0] = current_time;
-    if (rhythm_mode == 0) {
-      uint64_t eighth_beat = whole_beat / 8;
-      for (int i = 1; i < N_SUBBEATS; i++) {
-	next_ns[i] = next_ns[i-1] + eighth_beat;
-      }
-    } else if (rhythm_mode == 1) {
-      /* Sometimes we want even divisions, and that's simple, but other
-       * times we want it swung.  Here are some measurements from
-       * playing around on mandolin:
-       *
-       *  0    0.000   0.000   0.000     00.0%   00.0%   00.0%      00.0%
-       *  2    0.154   0.139   0.168     26.9%   26.0%   30.6%      27.8%
-       *  4    0.275   0.253   0.264     47.9%   47.3%   48.1%      47.8%
-       *  6    0.444   0.421   0.420     77.4%   78.7%   76.5%      77.5%
-       *  8    0.574   0.535   0.549    100.0%  100.0%  100.0%     100.0%
-
-       * Here are some measurements of pushing the beat while playing strict
-       * upbeats:
-       *
-       * 47.2 49.2 48.0 49.8 -> 48.6
-       *
-       * These are just 3s; I wasn't playing 2 or 4.
-       */
-      next_ns[2] = current_time + (0.278 * whole_beat);
-      next_ns[4] = current_time + (0.478 * whole_beat);
-      next_ns[6] = current_time + (0.775 * whole_beat);
-
-      next_ns[1] = 0;
-      next_ns[3] = 0;
-      next_ns[5] = 0;
-      next_ns[7] = 0;
-    }      
-  } else {
-    for (int i = 0; i < N_SUBBEATS; i++) {
-      next_ns[i] = 0;
+    uint64_t quarter_beat = whole_beat / 4;
+    for (int i = 1; i < N_SUBBEATS; i++) {
+      next_ns[i] = next_ns[i-1] + quarter_beat;
     }
+    printf("%.2f  %.2f\n", beat_location_3, beat_location_24);
+    next_ns[1] += (int64_t)(beat_location_24 * quarter_beat);
+    next_ns[2] += (int64_t)(beat_location_3 * quarter_beat);
+    next_ns[3] += (int64_t)(beat_location_24 * quarter_beat);
   }
 }
 
@@ -985,6 +975,34 @@ void handle_control_helper(unsigned int note_in) {
 
   case ROTATE_RHYTHM_MODE:
     rhythm_mode = (rhythm_mode + 1) % N_RHYTHM_MODES;
+    if (rhythm_mode == 0) {
+      beat_location_3 = 0;
+      beat_location_24 = 0;
+    } else if (rhythm_mode == 1) {
+      /* Sometimes we want even divisions, and that's simple, but other
+       * times we want it swung.  Here are some measurements from
+       * playing around on mandolin:
+       *
+       *  0    0.000   0.000   0.000     00.0%   00.0%   00.0%      00.0%
+       *  2    0.154   0.139   0.168     26.9%   26.0%   30.6%      27.8%
+       *  4    0.275   0.253   0.264     47.9%   47.3%   48.1%      47.8%
+       *  6    0.444   0.421   0.420     77.4%   78.7%   76.5%      77.5%
+       *  8    0.574   0.535   0.549    100.0%  100.0%  100.0%     100.0%
+       *
+       * Here are some measurements of pushing the beat while playing strict
+       * upbeats:
+       *
+       * 47.2 49.2 48.0 49.8 -> 48.6
+       *
+       * These are just 3s; I wasn't playing 2 or 4.
+       *
+       * It looks like being up to 12% ahead/behind is a good range.
+       *
+       * Let's set an easy way to go to the measured mandolin setup.
+       */
+      beat_location_3 = -0.09;
+      beat_location_24 = 0.10;
+    }
     return;
 
   case TOGGLE_LISTEN_DRUM_PEDAL:
@@ -1110,37 +1128,37 @@ void arpeggiate(int subbeat) {
       }
     } else if (current_arpeggiator_pattern == 1) {
       if (subbeat == 0) {
-      } else if (subbeat == 4) {
+      } else if (subbeat == 2) {
 	note_out += 12;
       } else {
 	send_note = false;
 	end_note = false;
       }
     } else if (current_arpeggiator_pattern == 2) {
-      if (subbeat == 0 || subbeat == 2) {
-      } else if (subbeat == 4 || subbeat == 6) {
+      if (subbeat == 0 || subbeat == 1) {
+      } else if (subbeat == 2 || subbeat == 3) {
 	note_out += 12;
       } else {
 	send_note = false;
       }
     } else if (current_arpeggiator_pattern == 3) {
       if (subbeat == 0) {
-      } else if (subbeat == 2) {
+      } else if (subbeat == 1) {
 	note_out += 12;
-      } else if (subbeat == 4) {
+      } else if (subbeat == 2) {
 	note_out += 12 + 7;
-      } else if (subbeat == 6) {
+      } else if (subbeat == 3) {
 	note_out += 12 + 12;
       } else {
 	send_note = false;
       }
     } else if (current_arpeggiator_pattern == 4) {
       if (subbeat == 0) {
-      } else if (subbeat == 2) {
+      } else if (subbeat == 1) {
 	note_out += 12;
-      } else if (subbeat == 4) {
+      } else if (subbeat == 2) {
 	note_out += 12 + 12;
-      } else if (subbeat == 6) {
+      } else if (subbeat == 3) {
 	note_out += 12 + 12 + 12;
       } else {
 	send_note = false;
@@ -1163,18 +1181,18 @@ void arpeggiate(int subbeat) {
   int auto_hihat_vol = 0;
   if (subbeat == 0) {
     auto_hihat_vol = auto_hihat_1_vol;
-  } else if (subbeat == 2) {
+  } else if (subbeat == 1) {
     auto_hihat_vol = auto_hihat_2_vol;
-  } else if (subbeat == 4) {
+  } else if (subbeat == 2) {
     auto_hihat_vol = auto_hihat_3_vol;
-  } else if (subbeat == 6) {
+  } else if (subbeat == 3) {
     auto_hihat_vol = auto_hihat_4_vol;
   }
 
   if (auto_hihat_vol) {
     int drum_endpoint = ENDPOINT_DRUM;
     if (fc_feet_on) {
-      drum_endpoint = subbeat == 4 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4;
+      drum_endpoint = subbeat == 2 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4;
     }
     send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, drum_endpoint);
     current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
@@ -1376,6 +1394,27 @@ const char* note_str(int note) {
 }
 
 void handle_axis_49(int mode, int note_in, int val) {
+  if (mode == MIDI_ON && note_in == BUTTON_ADJUST_3) {
+    state = STATE_ADJUST_3;
+  } else if (mode == MIDI_ON && note_in == BUTTON_ADJUST_24) {
+    state = STATE_ADJUST_24;
+  } else if (mode == MIDI_ON && state != STATE_DEFAULT) {
+    float adjustment = 0;
+    if (note_in >= 85 && note_in <= 91) {
+      // move beat behind
+      adjustment = (note_in - 84) * 0.015;
+    } else if (note_in >= 78 && note_in <= 84) {
+      // move beat ahead
+      adjustment = -(note_in - 77) * 0.015;
+    }
+    
+    if (state == STATE_ADJUST_3) {
+      beat_location_3 = adjustment;
+    } else if (state == STATE_ADJUST_24) {
+      beat_location_24 = adjustment;
+    }
+    state = STATE_DEFAULT;
+  }
   if (listen_drum_pedal &&
       (note_in == BUTTON_MAJOR ||
        note_in == BUTTON_MIXO || 
