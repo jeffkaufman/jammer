@@ -1,6 +1,5 @@
 #ifndef JAMMER_MIDI_LIB_H
 #define JAMMER_MIDI_LIB_H
-
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <time.h>
@@ -130,6 +129,7 @@ tmb
 #define MIDI_DRUM_SNARE 38
 #define MIDI_DRUM_HIHAT 46
 #define MIDI_DRUM_HIHAT_CLOSED 42
+#define MIDI_DRUM_TAMBOURINE 54
 
 #define MIDI_DRUM_PEDAL_1 46
 #define MIDI_DRUM_PEDAL_2 38
@@ -947,10 +947,14 @@ void handle_control_helper(unsigned int note_in) {
     return;
 
   case ROTATE_DRUM_PEDAL_TSS:
-    if (current_drum_pedal_tss_note != MIDI_DRUM_RIM) {
+    if (current_drum_pedal_tss_note == 0) {
       current_drum_pedal_tss_note = MIDI_DRUM_RIM;
-    } else {
+    } else if (current_drum_pedal_tss_note == MIDI_DRUM_RIM) {
+      current_drum_pedal_tss_note = MIDI_DRUM_TAMBOURINE;
+    } else if (current_drum_pedal_tss_note == MIDI_DRUM_TAMBOURINE) {
       current_drum_pedal_tss_note = MIDI_DRUM_SNARE;
+    } else {
+      current_drum_pedal_tss_note = 0;
     }
     return;
 
@@ -1265,16 +1269,17 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     arpeggiate(0);
   }
 
-  if (!current_drum_pedal_kick_note) {
-    return;  // If the computer isn't synthesizing drums then we don't need any of this.
-  }
   int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
   if (drum_note != 0) {
     printf("sending %d to drum\n", drum_note);
     if (fc_feet_on) {
       send_midi(mode, drum_note, 100, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
     } else {
-      send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_DRUM);
+      if (current_drum_pedal_tss_note == MIDI_DRUM_TAMBOURINE) {
+        send_midi(mode, drum_note, 100, ENDPOINT_TAMBOURINE_STOPPED);
+      } else {
+        send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_DRUM);
+      }
       current_drum_note = drum_note;
     }
   }
