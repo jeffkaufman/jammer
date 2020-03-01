@@ -144,7 +144,8 @@ tmb
 #define MODE_MIXO 1
 #define MODE_MINOR 2
 
-#define KICK_TIMES_LENGTH 8
+#define KICK_TIMES_LENGTH 12
+#define SNARE_TIMES_LENGTH 12
 
 #define NS_PER_SEC 1000000000L
 
@@ -233,6 +234,8 @@ int musical_mode;
 unsigned int whistle_anchor_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
+uint64_t snare_times[SNARE_TIMES_LENGTH];
+int snare_times_index;
 uint64_t next_ns[N_SUBBEATS];
 uint64_t tambourine_next_ns[N_SUBBEATS];
 bool fc_feet_on;
@@ -284,6 +287,11 @@ void voices_reset() {
     kick_times[i] = 0;
   }
   kick_times_index = 0;
+
+  for (int i = 0; i < SNARE_TIMES_LENGTH; i++) {
+    snare_times[i] = 0;
+  }
+  snare_times_index = 0;
 
   for (int i = 0; i < N_SUBBEATS; i++) {
     next_ns[i] = 0;
@@ -447,58 +455,214 @@ void vbass_trombone_off() {
   }
 }
 
-void estimate_tempo(uint64_t current_time) {
-  // The model here is that kicks are approximately correctly timed, but
-  // sometimes dropped or doubled, and that the target tempo is between 100 and
-  // 140.  Take a super naive approach: for each candidate tempo, consider how
-  // much error that would imply for each recent kick we've seen, and take the
-  // tempo with the lowest error.
-  float best_bpm = -1;
-  float best_error = -1;
-  uint64_t max_history_ns = 8L * NS_PER_SEC;
-  for (float candidate_bpm = 100;
-       candidate_bpm <= 140;
-       candidate_bpm += 0.25) {
-    uint64_t candidate_tempo_interval_ns = 60L * NS_PER_SEC / candidate_bpm;
+void arpeggiate_tambourine(int subbeat) {
+  bool downbeat = subbeat == 4;
+  bool upbeat = (jig_time && subbeat == 1) || subbeat == 2;
+  bool emphasize = jig_time && subbeat == 2;
+    
+  if ((auto_hihat_mode == 1 && downbeat) ||
+      (auto_hihat_mode == 2 && (downbeat || upbeat)) ||
+      (auto_hihat_mode == 6 && (downbeat || upbeat))) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, emphasize ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
+  }     
+}  
 
-    int included_kicks = 0;
-    float candidate_error = 0;
-    for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
-      uint64_t delta_ns = current_time - kick_times[i];
-      if (delta_ns > max_history_ns) {
-        continue;
+void arpeggiate(int subbeat) {
+  if (current_drum_note != -1) {
+    send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_DRUM);
+    current_drum_note = -1;
+  }
+
+  bool send_note = true;
+  bool end_note = true;
+  int note_out = -1;
+  if (arpeggiator_on) {
+    note_out = active_note();
+  
+    if (current_arpeggiator_pattern == 0) {
+      if (subbeat == 0) {
+      } else {
+	send_note = false;
+	end_note = false;
       }
-
-      uint64_t raw_error = delta_ns % candidate_tempo_interval_ns;
-      if (raw_error > candidate_tempo_interval_ns / 2) {
-        raw_error = candidate_tempo_interval_ns - raw_error;
+    } else if (current_arpeggiator_pattern == 1) {
+      if (subbeat == 0) {
+      } else if (subbeat == 2) {
+	note_out += 12;
+      } else {
+	send_note = false;
+	end_note = false;
       }
-
-      candidate_error += raw_error;
-      included_kicks++;
-    }
-
-    if (included_kicks == 1) {
-      // We only have a single kick, guess a typical tempo
-      best_error = 0;
-      best_bpm = 117;
-    } else if (included_kicks > 1) {
-      candidate_error = candidate_error / included_kicks;
-
-      if (best_bpm < 0 || candidate_error < best_error) {
-        best_bpm = candidate_bpm;
-        best_error = candidate_error;
+    } else if (current_arpeggiator_pattern == 2) {
+      if (subbeat == 0 || subbeat == 1) {
+      } else if (subbeat == 2 || subbeat == 3) {
+	note_out += 12;
+      } else {
+	send_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 3) {
+      if (subbeat == 0) {
+      } else if (subbeat == 1) {
+	note_out += 12;
+      } else if (subbeat == 2) {
+	note_out += 12 + 7;
+      } else if (subbeat == 3) {
+	note_out += 12 + 12;
+      } else {
+	send_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 4) {
+      if (subbeat == 0) {
+      } else if (subbeat == 1) {
+	note_out += 12;
+      } else if (subbeat == 2) {
+	note_out += 12 + 12;
+      } else if (subbeat == 3) {
+	note_out += 12 + 12 + 12;
+      } else {
+	send_note = false;
       }
     }
   }
-  bool acceptable_error = best_error < 20000000;
 
-  printf("%c BPM estimate: %f  (error: %f)\n",
+  if (end_note && current_arpeggiator_note != -1) {
+    send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
+    current_arpeggiator_note = -1;
+  }
+
+  if (send_note) {
+    if (note_out != -1) {
+      send_midi(MIDI_ON, note_out, 90, ENDPOINT_FOOTBASS);
+      current_arpeggiator_note = note_out;
+    }
+  }
+
+  int auto_hihat_1_vol = 0;
+  int auto_hihat_2_vol = 0;
+  int auto_hihat_3_vol = 0;
+  int auto_hihat_4_vol = 0;
+  if (auto_hihat_mode == 0 ||
+      auto_hihat_mode == 1 ||
+      auto_hihat_mode == 2) {
+  } else if (auto_hihat_mode == 3) {
+    auto_hihat_3_vol = 100;
+  } else if (auto_hihat_mode == 4) {
+    auto_hihat_1_vol = 100;
+    auto_hihat_3_vol = 100;
+  } else if (auto_hihat_mode == 5) {
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 90;
+  } else if (auto_hihat_mode == 6) {
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 90;
+  } else if (auto_hihat_mode == 7) {
+    auto_hihat_1_vol = 70;
+    auto_hihat_2_vol = 60;
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 60;
+  } else if (auto_hihat_mode == 8) {
+    auto_hihat_1_vol = 70;
+    auto_hihat_2_vol = 60;
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 100;
+  }
+
+  int auto_hihat_vol = 0;
+  if (subbeat == 4) {
+    auto_hihat_vol = auto_hihat_1_vol;
+  } else if (subbeat == 1) {
+    auto_hihat_vol = auto_hihat_2_vol;
+  } else if (subbeat == 2) {
+    auto_hihat_vol = auto_hihat_3_vol;
+  } else if (subbeat == 3) {
+    auto_hihat_vol = auto_hihat_4_vol;
+  }
+
+  if (auto_hihat_vol) {
+    if (fc_feet_on) {
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, subbeat == 2 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+    } else {
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, ENDPOINT_DRUM);
+    }
+    current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
+  }
+}
+
+uint64_t delta(uint64_t a, uint64_t b) {
+  return a > b ? a - b : b - a;
+}    
+
+uint64_t min(uint64_t a, uint64_t b) {
+  return a < b ? a : b;
+}
+
+uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
+  uint64_t best_error = NS_PER_SEC;  // default to being way off
+  for (int i = 0; i < hit_len; i++) {
+    uint64_t error = delta(target, hits[i]);
+    if (error < best_error) {
+      best_error = error;
+    }
+  }
+  return best_error;
+}
+
+void estimate_tempo(uint64_t current_time, bool is_low) {
+  // Take a super naive approach: for each candidate tempo, consider
+  // how much error that would imply for each recent hit we've seen,
+  // and take the tempo with the lowest error.
+  //
+  // If the hit doesn't fit the pattern, don't give up, treat it as
+  // an extra hit and ignore it.
+  
+  float best_bpm = -1;
+  // something way high, in case we fail to find anything
+  uint64_t best_error = NS_PER_SEC * 100; 
+
+  int n_downbeats_to_consider = 4;
+
+  for (float candidate_bpm = 100;
+       candidate_bpm <= 140;
+       candidate_bpm += 0.25) {
+
+    uint64_t whole_note_ns = 60L * NS_PER_SEC / candidate_bpm;
+    uint64_t candidate_error = 0;
+
+    // Look for a kick or snare on every past downbeat.
+    for (int i = 0; i < n_downbeats_to_consider; i++) {
+      uint64_t target = current_time - (i+1)*whole_note_ns;
+      candidate_error += min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
+			     best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
+    }
+
+    if (candidate_error < best_error) {
+      best_error = candidate_error;
+      best_bpm = candidate_bpm;
+    }
+  }
+
+  if (best_bpm < 0) {
+    printf("best_bpm = %.2f : not expected\n", best_bpm);
+    return;
+  }
+
+  uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
+
+  // Allow error of up to 1/32 note on each of the downbeats.
+  uint64_t max_allowed_error = (whole_beat * n_downbeats_to_consider) / 32;
+
+  bool acceptable_error = best_error < max_allowed_error;
+
+  printf("%c BPM estimate: %f  (error: %llu, max allowed: %llu, frac: %.2f%%)\n",
          acceptable_error ? ' ' : '!',
-         best_bpm, best_error);
+         best_bpm,
+	 best_error,
+	 max_allowed_error,
+	 (float)best_error / (float)max_allowed_error);
   
   if (acceptable_error) {
-    uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
+    arpeggiate(0);
+
     next_ns[0] = current_time;
     next_ns[4] = current_time + whole_beat;
 
@@ -532,11 +696,18 @@ uint64_t now() {
   return clock_gettime_nsec_np(CLOCK_MONOTONIC);
 }
 
-void record_kick() {
-  kick_times[kick_times_index] = now();
-  estimate_tempo(kick_times[kick_times_index]);
-  kick_times_index++;
-  kick_times_index = kick_times_index % KICK_TIMES_LENGTH;
+void count_drum_hit(bool is_low) {
+  if (is_low) {
+    kick_times[kick_times_index] = now();
+    estimate_tempo(kick_times[kick_times_index], is_low);
+    kick_times_index++;
+    kick_times_index = kick_times_index % KICK_TIMES_LENGTH;
+  } else {
+    snare_times[snare_times_index] = now();
+    estimate_tempo(snare_times[snare_times_index], is_low);
+    snare_times_index++;
+    snare_times_index = snare_times_index % SNARE_TIMES_LENGTH;
+  }
 }
 
 void update_bass() {
@@ -1095,139 +1266,6 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
-void arpeggiate_tambourine(int subbeat) {
-  bool downbeat = subbeat == 4;
-  bool upbeat = (jig_time && subbeat == 1) || subbeat == 2;
-  bool emphasize = jig_time && subbeat == 2;
-    
-  if ((auto_hihat_mode == 1 && downbeat) ||
-      (auto_hihat_mode == 2 && (downbeat || upbeat)) ||
-      (auto_hihat_mode == 6 && (downbeat || upbeat))) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, emphasize ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
-  }     
-}  
-
-void arpeggiate(int subbeat) {
-  if (current_drum_note != -1) {
-    send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_DRUM);
-    current_drum_note = -1;
-  }
-
-  bool send_note = true;
-  bool end_note = true;
-  int note_out = -1;
-  if (arpeggiator_on) {
-    note_out = active_note();
-  
-    if (current_arpeggiator_pattern == 0) {
-      if (subbeat == 0) {
-      } else {
-	send_note = false;
-	end_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 1) {
-      if (subbeat == 0) {
-      } else if (subbeat == 2) {
-	note_out += 12;
-      } else {
-	send_note = false;
-	end_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 2) {
-      if (subbeat == 0 || subbeat == 1) {
-      } else if (subbeat == 2 || subbeat == 3) {
-	note_out += 12;
-      } else {
-	send_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 3) {
-      if (subbeat == 0) {
-      } else if (subbeat == 1) {
-	note_out += 12;
-      } else if (subbeat == 2) {
-	note_out += 12 + 7;
-      } else if (subbeat == 3) {
-	note_out += 12 + 12;
-      } else {
-	send_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 4) {
-      if (subbeat == 0) {
-      } else if (subbeat == 1) {
-	note_out += 12;
-      } else if (subbeat == 2) {
-	note_out += 12 + 12;
-      } else if (subbeat == 3) {
-	note_out += 12 + 12 + 12;
-      } else {
-	send_note = false;
-      }
-    }
-  }
-
-  if (end_note && current_arpeggiator_note != -1) {
-    send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
-    current_arpeggiator_note = -1;
-  }
-
-  if (send_note) {
-    if (note_out != -1) {
-      send_midi(MIDI_ON, note_out, 90, ENDPOINT_FOOTBASS);
-      current_arpeggiator_note = note_out;
-    }
-  }
-
-  int auto_hihat_1_vol = 0;
-  int auto_hihat_2_vol = 0;
-  int auto_hihat_3_vol = 0;
-  int auto_hihat_4_vol = 0;
-  if (auto_hihat_mode == 0 ||
-      auto_hihat_mode == 1 ||
-      auto_hihat_mode == 2) {
-  } else if (auto_hihat_mode == 3) {
-    auto_hihat_3_vol = 100;
-  } else if (auto_hihat_mode == 4) {
-    auto_hihat_1_vol = 100;
-    auto_hihat_3_vol = 100;
-  } else if (auto_hihat_mode == 5) {
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 90;
-  } else if (auto_hihat_mode == 6) {
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 90;
-  } else if (auto_hihat_mode == 7) {
-    auto_hihat_1_vol = 70;
-    auto_hihat_2_vol = 60;
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 60;
-  } else if (auto_hihat_mode == 8) {
-    auto_hihat_1_vol = 70;
-    auto_hihat_2_vol = 60;
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 100;
-  }
-
-  int auto_hihat_vol = 0;
-  if (subbeat == 4) {
-    auto_hihat_vol = auto_hihat_1_vol;
-  } else if (subbeat == 1) {
-    auto_hihat_vol = auto_hihat_2_vol;
-  } else if (subbeat == 2) {
-    auto_hihat_vol = auto_hihat_3_vol;
-  } else if (subbeat == 3) {
-    auto_hihat_vol = auto_hihat_4_vol;
-  }
-
-  if (auto_hihat_vol) {
-    if (fc_feet_on) {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, subbeat == 2 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
-    } else {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, ENDPOINT_DRUM);
-    }
-    current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
-  }
-}
-
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   // Handle pedals after determining the active note, so that only
   // future notes are affected.
@@ -1264,9 +1302,8 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     is_low = !is_low;
   }
 
-  if (mode == MIDI_ON && is_low) {
-    record_kick();
-    arpeggiate(0);
+  if (mode == MIDI_ON) {
+    count_drum_hit(is_low);
   }
 
   int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
@@ -1275,7 +1312,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     if (fc_feet_on) {
       send_midi(mode, drum_note, 100, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
     } else {
-      if (current_drum_pedal_tss_note == MIDI_DRUM_TAMBOURINE) {
+      if (!is_low && current_drum_pedal_tss_note == MIDI_DRUM_TAMBOURINE) {
         send_midi(mode, drum_note, 100, ENDPOINT_TAMBOURINE_STOPPED);
       } else {
         send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_DRUM);
