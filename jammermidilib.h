@@ -607,7 +607,7 @@ uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
   return best_error;
 }
 
-void estimate_tempo(uint64_t current_time, bool is_low) {
+void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
   // Take a super naive approach: for each candidate tempo, consider
   // how much error that would imply for each recent hit we've seen,
   // and take the tempo with the lowest error.
@@ -628,11 +628,19 @@ void estimate_tempo(uint64_t current_time, bool is_low) {
     uint64_t whole_note_ns = 60L * NS_PER_SEC / candidate_bpm;
     uint64_t candidate_error = 0;
 
-    // Look for a kick or snare on every past downbeat.
+    // Look for a kick or snare on every past downbeat, but allow
+    // kicks preceeding a snare to be half a beat early.
     for (int i = 0; i < n_downbeats_to_consider; i++) {
       uint64_t target = current_time - (i+1)*whole_note_ns;
-      candidate_error += min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
-			     best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
+      uint64_t error = min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
+			   best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
+      bool early_kick_allowed = i % 2 == (is_low ? 1 : 0);
+      if (early_kick_allowed) {
+	uint64_t early_kick_target = target - (whole_note_ns/2);
+	uint64_t early_kick_error = best_match_hit(early_kick_target, kick_times, KICK_TIMES_LENGTH);
+	error = min(error, early_kick_error);
+      }
+      candidate_error += error;
     }
 
     if (candidate_error < best_error) {
@@ -648,6 +656,19 @@ void estimate_tempo(uint64_t current_time, bool is_low) {
 
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
 
+  if (imaginary) {
+    // If this is an imaginary beat, require there to have been at
+    // kick hit about half a beat ago, since we're trying to handle
+    // the case where the kick is played early.
+    uint64_t target = current_time - (whole_beat / 2);
+    uint64_t error = best_match_hit(target, kick_times, KICK_TIMES_LENGTH);
+    if (error > whole_beat / 16) {
+      printf("not firing imaginary beat: looked for %llu, best was %.2f%%",
+	     whole_beat / 2,  100*(float)error / (float) (whole_beat / 16));
+      return;
+    }
+  }
+
   // Allow error of up to 1/32 note on each of the downbeats.
   uint64_t max_allowed_error = (whole_beat * n_downbeats_to_consider) / 32;
 
@@ -658,7 +679,7 @@ void estimate_tempo(uint64_t current_time, bool is_low) {
          best_bpm,
 	 best_error,
 	 max_allowed_error,
-	 (float)best_error / (float)max_allowed_error);
+	 100 * (float)best_error / (float)max_allowed_error);
   
   if (acceptable_error) {
     arpeggiate(0);
@@ -699,12 +720,12 @@ uint64_t now() {
 void count_drum_hit(bool is_low) {
   if (is_low) {
     kick_times[kick_times_index] = now();
-    estimate_tempo(kick_times[kick_times_index], is_low);
+    estimate_tempo(kick_times[kick_times_index], /*imaginary=*/false, /*is_low=*/true);
     kick_times_index++;
     kick_times_index = kick_times_index % KICK_TIMES_LENGTH;
   } else {
     snare_times[snare_times_index] = now();
-    estimate_tempo(snare_times[snare_times_index], is_low);
+    estimate_tempo(snare_times[snare_times_index], /*imaginary=*/false, /*is_low=*/false);
     snare_times_index++;
     snare_times_index = snare_times_index % SNARE_TIMES_LENGTH;
   }
@@ -1745,6 +1766,9 @@ void trigger_subbeats() {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
       arpeggiate(i);
       next_ns[i] = 0;
+      if (i == 4) {
+	estimate_tempo(current_time, /*imaginary=*/true, /*is_low=*/true);
+      }
     }
     if (tambourine_next_ns[i] > 0 && current_time > tambourine_next_ns[i]) {
       arpeggiate_tambourine(i);
