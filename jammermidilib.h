@@ -232,6 +232,7 @@ bool air_locked;
 double locked_air;
 int musical_mode;
 unsigned int whistle_anchor_note;
+uint64_t last_hihat_ns;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
 uint64_t snare_times[SNARE_TIMES_LENGTH];
@@ -283,6 +284,7 @@ void voices_reset() {
   musical_mode = MODE_MAJOR;
   whistle_anchor_note = 60; // this is arbitrary
 
+  last_hihat_ns = 0;
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
     kick_times[i] = 0;
   }
@@ -1323,6 +1325,10 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     is_low = !is_low;
   }
 
+  if (note_in == MIDI_DRUM_PEDAL_1 && !listen_drum_pedal) {
+    last_hihat_ns = now();
+  }
+
   if (mode == MIDI_ON) {
     count_drum_hit(is_low);
   }
@@ -1762,6 +1768,17 @@ void forward_air() {
 
 void trigger_subbeats() {
   uint64_t current_time = now();
+
+  // If we had a manual hihat hit in the last 1s, clear it all and
+  // don't trigger anything.
+  if (current_time - last_hihat_ns < NS_PER_SEC) {
+    for (int i = 0 ; i < N_SUBBEATS ; i++) {
+      next_ns[i] = 0;
+      tambourine_next_ns[i] = 0;
+    }
+    return;
+  }
+
   for (int i = 1 /* 0 is triggered by kick directly */; i < N_SUBBEATS; i++) {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
       arpeggiate(i);
