@@ -1342,7 +1342,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
       if (!is_low && current_drum_pedal_tss_note == MIDI_DRUM_TAMBOURINE) {
         send_midi(mode, drum_note, 100, ENDPOINT_TAMBOURINE_STOPPED);
       } else {
-        send_midi(mode, drum_note, is_low ? 100 : 80, ENDPOINT_DRUM);
+        send_midi(mode, drum_note, 100, ENDPOINT_DRUM);
       }
       current_drum_note = drum_note;
     }
