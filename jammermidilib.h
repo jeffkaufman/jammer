@@ -22,7 +22,7 @@
    rst  odr  rg   bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rrm  tdt  tdk  fcf
-tmb
+
    ...
 
    maj min mix               b3  b24
@@ -151,6 +151,8 @@ tmb
 
 #define N_SUBBEATS 5
 
+#define MAX_SCHEDULED_NOTES 64
+
 /**
  * Drum settings
  *  - regular: left is kick, right are tss, computer interprets left for kick, sound is from drumkit brain
@@ -186,6 +188,18 @@ void attempt(OSStatus result, char* errmsg) {
     die(errmsg);
   }
 }
+
+uint64_t now() {
+  return clock_gettime_nsec_np(CLOCK_MONOTONIC);
+}
+
+struct ScheduledNote {
+  uint64_t ts;
+  char actionType;
+  int noteNo;
+  int velocity;
+  int endpoint;
+};
 
 MIDIClientRef midiclient;
 MIDIEndpointRef endpoints[N_ENDPOINTS];
@@ -245,6 +259,8 @@ float beat_location_3;
 float beat_location_24;
 int state;
 bool jig_time;
+struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
+uint64 current_beat_ns;
 
 void voices_reset() {
   jawharp_on = false;
@@ -307,6 +323,42 @@ void voices_reset() {
 
   state = STATE_DEFAULT;
   jig_time = false;
+
+  for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
+    scheduled_notes[i].ts = 0;
+    // Any ScheduledNote with ts = 0 is considered unset.
+  }
+
+  current_beat_ns = 0;
+}
+
+struct ScheduledNote* allocate_scheduled_note() {
+  for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
+    if (scheduled_notes[i].ts == 0) {
+      printf("chose %d\n", i);
+      return &(scheduled_notes[i]);
+    }
+  }
+  // No notes available, just pick one.
+  printf("out of notes\n");
+  return &(scheduled_notes[0]);
+}
+
+void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int endpoint) {
+  uint64_t current_time = now();
+  struct ScheduledNote* on = allocate_scheduled_note();
+  on->ts = current_time + wait;
+  on->actionType = MIDI_ON;
+  struct ScheduledNote* off = allocate_scheduled_note(); 
+  off->ts = on->ts + length;
+  off->actionType = MIDI_OFF;
+
+  on->noteNo = off->noteNo = noteNo;
+  on->velocity = off->velocity = velocity;
+  on->endpoint = off->endpoint = endpoint;
+
+  printf("scheduled %llu %llu %llu  %d %d %d %d %d\n",
+	 on->ts, off->ts, length,  on->actionType, off->actionType, on->noteNo, on->velocity, on->endpoint);
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -610,6 +662,8 @@ uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
 }
 
 void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
+  current_beat_ns = 0;
+
   // Take a super naive approach: for each candidate tempo, consider
   // how much error that would imply for each recent hit we've seen,
   // and take the tempo with the lowest error.
@@ -684,6 +738,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 	 100 * (float)best_error / (float)max_allowed_error);
   
   if (acceptable_error) {
+    current_beat_ns = whole_beat;
     arpeggiate(0);
 
     next_ns[0] = current_time;
@@ -713,10 +768,6 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
       }
     }
   }
-}
-
-uint64_t now() {
-  return clock_gettime_nsec_np(CLOCK_MONOTONIC);
 }
 
 void count_drum_hit(bool is_low) {
@@ -992,6 +1043,10 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       }
     }
   }
+
+  //if (current_beat_ns != 0 && mode == MIDI_ON) {
+  //  schedule_note(current_beat_ns, current_beat_ns / 2, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
+  //}
 
   if (hammond_on && !is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
@@ -1766,6 +1821,24 @@ void forward_air() {
   }
 }
 
+void trigger_scheduled_notes() {
+  uint64_t current_time = now();
+  for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
+    if (scheduled_notes[i].ts != 0 && scheduled_notes[i].ts < current_time) {
+      printf("trigger %d %d %d %d\n",
+	     scheduled_notes[i].actionType,
+	     scheduled_notes[i].noteNo,
+	     scheduled_notes[i].velocity,
+	     scheduled_notes[i].endpoint);
+      send_midi(scheduled_notes[i].actionType,
+		scheduled_notes[i].noteNo,
+		scheduled_notes[i].velocity,
+		scheduled_notes[i].endpoint);
+      scheduled_notes[i].ts = 0;
+    }
+  }
+}
+
 void trigger_subbeats() {
   uint64_t current_time = now();
 
@@ -1799,6 +1872,7 @@ void jml_tick() {
   update_air();
   forward_air();
   trigger_subbeats();
+  //trigger_scheduled_notes();
 }
 
 #endif
