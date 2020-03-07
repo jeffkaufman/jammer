@@ -22,7 +22,7 @@
    rst  odr  rg   bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rrm  tdt  tdk  fcf
-
+                               brc
    ...
 
    maj min mix               b3  b24
@@ -56,7 +56,9 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_DRUM_PEDAL_KICK      16
 #define TOGGLE_FC_FEET              15
 
-#define CONTROL_MAX TOGGLE_ARPEGGIATOR
+#define TOGGLE_BREATH_CHORD         22
+
+#define CONTROL_MAX TOGGLE_BREATH_CHORD
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -236,6 +238,7 @@ int current_drum_pedal_tss_note;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
+bool breath_chord_notes[MIDI_MAX];
 bool arpeggiator_on;
 int current_arpeggiator_pattern;
 int current_arpeggiator_note;
@@ -261,6 +264,7 @@ int state;
 bool jig_time;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64 current_beat_ns;
+bool breath_chord_on;
 
 void voices_reset() {
   jawharp_on = false;
@@ -284,6 +288,7 @@ void voices_reset() {
   for (int i = 0; i < MIDI_MAX; i++) {
     atmospheric_drone_notes[i] = false;
     piano_notes[i] = false;
+    breath_chord_notes[i] = false;
   }
   arpeggiator_on = false;
   current_arpeggiator_pattern = 0;
@@ -330,6 +335,8 @@ void voices_reset() {
   }
 
   current_beat_ns = 0;
+
+  breath_chord_on = false;
 }
 
 struct ScheduledNote* allocate_scheduled_note() {
@@ -384,6 +391,7 @@ double leakage = 0;  // set by calculate_breath_speeds()
 double breath_gain = 0;  // set by calculate_breath_speeds()
 double max_air = 0; // set by calculate_breath_speeds()
 double air = 0;  // maintained by update_air()
+double fast_air = 0; // maintained by update_air()
 
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
@@ -489,10 +497,24 @@ void atmospheric_drone_off() {
   current_note[ENDPOINT_SINE_PAD] = -1;
 }
 
+void breath_chord_off() {
+  for (int i = 0 ; i < MIDI_MAX; i++) {
+    if (breath_chord_notes[i]) {
+      breath_chord_notes[i] = false;
+      send_midi(MIDI_OFF, i, 0, ENDPOINT_HAMMOND);
+    }
+  }
+}
+
 void atmospheric_drone_note_on(int note) {
   send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SINE_PAD);
   send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SWEEP_PAD);
   atmospheric_drone_notes[note] = true;
+}
+
+void breath_chord_note_on(int note) {
+  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_HAMMOND);
+  breath_chord_notes[note] = true;
 }
 
 void bass_trombone_off() {
@@ -800,6 +822,14 @@ void update_bass() {
     //atmospheric_drone_note_on(note_out + 12 + 12 + (is_minor ? 3 : 4));
     //atmospheric_drone_note_on(note_out + 12 + 12 + 7);
   }
+
+  if (breath_chord_on && current_note[ENDPOINT_HAMMOND] != note_out) {
+    breath_chord_off();
+    current_note[ENDPOINT_HAMMOND] = note_out;
+    breath_chord_note_on(note_out + 60);
+    breath_chord_note_on(note_out + 60 + 7);
+    breath_chord_note_on(note_out + 60 + 12);
+  }    
 
   if (breath < 3) return;
 
@@ -1120,6 +1150,17 @@ void handle_control_helper(unsigned int note_in) {
     } else {
       jawharp_off();
     }
+    return;
+
+  case TOGGLE_BREATH_CHORD:
+    if (breath_chord_on) {
+      breath_chord_on = false;
+      breath_chord_off();
+    } else {
+      breath_chord_on = true;
+      update_bass();
+    }
+    printf("bc %d\n", breath_chord_on);
     return;
 
   case TOGGLE_BASS_TROMBONE:
@@ -1777,11 +1818,18 @@ void update_air() {
   }
   // It's ok that air > MIDI_MAX (because max_air > MIDI_MAX) because
   // everything that uses this will only allow a max of MIDI_MAX.
+
+  fast_air *= (leakage * leakage * leakage);  // fast air fades 3x faster
+  if (breath > fast_air) {
+    fast_air = breath; // fast air grows instantly
+  }
 }
 
 int last_air_val = 0;
+int last_fast_air_val = 0;
 void forward_air() {
   int val = air;
+  int fast_val = fast_air;
 
   organ_flex_base = val;
   int organ_flex_value = organ_flex_val();
@@ -1798,11 +1846,18 @@ void forward_air() {
     val = MIDI_MAX;
   }
 
+  if (breath_chord_on && last_fast_air_val != fast_val) {
+    send_midi(MIDI_CC, CC_07, fast_val, ENDPOINT_HAMMOND);
+    last_fast_air_val = fast_val;
+  }
+
   if (val != last_air_val) {
     if (!arpeggiator_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
+    if (!breath_chord_on) {
+      send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
+    }
     if (!atmospheric_drone) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
@@ -1817,6 +1872,7 @@ void forward_air() {
   }
   if (organ_flex_value != last_organ_flex_val) {
     send_midi(MIDI_CC, CC_11, organ_flex_value, ENDPOINT_ORGAN_FLEX);
+      
     last_organ_flex_val = organ_flex_value;
   }
 }
