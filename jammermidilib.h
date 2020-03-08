@@ -1446,6 +1446,13 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 	val = 80;
       }
       current_drum_vel = val;
+
+      if (breath < 40) {
+	fast_air = 0;
+	if (breath_chord_on) {
+	  send_midi(MIDI_CC, CC_07, 0, ENDPOINT_HAMMOND);
+	}
+      }
     }
   }
 
@@ -1839,8 +1846,8 @@ void update_air() {
   // It's ok that air > MIDI_MAX (because max_air > MIDI_MAX) because
   // everything that uses this will only allow a max of MIDI_MAX.
 
-  fast_air *= (leakage * leakage * leakage);  // fast air fades 3x faster
-  if (breath > fast_air) {
+  fast_air *= leakage;
+  if (breath > fast_air && breath > 40) {
     fast_air = breath; // fast air grows instantly
   }
 }
