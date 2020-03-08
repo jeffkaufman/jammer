@@ -268,6 +268,7 @@ struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64 current_beat_ns;
 bool breath_chord_on;
 bool is_minor_chord;  // only used when listen_drum_pedal=true
+int current_drum_vel;
 
 void voices_reset() {
   jawharp_on = false;
@@ -342,6 +343,8 @@ void voices_reset() {
   breath_chord_on = false;
 
   is_minor_chord = false;
+
+  current_drum_vel = 0;
 }
 
 struct ScheduledNote* allocate_scheduled_note() {
@@ -664,10 +667,12 @@ void arpeggiate(int subbeat) {
   }
 
   if (auto_hihat_vol) {
+    int vel = current_drum_vel * auto_hihat_vol / 100;
+
     if (fc_feet_on) {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, subbeat == 2 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, subbeat == 2 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
     } else {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, auto_hihat_vol, ENDPOINT_DRUM);
+      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM);
     }
     current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
   }
@@ -1436,18 +1441,24 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   if (mode == MIDI_ON) {
     count_drum_hit(is_low);
+    if (is_low) {
+      if (val < 80) {
+	val = 80;
+      }
+      current_drum_vel = val;
+    }
   }
 
   int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
   if (drum_note != 0) {
     printf("sending %d to drum\n", drum_note);
     if (fc_feet_on) {
-      send_midi(mode, drum_note, 100, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
+      send_midi(mode, drum_note, val, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
     } else {
       if (!is_low && current_drum_pedal_tss_note == MIDI_DRUM_TAMBOURINE) {
-        send_midi(mode, drum_note, 100, ENDPOINT_TAMBOURINE_STOPPED);
+        send_midi(mode, drum_note, val, ENDPOINT_TAMBOURINE_STOPPED);
       } else {
-        send_midi(mode, drum_note, 100, ENDPOINT_DRUM);
+        send_midi(mode, drum_note, val, ENDPOINT_DRUM);
       }
       current_drum_note = drum_note;
     }
@@ -1488,7 +1499,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
-  send_midi(MIDI_CC, CC_MOD, val, ENDPOINT_HAMMOND);
+  send_midi(MIDI_CC, CC_MOD, breath_chord_on ? MIDI_MAX : val, ENDPOINT_HAMMOND);
 
   breath = val;
 
