@@ -155,6 +155,8 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define MAX_SCHEDULED_NOTES 64
 
+#define MAX_HAMMOND_NOTE 96  // the hammond can't play higher than this note
+
 /**
  * Drum settings
  *  - regular: left is kick, right are tss, computer interprets left for kick, sound is from drumkit brain
@@ -265,6 +267,7 @@ bool jig_time;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64 current_beat_ns;
 bool breath_chord_on;
+bool is_minor_chord;  // only used when listen_drum_pedal=true
 
 void voices_reset() {
   jawharp_on = false;
@@ -337,6 +340,8 @@ void voices_reset() {
   current_beat_ns = 0;
 
   breath_chord_on = false;
+
+  is_minor_chord = false;
 }
 
 struct ScheduledNote* allocate_scheduled_note() {
@@ -442,9 +447,11 @@ double distance(double noteA, double noteB) {
 int current_drum_pedal_note() {
   int note = root_note;
 
+  is_minor_chord = false;
   if (musical_mode == MODE_MAJOR) {
     if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
       note = root_note - 3;  // vi
+      is_minor_chord = true;
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
       note = root_note + 5;  // IV
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
@@ -452,7 +459,7 @@ int current_drum_pedal_note() {
     }
   } else if (musical_mode == MODE_MIXO) {
     if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 2; // vi or VII
+      note = root_note - 2; // VII
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
       note = root_note + 5;  // IV
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
@@ -465,6 +472,8 @@ int current_drum_pedal_note() {
       note = root_note - 4;  // VI
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
       note = root_note - 5;  // V
+    } else {
+      is_minor_chord = true;  // i
     }
     note += 12;
   }
@@ -813,22 +822,24 @@ void update_bass() {
     atmospheric_drone_off();
     current_note[ENDPOINT_SINE_PAD] = note_out;
 
-    //bool is_minor = (note_out == key + 2 ||  // ii
-    //  note_out == key - 3);  // iv
     atmospheric_drone_note_on(note_out);
     atmospheric_drone_note_on(note_out + 12);
     atmospheric_drone_note_on(note_out + 12 + 7);
-    //atmospheric_drone_note_on(note_out + 12 + 12);
-    //atmospheric_drone_note_on(note_out + 12 + 12 + (is_minor ? 3 : 4));
-    //atmospheric_drone_note_on(note_out + 12 + 12 + 7);
   }
 
   if (breath_chord_on && current_note[ENDPOINT_HAMMOND] != note_out) {
     breath_chord_off();
     current_note[ENDPOINT_HAMMOND] = note_out;
-    breath_chord_note_on(note_out + 60);
-    breath_chord_note_on(note_out + 60 + 7);
-    breath_chord_note_on(note_out + 60 + 12);
+    // voice each chord with the two highest options
+    int tonic = note_out;
+    while (tonic + 12 <= MAX_HAMMOND_NOTE) tonic += 12;
+    breath_chord_note_on(tonic);
+
+    if (listen_drum_pedal) {
+      int third = note_out + (is_minor_chord ? 3 : 4);
+      while (third + 12 <= MAX_HAMMOND_NOTE) third += 12;
+      breath_chord_note_on(third);
+    }
   }    
 
   if (breath < 3) return;
@@ -1397,9 +1408,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }			    
 
-  if (atmospheric_drone || arpeggiator_on) {
-    update_bass();
-  }
+  update_bass();
 
   bool is_low;
   if (note_in == MIDI_DRUM_KICK_A ||
