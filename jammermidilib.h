@@ -570,22 +570,27 @@ void arpeggiate(int subbeat) {
   
     if (current_arpeggiator_pattern == 0) {
       if (subbeat == 0) {
-      } else {
-	send_note = false;
-	end_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 1) {
-      if (subbeat == 0) {
       } else if (subbeat == 2) {
 	note_out += 12;
       } else {
 	send_note = false;
 	end_note = false;
       }
-    } else if (current_arpeggiator_pattern == 2) {
+    } else if (current_arpeggiator_pattern == 1) {
       if (subbeat == 0 || subbeat == 1) {
       } else if (subbeat == 2 || subbeat == 3) {
 	note_out += 12;
+      } else {
+	send_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 2) {
+      if (subbeat == 0) {
+      } else if (subbeat == 1) {
+	note_out += 7;
+      } else if (subbeat == 2) {
+	note_out += 12;
+      } else if (subbeat == 3) {
+	note_out += 12 + 7;
       } else {
 	send_note = false;
       }
