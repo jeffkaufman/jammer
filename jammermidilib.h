@@ -267,6 +267,7 @@ bool jig_time;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64 current_beat_ns;
 bool breath_chord_on;
+bool breath_chord_playing;
 bool is_minor_chord;  // only used when listen_drum_pedal=true
 int current_drum_vel;
 
@@ -341,6 +342,7 @@ void voices_reset() {
   current_beat_ns = 0;
 
   breath_chord_on = false;
+  breath_chord_playing = false;
 
   is_minor_chord = false;
 
@@ -399,7 +401,6 @@ double leakage = 0;  // set by calculate_breath_speeds()
 double breath_gain = 0;  // set by calculate_breath_speeds()
 double max_air = 0; // set by calculate_breath_speeds()
 double air = 0;  // maintained by update_air()
-double fast_air = 0; // maintained by update_air()
 
 #define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
@@ -820,6 +821,25 @@ void count_drum_hit(bool is_low) {
   }
 }
 
+void trigger_breath_chord(int note_out) {
+  breath_chord_off();
+  current_note[ENDPOINT_HAMMOND] = note_out;
+  // voice each chord with the two highest options
+  int tonic = note_out;
+  while (tonic + 12 <= MAX_HAMMOND_NOTE) tonic += 12;
+  breath_chord_note_on(tonic);
+
+  int fifth = note_out + 7;
+  while (fifth + 12 <= MAX_HAMMOND_NOTE) fifth += 12;
+  breath_chord_note_on(fifth);
+  
+  if (listen_drum_pedal) {
+    int third = note_out + (is_minor_chord ? 3 : 4);
+    while (third + 12 <= MAX_HAMMOND_NOTE) third += 12;
+    breath_chord_note_on(third);
+  }
+}
+
 void update_bass() {
   int note_out = active_note();
 
@@ -832,19 +852,8 @@ void update_bass() {
     atmospheric_drone_note_on(note_out + 12 + 7);
   }
 
-  if (breath_chord_on && current_note[ENDPOINT_HAMMOND] != note_out) {
-    breath_chord_off();
-    current_note[ENDPOINT_HAMMOND] = note_out;
-    // voice each chord with the two highest options
-    int tonic = note_out;
-    while (tonic + 12 <= MAX_HAMMOND_NOTE) tonic += 12;
-    breath_chord_note_on(tonic);
-
-    if (listen_drum_pedal) {
-      int third = note_out + (is_minor_chord ? 3 : 4);
-      while (third + 12 <= MAX_HAMMOND_NOTE) third += 12;
-      breath_chord_note_on(third);
-    }
+  if (breath_chord_playing && current_note[ENDPOINT_HAMMOND] != note_out) {
+    trigger_breath_chord(note_out);
   }    
 
   if (breath < 3) return;
@@ -1446,13 +1455,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 	val = 80;
       }
       current_drum_vel = val;
-
-      if (breath < 40) {
-	fast_air = 0;
-	if (breath_chord_on) {
-	  send_midi(MIDI_CC, CC_07, 0, ENDPOINT_HAMMOND);
-	}
-      }
     }
   }
 
@@ -1506,9 +1508,21 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
+  breath = val;
+
+
   send_midi(MIDI_CC, CC_MOD, breath_chord_on ? MIDI_MAX : val, ENDPOINT_HAMMOND);
 
-  breath = val;
+  if (breath_chord_on) {
+    if (!breath_chord_playing && breath > 80) {
+      breath_chord_playing = true;
+      update_bass();
+    } else if (breath_chord_playing && breath < 70) {
+      breath_chord_playing = false;
+      breath_chord_off();
+      current_note[ENDPOINT_HAMMOND] = -1;
+    }
+  }
 
   if (!piano_on && button_endpoint == ENDPOINT_OVERDRIVEN_RHODES) {
     send_midi(MIDI_CC, CC_07, MIDI_MAX, ENDPOINT_RHODES);
@@ -1845,18 +1859,11 @@ void update_air() {
   }
   // It's ok that air > MIDI_MAX (because max_air > MIDI_MAX) because
   // everything that uses this will only allow a max of MIDI_MAX.
-
-  fast_air *= leakage;
-  if (breath > fast_air && breath > 40) {
-    fast_air = breath; // fast air grows instantly
-  }
 }
 
 int last_air_val = 0;
-int last_fast_air_val = 0;
 void forward_air() {
   int val = air;
-  int fast_val = fast_air;
 
   organ_flex_base = val;
   int organ_flex_value = organ_flex_val();
@@ -1873,18 +1880,11 @@ void forward_air() {
     val = MIDI_MAX;
   }
 
-  if (breath_chord_on && last_fast_air_val != fast_val) {
-    send_midi(MIDI_CC, CC_07, fast_val, ENDPOINT_HAMMOND);
-    last_fast_air_val = fast_val;
-  }
-
   if (val != last_air_val) {
     if (!arpeggiator_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
-    if (!breath_chord_on) {
-      send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
-    }
+    send_midi(MIDI_CC, CC_07, breath_chord_on ? 100 : val, ENDPOINT_HAMMOND);
     if (!atmospheric_drone) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
