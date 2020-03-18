@@ -67,7 +67,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define BUTTON_MIXO 97
 #define BUTTON_MINOR 96
 
-#define N_ARPEGGIATOR_PATTERNS 5
+#define N_ARPEGGIATOR_PATTERNS 9
 #define N_RHYTHM_MODES 2
 #define N_AUTO_HIHAT_MODES 9
 
@@ -586,6 +586,25 @@ void arpeggiate(int subbeat) {
     } else if (current_arpeggiator_pattern == 2) {
       if (subbeat == 0) {
       } else if (subbeat == 1) {
+	send_note = false;
+	end_note = false;
+      } else if (subbeat == 2 || subbeat == 3) {
+	note_out += 12;
+      } else {
+	send_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 4) {
+      if (subbeat == 0) {
+	send_note = false;
+      } else if (subbeat == 2) {
+      } else {
+	send_note = false;
+	end_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 5) {
+    } else if (current_arpeggiator_pattern == 6) {
+      if (subbeat == 0) {
+      } else if (subbeat == 1) {
 	note_out += 7;
       } else if (subbeat == 2) {
 	note_out += 12;
@@ -594,7 +613,7 @@ void arpeggiate(int subbeat) {
       } else {
 	send_note = false;
       }
-    } else if (current_arpeggiator_pattern == 3) {
+    } else if (current_arpeggiator_pattern == 7) {
       if (subbeat == 0) {
       } else if (subbeat == 1) {
 	note_out += 12;
@@ -605,7 +624,7 @@ void arpeggiate(int subbeat) {
       } else {
 	send_note = false;
       }
-    } else if (current_arpeggiator_pattern == 4) {
+    } else if (current_arpeggiator_pattern == 8) {
       if (subbeat == 0) {
       } else if (subbeat == 1) {
 	note_out += 12;
@@ -1522,7 +1541,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (!breath_chord_playing && breath > 80) {
       breath_chord_playing = true;
       update_bass();
-    } else if (breath_chord_playing && breath < 70) {
+    } else if (breath_chord_playing && breath <= 80) {
       breath_chord_playing = false;
       breath_chord_off();
       current_note[ENDPOINT_HAMMOND] = -1;
