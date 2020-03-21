@@ -56,12 +56,13 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_DRUM_PEDAL_KICK      16
 #define TOGGLE_FC_FEET              15
 
+#define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
 #define TOGGLE_PULSATOR             24
 #define ROTATE_PULSATOR             23
 #define TOGGLE_BREATH_CHORD         22
 
-#define CONTROL_MAX TOGGLE_ARPEGGIATOR_BREATH
+#define CONTROL_MAX TOGGLE_DRUM_BREATH
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -247,6 +248,7 @@ bool piano_notes[MIDI_MAX];
 bool breath_chord_notes[MIDI_MAX];
 bool arpeggiator_on;
 bool arpeggiator_breath_on;
+bool drum_breath_on;
 int current_arpeggiator_pattern;
 int current_arpeggiator_note;
 int current_drum_note;
@@ -305,6 +307,7 @@ void voices_reset() {
   }
   arpeggiator_on = false;
   arpeggiator_breath_on = false;
+  drum_breath_on = false;
   current_arpeggiator_pattern = 0;
   current_arpeggiator_note = -1;
   current_drum_note = -1;
@@ -723,15 +726,32 @@ void arpeggiate(int subbeat) {
     auto_hihat_vol = auto_hihat_4_vol;
   }
 
+  int drum_note = MIDI_DRUM_HIHAT_CLOSED;
+  if (drum_breath_on) {
+    if (breath > 120) {
+      auto_hihat_vol = MIDI_MAX;
+    } else if (breath > 100) {
+      auto_hihat_vol = 100;
+    } else if (breath > 60) {
+      if (subbeat % 2 == 0) {
+	auto_hihat_vol = 100;
+      }
+    }
+  }
+
+  if (fc_feet_on && subbeat % 2 == 1 && subbeat != 7) {
+    auto_hihat_vol = 0;
+  }
+
   if (auto_hihat_vol) {
     int vel = current_drum_vel * auto_hihat_vol / 100;
 
     if (fc_feet_on) {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, subbeat == 4 ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+      send_midi(MIDI_ON, drum_note, vel, (subbeat == 4 || subbeat % 2 == 1) ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
     } else {
-      send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM);
+      send_midi(MIDI_ON, drum_note, vel, ENDPOINT_DRUM);
     }
-    current_drum_note = MIDI_DRUM_HIHAT_CLOSED;
+    current_drum_note = drum_note;
   }
 }
 
@@ -1393,6 +1413,10 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_ARPEGGIATOR_BREATH:
     arpeggiator_breath_on = !arpeggiator_breath_on;
+    return;
+
+  case TOGGLE_DRUM_BREATH:
+    drum_breath_on = !drum_breath_on;
     return;
 
   case ROTATE_ARPEGGIATOR_PATTERN:
