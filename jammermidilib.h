@@ -22,7 +22,7 @@
    rst  odr  rg   bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rrm  tdt  tdk  fcf
-                     pls  rpl  brc
+               api  pls  rpl  brc
    ...
 
    maj min mix               b3  b24
@@ -56,11 +56,12 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_DRUM_PEDAL_KICK      16
 #define TOGGLE_FC_FEET              15
 
+#define TOGGLE_ARPEGGIATOR_BREATH   25
 #define TOGGLE_PULSATOR             24
 #define ROTATE_PULSATOR             23
 #define TOGGLE_BREATH_CHORD         22
 
-#define CONTROL_MAX TOGGLE_PULSATOR
+#define CONTROL_MAX TOGGLE_ARPEGGIATOR_BREATH
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -245,6 +246,7 @@ bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
 bool breath_chord_notes[MIDI_MAX];
 bool arpeggiator_on;
+bool arpeggiator_breath_on;
 int current_arpeggiator_pattern;
 int current_arpeggiator_note;
 int current_drum_note;
@@ -302,6 +304,7 @@ void voices_reset() {
     breath_chord_notes[i] = false;
   }
   arpeggiator_on = false;
+  arpeggiator_breath_on = false;
   current_arpeggiator_pattern = 0;
   current_arpeggiator_note = -1;
   current_drum_note = -1;
@@ -573,6 +576,7 @@ void arpeggiate(int subbeat) {
   }
 
   int note_out = active_note();
+  int selected_note = note_out;
 
   if (pulsator_on) {
     send_midi(MIDI_OFF, current_pulsator_note, 0, ENDPOINT_PULSATOR);
@@ -586,7 +590,7 @@ void arpeggiate(int subbeat) {
     if (current_arpeggiator_pattern == 0) {
       if (subbeat == 0) {
       } else if (subbeat == 4) {
-	note_out += 12;
+	selected_note = note_out + 12;
       } else if (subbeat == 2 || subbeat == 6) {
 	send_note = false;
 	end_note = false;
@@ -594,7 +598,7 @@ void arpeggiate(int subbeat) {
     } else if (current_arpeggiator_pattern == 1) {
       if (subbeat == 0 || subbeat == 2) {
       } else if (subbeat == 4 || subbeat == 6) {
-	note_out += 12;
+	selected_note = note_out + 12;
       }
     } else if (current_arpeggiator_pattern == 2) {
       if (subbeat == 0) {
@@ -602,7 +606,7 @@ void arpeggiate(int subbeat) {
 	send_note = false;
 	end_note = false;
       } else if (subbeat == 4 || subbeat == 6) {
-	note_out += 12;
+	selected_note = note_out + 12;
       }
     } else if (current_arpeggiator_pattern == 3) {
       if (subbeat == 0) {
@@ -613,35 +617,55 @@ void arpeggiate(int subbeat) {
 	send_note = false;
 	end_note = false;
       } else if (subbeat == 4 || subbeat == 6) {
-	note_out += 12;
+	selected_note = note_out + 12;
       }
     } else if (current_arpeggiator_pattern == 5) {
     } else if (current_arpeggiator_pattern == 6) {
       if (subbeat == 0) {
       } else if (subbeat == 2) {
-	note_out += 7;
+	selected_note = note_out + 7;
       } else if (subbeat == 4) {
-	note_out += 12;
+	selected_note = note_out + 12;
       } else if (subbeat == 6) {
-	note_out += 12 + 7;
+	selected_note = note_out + 12 + 7;
       }
     } else if (current_arpeggiator_pattern == 7) {
       if (subbeat == 0) {
       } else if (subbeat == 2) {
-	note_out += 12;
+	selected_note = note_out + 12;
       } else if (subbeat == 4) {
-	note_out += 12 + 7;
+	selected_note = note_out + 12 + 7;
       } else if (subbeat == 6) {
-	note_out += 12 + 12;
+	selected_note = note_out + 12 + 12;
       }
     } else if (current_arpeggiator_pattern == 8) {
       if (subbeat == 0) {
       } else if (subbeat == 2) {
-	note_out += 12;
+	selected_note = note_out + 12;
       } else if (subbeat == 4) {
-	note_out += 12 + 12;
+	selected_note = note_out + 12 + 12;
       } else if (subbeat == 6) {
-	note_out += 12 + 12 + 12;
+	selected_note = note_out + 12 + 12 + 12;
+      }
+    }
+
+    if (arpeggiator_breath_on) {
+      // Get more and more intense the more blowing happens.
+
+      if (breath > 120) {
+	send_note = true;
+	end_note = true;
+	selected_note = note_out + 24;
+      } else if (breath > 100) {
+	send_note = true;
+	end_note = true;
+	selected_note = note_out + 12;
+      } else if (breath > 80) {
+	if (subbeat % 2 == 0) {
+	  send_note = true;
+	  end_note = true;
+	  selected_note = note_out + 12;
+	}
       }
     }
 
@@ -651,9 +675,9 @@ void arpeggiate(int subbeat) {
     }
 
     if (send_note) {
-      if (note_out != -1) {
-	send_midi(MIDI_ON, note_out, 90, ENDPOINT_FOOTBASS);
-	current_arpeggiator_note = note_out;
+      if (selected_note != -1) {
+	send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
+	current_arpeggiator_note = selected_note;
       }
     }
   }
@@ -1365,6 +1389,10 @@ void handle_control_helper(unsigned int note_in) {
     if (arpeggiator_on) {
       send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
     }
+    return;
+
+  case TOGGLE_ARPEGGIATOR_BREATH:
+    arpeggiator_breath_on = !arpeggiator_breath_on;
     return;
 
   case ROTATE_ARPEGGIATOR_PATTERN:
