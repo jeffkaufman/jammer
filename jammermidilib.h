@@ -71,7 +71,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define BUTTON_MIXO 97
 #define BUTTON_MINOR 96
 
-#define N_ARPEGGIATOR_PATTERNS 9
+#define N_ARPEGGIATOR_PATTERNS 8
 #define N_RHYTHM_MODES 2
 #define N_AUTO_HIHAT_MODES 9
 
@@ -156,7 +156,7 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define NS_PER_SEC 1000000000L
 
-#define N_SUBBEATS 9
+#define N_SUBBEATS 37  // 36 divisions of the beat, and then one extra
 
 #define MAX_SCHEDULED_NOTES 64
 
@@ -266,9 +266,8 @@ int snare_times_index;
 uint64_t next_ns[N_SUBBEATS];
 uint64_t tambourine_next_ns[N_SUBBEATS];
 bool fc_feet_on;
+bool last_fc_foot;
 int rhythm_mode;
-float beat_location_3;
-float beat_location_24;
 int state;
 bool jig_time;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
@@ -339,9 +338,8 @@ void voices_reset() {
   }
 
   fc_feet_on = false;
+  last_fc_foot = false;
   rhythm_mode = 0;
-  beat_location_3 = 0;
-  beat_location_24 = 0;
 
   state = STATE_DEFAULT;
   jig_time = false;
@@ -560,24 +558,68 @@ void vbass_trombone_off() {
   }
 }
 
+/* Sometimes we want even divisions, and that's simple, but other
+ * times we want it swung.  Here are some measurements from
+ * playing around on mandolin:
+ *
+ *  0    0.000   0.000   0.000     00.0%   00.0%   00.0%      00.0%
+ *  2    0.154   0.139   0.168     26.9%   26.0%   30.6%      27.8%
+ *  4    0.275   0.253   0.264     47.9%   47.3%   48.1%      47.8%
+ *  6    0.444   0.421   0.420     77.4%   78.7%   76.5%      77.5%
+ *  8    0.574   0.535   0.549    100.0%  100.0%  100.0%     100.0%
+ *
+ * Here are some measurements of pushing the beat while playing strict
+ * upbeats:
+ *
+ * 47.2 49.2 48.0 49.8 -> 48.6
+ *
+ * These are just 3s; I wasn't playing 2 or 4.
+ *
+ * These are 1/36 of a whole beat.  So when playing reel time we have:
+ *  - downbeat: as normal
+ *  - preup:   1/36 late,  so  9 instead of  8
+ *  - upbeat:  1/36 early, so 16 instead of 17
+ *  - predown: 1/36 late,  so 27 instead of 26
+ * 
+ */
+bool downbeat(subbeat) {
+  return subbeat % 36 == 0;
+}
+bool preup(subbeat) {
+  if (rhythm_mode == 1) {
+    subbeat -= 1;  // Hold the beat slightly.
+  }
+  return subbeat == (jig_time ? 11 : 8);
+}
+bool upbeat(subbeat) {
+  if (rhythm_mode == 1) {
+    subbeat += 1;  // Push the beat slightly.
+  }
+
+  return subbeat == (jig_time ? 23 : 17);
+}
+bool predown(subbeat) {
+  if (jig_time) return false;  // This beat doesn't happen in jig time.
+
+  if (rhythm_mode == 1) {
+    subbeat -= 1;  // Hold the beat slightly.
+  }
+  return subbeat == 26;
+}
+
 void arpeggiate_tambourine(int subbeat) {
-  bool downbeat = subbeat == 4;
-  bool upbeat = (jig_time && subbeat == 1) || subbeat == 2;
-  bool emphasize = jig_time && subbeat == 2;
-    
-  if ((auto_hihat_mode == 1 && downbeat) ||
-      (auto_hihat_mode == 2 && (downbeat || upbeat)) ||
-      (auto_hihat_mode == 6 && (downbeat || upbeat))) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, emphasize ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
+  if (subbeat == 0) {
+    return;
+  }
+
+  if ((auto_hihat_mode == 1 && upbeat(subbeat)) ||
+      (auto_hihat_mode == 2 && (downbeat(subbeat) || upbeat(subbeat))) ||
+      (auto_hihat_mode == 6 && (downbeat(subbeat) || upbeat(subbeat)))) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, upbeat(subbeat) ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
   }     
 }  
 
 void arpeggiate(int subbeat) {
-  if (current_drum_note != -1) {
-    send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_DRUM);
-    current_drum_note = -1;
-  }
-
   int note_out = active_note();
   int selected_note = note_out;
 
@@ -587,88 +629,84 @@ void arpeggiate(int subbeat) {
     send_midi(MIDI_ON, current_pulsator_note, 100, ENDPOINT_PULSATOR);
   }
 
-  bool send_note = subbeat % 2 == 0;
-  bool end_note = subbeat % 2 == 0;
+  bool send_note = downbeat(subbeat) || upbeat(subbeat);
+  bool end_note = send_note;
   if (arpeggiator_on) {
-    if (current_arpeggiator_pattern == 0) {
-      if (subbeat == 0) {
-      } else if (subbeat == 4) {
-	selected_note = note_out + 12;
-      } else if (subbeat == 2 || subbeat == 6) {
-	send_note = false;
-	end_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 1) {
-      if (subbeat == 0 || subbeat == 2) {
-      } else if (subbeat == 4 || subbeat == 6) {
+    if (current_arpeggiator_pattern == 1) {
+      if (upbeat(subbeat)) {
 	selected_note = note_out + 12;
       }
     } else if (current_arpeggiator_pattern == 2) {
-      if (subbeat == 0) {
-      } else if (subbeat == 2) {
-	send_note = false;
-	end_note = false;
-      } else if (subbeat == 4 || subbeat == 6) {
+      if (upbeat(subbeat) || predown(subbeat)) {
 	selected_note = note_out + 12;
+	end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 3) {
-      if (subbeat == 0) {
+      if (downbeat(subbeat)) {
 	send_note = false;
       }
     } else if (current_arpeggiator_pattern == 4) {
-      if (subbeat == 2) {
-	send_note = false;
-	end_note = false;
-      } else if (subbeat == 4 || subbeat == 6) {
+      if (upbeat(subbeat) || predown(subbeat)) {
 	selected_note = note_out + 12;
+	end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 5) {
-    } else if (current_arpeggiator_pattern == 6) {
-      if (subbeat == 0) {
-      } else if (subbeat == 2) {
+      if (downbeat(subbeat)) {
+      } else if (preup(subbeat)) {
 	selected_note = note_out + 7;
-      } else if (subbeat == 4) {
+	end_note = send_note = true;
+      } else if (upbeat(subbeat)) {
 	selected_note = note_out + 12;
-      } else if (subbeat == 6) {
+      } else if (predown(subbeat)) {
 	selected_note = note_out + 12 + 7;
+	end_note = send_note = true;
+      }
+    } else if (current_arpeggiator_pattern == 6) {
+      if (downbeat(subbeat)) {
+      } else if (preup(subbeat)) {
+	selected_note = note_out + 12;
+	end_note = send_note = true;
+      } else if (upbeat(subbeat)) {
+	selected_note = note_out + 12 + 7;
+      } else if (predown(subbeat)) {
+	selected_note = note_out + 12 + 12;
+	end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 7) {
-      if (subbeat == 0) {
-      } else if (subbeat == 2) {
+      if (downbeat(subbeat)) {
+      } else if (preup(subbeat)) {
 	selected_note = note_out + 12;
-      } else if (subbeat == 4) {
-	selected_note = note_out + 12 + 7;
-      } else if (subbeat == 6) {
+	end_note = send_note = true;
+      } else if (upbeat(subbeat)) {
 	selected_note = note_out + 12 + 12;
-      }
-    } else if (current_arpeggiator_pattern == 8) {
-      if (subbeat == 0) {
-      } else if (subbeat == 2) {
-	selected_note = note_out + 12;
-      } else if (subbeat == 4) {
-	selected_note = note_out + 12 + 12;
-      } else if (subbeat == 6) {
+      } else if (predown(subbeat)) {
 	selected_note = note_out + 12 + 12 + 12;
+	end_note = send_note = true;
       }
     }
 
     if (arpeggiator_breath_on) {
       // Get more and more intense the more blowing happens.
 
-      if (breath > 120) {
-	send_note = true;
-	end_note = true;
-	selected_note = note_out + 24;
-      } else if (breath > 100) {
+      if (breath > 80 && (downbeat(subbeat) || upbeat(subbeat))) {
 	send_note = true;
 	end_note = true;
 	selected_note = note_out + 12;
-      } else if (breath > 80) {
-	if (subbeat % 2 == 0) {
-	  send_note = true;
-	  end_note = true;
-	  selected_note = note_out + 12;
-	}
+      }
+
+      if (breath > 100 && (preup(subbeat) || predown(subbeat))) {
+	send_note = true;
+	end_note = true;
+	selected_note = note_out + 12;
+      }
+      
+      if (breath > 120) {
+	// triplets!
+	end_note = send_note = subbeat % 6 == 0;
+      }
+
+      if (breath == MIDI_MAX) {
+	selected_note += 12;
       }
     }
 
@@ -718,36 +756,41 @@ void arpeggiate(int subbeat) {
   int auto_hihat_vol = 0;
   if (subbeat == 8) {
     auto_hihat_vol = auto_hihat_1_vol;
-  } else if (subbeat == 2) {
+  } else if (preup(subbeat)) {
     auto_hihat_vol = auto_hihat_2_vol;
-  } else if (subbeat == 4) {
+  } else if (upbeat(subbeat)) {
     auto_hihat_vol = auto_hihat_3_vol;
-  } else if (subbeat == 6) {
+  } else if (predown(subbeat)) {
     auto_hihat_vol = auto_hihat_4_vol;
   }
 
   int drum_note = MIDI_DRUM_HIHAT_CLOSED;
   if (drum_breath_on) {
-    if (breath > 120) {
-      auto_hihat_vol = MIDI_MAX;
-    } else if (breath > 100) {
+    if (breath > 60 && 
+	((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
       auto_hihat_vol = 100;
-    } else if (breath > 60) {
-      if (subbeat % 2 == 0) {
-	auto_hihat_vol = 100;
+    }
+    if (breath > 120) {
+      // triplets!
+      auto_hihat_vol = (subbeat % 6 == 0) ? 100 : 0;
+    }
+    if (breath == MIDI_MAX) {
+      if (auto_hihat_vol > 0) {
+	auto_hihat_vol = MIDI_MAX;
       }
     }
-  }
-
-  if (fc_feet_on && subbeat % 2 == 1 && subbeat != 7) {
-    auto_hihat_vol = 0;
   }
 
   if (auto_hihat_vol) {
     int vel = current_drum_vel * auto_hihat_vol / 100;
 
+    if (current_drum_note != -1) {
+      send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_DRUM);
+      current_drum_note = -1;
+    }
     if (fc_feet_on) {
-      send_midi(MIDI_ON, drum_note, vel, (subbeat == 4 || subbeat % 2 == 1) ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+      send_midi(MIDI_ON, drum_note, vel, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+      last_fc_foot = !last_fc_foot;
     } else {
       send_midi(MIDI_ON, drum_note, vel, ENDPOINT_DRUM);
     }
@@ -855,33 +898,12 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
     arpeggiate(0);
 
     next_ns[0] = current_time;
-    next_ns[8] = current_time + whole_beat;
-
-    if (jig_time) {
-      uint64_t sixth_beat = whole_beat / 6;
-      next_ns[1] = current_time + sixth_beat;
-      next_ns[2] = current_time + 2*sixth_beat;
-      next_ns[3] = current_time + 3*sixth_beat;
-      next_ns[4] = current_time + 4*sixth_beat;
-      next_ns[5] = current_time + 5*sixth_beat;
-      next_ns[6] = 0;
-
-      next_ns[2] += (int64_t)(beat_location_24 * 2 * sixth_beat);
-      next_ns[4] += (int64_t)(beat_location_3 * 2 * sixth_beat);
-    } else {
-      uint64_t eighth_beat = whole_beat / 8;
-      for (int i = 1; i < N_SUBBEATS; i++) {
-	next_ns[i] = next_ns[i-1] + eighth_beat;
-      }
-      next_ns[2] += (int64_t)(beat_location_24 * 2 * eighth_beat);
-      next_ns[4] += (int64_t)(beat_location_3 * 2 * eighth_beat);
-      next_ns[6] += (int64_t)(beat_location_24 * 2 * eighth_beat);
+    for (int i = 1; i < N_SUBBEATS; i++) {
+      next_ns[i] = next_ns[i-1] + (whole_beat)/36;
     }
 
     for (int i = 0 ; i < N_SUBBEATS; i++) {
-      if (next_ns[i] > 0) {
-	tambourine_next_ns[i] = next_ns[i] - (uint64_t)(0.094 * NS_PER_SEC);
-      }
+      tambourine_next_ns[i] = next_ns[i] - (uint64_t)(0.094 * NS_PER_SEC);
     }
   }
 }
@@ -1356,34 +1378,6 @@ void handle_control_helper(unsigned int note_in) {
 
   case ROTATE_RHYTHM_MODE:
     rhythm_mode = (rhythm_mode + 1) % N_RHYTHM_MODES;
-    if (rhythm_mode == 0) {
-      beat_location_3 = 0;
-      beat_location_24 = 0;
-    } else if (rhythm_mode == 1) {
-      /* Sometimes we want even divisions, and that's simple, but other
-       * times we want it swung.  Here are some measurements from
-       * playing around on mandolin:
-       *
-       *  0    0.000   0.000   0.000     00.0%   00.0%   00.0%      00.0%
-       *  2    0.154   0.139   0.168     26.9%   26.0%   30.6%      27.8%
-       *  4    0.275   0.253   0.264     47.9%   47.3%   48.1%      47.8%
-       *  6    0.444   0.421   0.420     77.4%   78.7%   76.5%      77.5%
-       *  8    0.574   0.535   0.549    100.0%  100.0%  100.0%     100.0%
-       *
-       * Here are some measurements of pushing the beat while playing strict
-       * upbeats:
-       *
-       * 47.2 49.2 48.0 49.8 -> 48.6
-       *
-       * These are just 3s; I wasn't playing 2 or 4.
-       *
-       * It looks like being up to 12% ahead/behind is a good range.
-       *
-       * Let's set an easy way to go to the measured mandolin setup.
-       */
-      beat_location_3 = -0.09;
-      beat_location_24 = 0.10;
-    }
     return;
 
   case TOGGLE_LISTEN_DRUM_PEDAL:
@@ -1728,12 +1722,7 @@ void handle_axis_49(int mode, int note_in, int val) {
       adjustment = -(note_in - 77) * 0.015;
     }
     
-    if (state == STATE_ADJUST_3) {
-      beat_location_3 = adjustment;
-    } else if (state == STATE_ADJUST_24) {
-      beat_location_24 = adjustment;
-    }
-    state = STATE_DEFAULT;
+    // TODO: rip this out
   }
   if (listen_drum_pedal &&
       (note_in == BUTTON_MAJOR ||
@@ -2029,7 +2018,7 @@ void trigger_subbeats() {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
       arpeggiate(i);
       next_ns[i] = 0;
-      if (i == 8) {
+      if (i == N_SUBBEATS - 1) {
 	estimate_tempo(current_time, /*imaginary=*/true, /*is_low=*/true);
       }
     }
