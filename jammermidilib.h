@@ -1974,7 +1974,7 @@ void forward_air() {
     if (!arpeggiator_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
-    send_midi(MIDI_CC, CC_07, breath_chord_on ? 100 : val, ENDPOINT_HAMMOND);
+    send_midi(MIDI_CC, CC_07, breath_chord_on ? MIDI_MAX : val, ENDPOINT_HAMMOND);
     if (!atmospheric_drone) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
