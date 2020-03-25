@@ -56,13 +56,14 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_DRUM_PEDAL_KICK      16
 #define TOGGLE_FC_FEET              15
 
+#define TOGGLE_KICK_BREATH          27
 #define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
 #define TOGGLE_PULSATOR             24
 #define ROTATE_PULSATOR             23
 #define TOGGLE_BREATH_CHORD         22
 
-#define CONTROL_MAX TOGGLE_DRUM_BREATH
+#define CONTROL_MAX TOGGLE_KICK_BREATH
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -157,7 +158,7 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define NS_PER_SEC 1000000000L
 
-#define N_SUBBEATS 37  // 36 divisions of the beat, and then one extra
+#define N_SUBBEATS 73  // 72 divisions of the beat, and then one extra
 
 #define MAX_SCHEDULED_NOTES 64
 
@@ -250,6 +251,7 @@ bool breath_chord_notes[MIDI_MAX];
 bool arpeggiator_on;
 bool arpeggiator_breath_on;
 bool drum_breath_on;
+bool kick_breath_on;
 int current_arpeggiator_pattern;
 int current_arpeggiator_note;
 int current_drum_note;
@@ -308,6 +310,7 @@ void voices_reset() {
   arpeggiator_on = false;
   arpeggiator_breath_on = false;
   drum_breath_on = false;
+  kick_breath_on = false;
   current_arpeggiator_pattern = 0;
   current_arpeggiator_note = -1;
   current_drum_note = -1;
@@ -584,28 +587,28 @@ void vbass_trombone_off() {
  * 
  */
 bool downbeat(subbeat) {
-  return subbeat % 36 == 0;
+  return subbeat % 72 == 0;
 }
 bool preup(subbeat) {
   if (rhythm_mode == 1) {
-    subbeat -= 1;  // Hold the beat slightly.
+    subbeat -= 2;  // Hold the beat slightly.
   }
-  return subbeat == (jig_time ? 11 : 8);
+  return subbeat == (jig_time ? (72/3-1) : (72/4-1));
 }
 bool upbeat(subbeat) {
   if (rhythm_mode == 1) {
-    subbeat += 1;  // Push the beat slightly.
+    subbeat += 2;  // Push the beat slightly.
   }
 
-  return subbeat == (jig_time ? 23 : 17);
+  return subbeat == (jig_time ? (2*72/3-1) : (72/2-1));
 }
 bool predown(subbeat) {
   if (jig_time) return false;  // This beat doesn't happen in jig time.
 
   if (rhythm_mode == 1) {
-    subbeat -= 1;  // Hold the beat slightly.
+    subbeat -= 2;  // Hold the beat slightly.
   }
-  return subbeat == 26;
+  return subbeat == (3*72/4-1);
 }
 
 void arpeggiate_tambourine(int subbeat) {
@@ -703,7 +706,7 @@ void arpeggiate(int subbeat) {
       
       if (breath > 120) {
 	// triplets!
-	end_note = send_note = subbeat % 6 == 0;
+	end_note = send_note = subbeat % 12 == 0;
       }
 
       if (breath == MIDI_MAX) {
@@ -783,13 +786,22 @@ void arpeggiate(int subbeat) {
     }
     if (breath > 120) {
       // triplets!
-      auto_hihat_vol = (subbeat % 6 == 0) ? 100 : 0;
+      auto_hihat_vol = (subbeat % 12 == 0) ? 100 : 0;
     }
     if (breath == MIDI_MAX) {
       if (auto_hihat_vol > 0) {
 	auto_hihat_vol = MIDI_MAX;
       }
     }
+  }
+
+  bool sent_extra_kick = false;
+  if (kick_breath_on &&
+      !downbeat(subbeat) &&
+      ((breath > 70 && upbeat(subbeat)) ||
+       (breath == MIDI_MAX && (preup(subbeat) || predown(subbeat))))) {
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, fc_feet_on ? ENDPOINT_FOOT_1 : ENDPOINT_DRUM);
+    sent_extra_kick = true;
   }
 
   if (auto_hihat_vol) {
@@ -800,8 +812,10 @@ void arpeggiate(int subbeat) {
       current_drum_note = -1;
     }
     if (fc_feet_on) {
-      send_midi(MIDI_ON, drum_note, vel, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
-      last_fc_foot = !last_fc_foot;
+      if (!sent_extra_kick) {
+	send_midi(MIDI_ON, drum_note, vel, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+	last_fc_foot = !last_fc_foot;
+      }
     } else {
       send_midi(MIDI_ON, drum_note, vel, ENDPOINT_DRUM);
     }
@@ -910,7 +924,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 
     next_ns[0] = current_time;
     for (int i = 1; i < N_SUBBEATS; i++) {
-      next_ns[i] = next_ns[i-1] + (whole_beat)/36;
+      next_ns[i] = next_ns[i-1] + (whole_beat)/72;
     }
 
     for (int i = 0 ; i < N_SUBBEATS; i++) {
@@ -1422,6 +1436,10 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_DRUM_BREATH:
     drum_breath_on = !drum_breath_on;
+    return;
+
+  case TOGGLE_KICK_BREATH:
+    kick_breath_on = !kick_breath_on;
     return;
 
   case ROTATE_ARPEGGIATOR_PATTERN:
