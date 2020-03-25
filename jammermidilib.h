@@ -73,7 +73,7 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define N_ARPEGGIATOR_PATTERNS 8
 #define N_RHYTHM_MODES 2
-#define N_AUTO_HIHAT_MODES 9
+#define N_AUTO_HIHAT_MODES 10
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -137,6 +137,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define MIDI_DRUM_HIHAT 46
 #define MIDI_DRUM_HIHAT_CLOSED 42
 #define MIDI_DRUM_TAMBOURINE 54
+#define MIDI_DRUM_COWBELL 56
 
 #define MIDI_DRUM_PEDAL_1 46
 #define MIDI_DRUM_PEDAL_2 38
@@ -751,6 +752,11 @@ void arpeggiate(int subbeat) {
     auto_hihat_2_vol = 60;
     auto_hihat_3_vol = 100;
     auto_hihat_4_vol = 100;
+  } else if (auto_hihat_mode == 9) {
+    auto_hihat_1_vol = 70;
+    auto_hihat_2_vol = 60;
+    auto_hihat_3_vol = 100;
+    auto_hihat_4_vol = 100;
   }
 
   int auto_hihat_vol = 0;
@@ -765,6 +771,11 @@ void arpeggiate(int subbeat) {
   }
 
   int drum_note = MIDI_DRUM_HIHAT_CLOSED;
+
+  if (auto_hihat_mode == 9 && (upbeat(subbeat) || predown(subbeat))) {			       
+    drum_note = MIDI_DRUM_COWBELL;
+  }
+
   if (drum_breath_on) {
     if (breath > 60 && 
 	((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
