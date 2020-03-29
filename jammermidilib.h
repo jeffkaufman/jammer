@@ -72,7 +72,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define BUTTON_MIXO 97
 #define BUTTON_MINOR 96
 
-#define N_ARPEGGIATOR_PATTERNS 8
+#define N_ARPEGGIATOR_PATTERNS 9
 #define N_RHYTHM_MODES 2
 #define N_AUTO_HIHAT_MODES 10
 
@@ -641,20 +641,27 @@ void arpeggiate(int subbeat) {
 	selected_note = note_out + 12;
       }
     } else if (current_arpeggiator_pattern == 2) {
+      if (downbeat(subbeat)) {
+	send_note = false;
+      }
+    } else if (current_arpeggiator_pattern == 3) {
       if (upbeat(subbeat) || predown(subbeat)) {
 	selected_note = note_out + 12;
 	end_note = send_note = true;
       }
-    } else if (current_arpeggiator_pattern == 3) {
-      if (downbeat(subbeat)) {
-	send_note = false;
-      }
     } else if (current_arpeggiator_pattern == 4) {
-      if (upbeat(subbeat) || predown(subbeat)) {
+      if (downbeat(subbeat) || preup(subbeat)) {
+	end_note = send_note = true;
+      } else if (upbeat(subbeat) || predown(subbeat)) {
 	selected_note = note_out + 12;
 	end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 5) {
+      if (upbeat(subbeat) || predown(subbeat)) {
+	selected_note = note_out + 12;
+	end_note = send_note = true;
+      }
+    } else if (current_arpeggiator_pattern == 6) {
       if (downbeat(subbeat)) {
       } else if (preup(subbeat)) {
 	selected_note = note_out + 7;
@@ -665,7 +672,7 @@ void arpeggiate(int subbeat) {
 	selected_note = note_out + 12 + 7;
 	end_note = send_note = true;
       }
-    } else if (current_arpeggiator_pattern == 6) {
+    } else if (current_arpeggiator_pattern == 7) {
       if (downbeat(subbeat)) {
       } else if (preup(subbeat)) {
 	selected_note = note_out + 12;
@@ -676,7 +683,7 @@ void arpeggiate(int subbeat) {
 	selected_note = note_out + 12 + 12;
 	end_note = send_note = true;
       }
-    } else if (current_arpeggiator_pattern == 7) {
+    } else if (current_arpeggiator_pattern == 8) {
       if (downbeat(subbeat)) {
       } else if (preup(subbeat)) {
 	selected_note = note_out + 12;
