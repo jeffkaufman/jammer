@@ -733,99 +733,118 @@ void arpeggiate(int subbeat) {
     }
   }
 
-  int auto_hihat_1_vol = 0;
-  int auto_hihat_2_vol = 0;
-  int auto_hihat_3_vol = 0;
-  int auto_hihat_4_vol = 0;
-  if (auto_hihat_mode == 0 ||
-      auto_hihat_mode == 1 ||
-      auto_hihat_mode == 2) {
-  } else if (auto_hihat_mode == 3) {
-    auto_hihat_3_vol = 100;
-  } else if (auto_hihat_mode == 4) {
-    auto_hihat_1_vol = 100;
-    auto_hihat_3_vol = 100;
-  } else if (auto_hihat_mode == 5) {
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 90;
-  } else if (auto_hihat_mode == 6) {
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 90;
-  } else if (auto_hihat_mode == 7) {
-    auto_hihat_1_vol = 70;
-    auto_hihat_2_vol = 60;
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 60;
-  } else if (auto_hihat_mode == 8) {
-    auto_hihat_1_vol = 70;
-    auto_hihat_2_vol = 60;
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 100;
-  } else if (auto_hihat_mode == 9) {
-    auto_hihat_1_vol = 70;
-    auto_hihat_2_vol = 60;
-    auto_hihat_3_vol = 100;
-    auto_hihat_4_vol = 100;
-  }
+  if (fc_feet_on) {
+    bool send_kick = false;
+    bool send_tss = false;
 
-  int auto_hihat_vol = 0;
-  if (subbeat == 8) {
-    auto_hihat_vol = auto_hihat_1_vol;
-  } else if (preup(subbeat)) {
-    auto_hihat_vol = auto_hihat_2_vol;
-  } else if (upbeat(subbeat)) {
-    auto_hihat_vol = auto_hihat_3_vol;
-  } else if (predown(subbeat)) {
-    auto_hihat_vol = auto_hihat_4_vol;
-  }
-
-  int drum_note = MIDI_DRUM_HIHAT_CLOSED;
-
-  if (auto_hihat_mode == 9 && (upbeat(subbeat) || predown(subbeat))) {			       
-    drum_note = MIDI_DRUM_COWBELL;
-  }
-
-  if (drum_breath_on) {
-    if (breath > 60 && 
-	((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
-      auto_hihat_vol = 100;
+    if (upbeat(subbeat) || predown(subbeat)) {
+      send_tss = true;
     }
-    if (breath > 120) {
-      // triplets!
-      auto_hihat_vol = (subbeat % 12 == 0) ? 100 : 0;
-    }
-    if (breath == MIDI_MAX) {
-      if (auto_hihat_vol > 0) {
-	auto_hihat_vol = MIDI_MAX;
+
+    if (drum_breath_on) {
+      if (breath > 60 && preup(subbeat)) {
+	send_tss = true;
       }
     }
-  }
 
-  bool sent_extra_kick = false;
-  if (kick_breath_on &&
-      !downbeat(subbeat) &&
-      ((breath > 70 && upbeat(subbeat)) ||
-       (breath == MIDI_MAX && (preup(subbeat) || predown(subbeat))))) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, fc_feet_on ? ENDPOINT_FOOT_1 : ENDPOINT_DRUM);
-    sent_extra_kick = true;
-  }
-
-  if (auto_hihat_vol) {
-    int vel = current_drum_vel * auto_hihat_vol / 100;
-
-    if (current_drum_note != -1) {
-      send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_DRUM);
-      current_drum_note = -1;
-    }
-    if (fc_feet_on) {
-      if (!sent_extra_kick) {
-	send_midi(MIDI_ON, drum_note, vel, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
-	last_fc_foot = !last_fc_foot;
+    if (kick_breath_on) {
+      if (breath > 120 && upbeat(subbeat)) {
+	send_kick = true;
       }
-    } else {
+    }	
+
+    if (send_kick) {
+      send_midi(MIDI_ON, MIDI_DRUM_KICK, MIDI_MAX, ENDPOINT_FOOT_1);
+    } else if (send_tss) {
+      send_midi(MIDI_ON,  MIDI_DRUM_KICK, MIDI_MAX, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+      last_fc_foot = !last_fc_foot;
+    }
+  } else {
+    int auto_hihat_1_vol = 0;
+    int auto_hihat_2_vol = 0;
+    int auto_hihat_3_vol = 0;
+    int auto_hihat_4_vol = 0;
+    if (auto_hihat_mode == 0 ||
+	auto_hihat_mode == 1 ||
+	auto_hihat_mode == 2) {
+    } else if (auto_hihat_mode == 3) {
+      auto_hihat_3_vol = 100;
+    } else if (auto_hihat_mode == 4) {
+      auto_hihat_1_vol = 100;
+      auto_hihat_3_vol = 100;
+    } else if (auto_hihat_mode == 5) {
+      auto_hihat_3_vol = 100;
+      auto_hihat_4_vol = 90;
+    } else if (auto_hihat_mode == 6) {
+      auto_hihat_3_vol = 100;
+      auto_hihat_4_vol = 90;
+    } else if (auto_hihat_mode == 7) {
+      auto_hihat_1_vol = 70;
+      auto_hihat_2_vol = 60;
+      auto_hihat_3_vol = 100;
+      auto_hihat_4_vol = 60;
+    } else if (auto_hihat_mode == 8) {
+      auto_hihat_1_vol = 70;
+      auto_hihat_2_vol = 60;
+      auto_hihat_3_vol = 100;
+      auto_hihat_4_vol = 100;
+    } else if (auto_hihat_mode == 9) {
+      auto_hihat_1_vol = 70;
+      auto_hihat_2_vol = 60;
+      auto_hihat_3_vol = 100;
+      auto_hihat_4_vol = 100;
+    }
+    
+    int auto_hihat_vol = 0;
+    if (subbeat == 8) {
+      auto_hihat_vol = auto_hihat_1_vol;
+    } else if (preup(subbeat)) {
+      auto_hihat_vol = auto_hihat_2_vol;
+    } else if (upbeat(subbeat)) {
+      auto_hihat_vol = auto_hihat_3_vol;
+    } else if (predown(subbeat)) {
+      auto_hihat_vol = auto_hihat_4_vol;
+    }
+    
+    int drum_note = MIDI_DRUM_HIHAT_CLOSED;
+    
+    if (auto_hihat_mode == 9 && (upbeat(subbeat) || predown(subbeat))) {			       
+      drum_note = MIDI_DRUM_COWBELL;
+    }
+    
+    if (drum_breath_on) {
+      if (breath > 60 && 
+	  ((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
+	auto_hihat_vol = 100;
+      }
+      if (breath > 120) {
+	// triplets!
+	auto_hihat_vol = (subbeat % 12 == 0) ? 100 : 0;
+      }
+      if (breath == MIDI_MAX) {
+	if (auto_hihat_vol > 0) {
+	  auto_hihat_vol = MIDI_MAX;
+	}
+      }
+    }
+    
+    if (kick_breath_on &&
+	!downbeat(subbeat) &&
+	((breath > 70 && upbeat(subbeat)) ||
+	 (breath == MIDI_MAX && (preup(subbeat) || predown(subbeat))))) {
+      send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM);
+    }
+    
+    if (auto_hihat_vol) {
+      int vel = current_drum_vel * auto_hihat_vol / 100;
+      
+      if (current_drum_note != -1) {
+	send_midi(MIDI_OFF, current_drum_note, 0, ENDPOINT_DRUM);
+	current_drum_note = -1;
+      }
       send_midi(MIDI_ON, drum_note, vel, ENDPOINT_DRUM);
+      current_drum_note = drum_note;
     }
-    current_drum_note = drum_note;
   }
 }
 
@@ -1458,10 +1477,6 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_FC_FEET:
     fc_feet_on = !fc_feet_on;
-    if (fc_feet_on) {
-      auto_hihat_mode = 5;
-      current_drum_pedal_kick_note = MIDI_DRUM_KICK;
-    }      
     return;
 
   case TOGGLE_REEL_JIG:
@@ -1577,7 +1592,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
-  if (drum_note != 0) {
+  if (drum_note != 0 || fc_feet_on) {
     printf("sending %d to drum\n", drum_note);
     if (fc_feet_on) {
       send_midi(mode, drum_note, val, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
