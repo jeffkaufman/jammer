@@ -657,8 +657,7 @@ void arpeggiate(int subbeat) {
 	end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 5) {
-      if (upbeat(subbeat) || predown(subbeat)) {
-	selected_note = note_out + 12;
+      if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
 	end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 6) {
