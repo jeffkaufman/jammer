@@ -291,6 +291,10 @@ int current_drum_vel;
 bool pulsator_on;
 int pulsator_pattern;
 int current_pulsator_note;
+bool pause_everything;
+bool pause_arpeggiator;
+bool pause_drum;
+bool pause_drum_interpolation;
 
 void voices_reset() {
   jawharp_on = false;
@@ -374,6 +378,11 @@ void voices_reset() {
   pulsator_on = false;
   pulsator_pattern = 0;
   current_pulsator_note = 0;
+
+  pause_everything = false;
+  pause_arpeggiator = false;
+  pause_drum = false;
+  pause_drum_interpolation = false;
 }
 
 struct ScheduledNote* allocate_scheduled_note() {
@@ -403,6 +412,18 @@ void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int
 
   printf("scheduled %llu %llu %llu  %d %d %d %d %d\n",
 	 on->ts, off->ts, length,  on->actionType, off->actionType, on->noteNo, on->velocity, on->endpoint);
+}
+
+bool drum_paused() {
+  return pause_everything || pause_drum;
+}
+
+bool drum_interpolation_paused() {
+  return drum_paused() || pause_drum_interpolation;
+}
+
+bool arpeggiator_paused() {
+  return pause_everything || pause_arpeggiator;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -621,7 +642,7 @@ bool predown(subbeat) {
 }
 
 void arpeggiate_tambourine(int subbeat) {
-  if (subbeat == 0) {
+  if (subbeat == 0 || drum_interpolation_paused()) {
     return;
   }
 
@@ -729,6 +750,11 @@ void arpeggiate(int subbeat) {
       }
     }
 
+    if (arpeggiator_paused()) {
+      send_note = false;
+      end_note = true;
+    }
+
     if (end_note && current_arpeggiator_note != -1) {
       send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
       current_arpeggiator_note = -1;
@@ -742,7 +768,7 @@ void arpeggiate(int subbeat) {
     }
   }
 
-  if (subbeat == 0) {
+  if (subbeat == 0 || drum_interpolation_paused()) {
   } else if (fc_feet_on) {
     bool send_kick = false;
     bool send_tss = false;
@@ -1302,6 +1328,32 @@ void air_lock() {
   locked_air = air;
 }
 
+void handle_foot_button(uint32_t button, CFIndex value) {
+  if (!value) {
+    return;  // only handling presses for now
+    // TODO: consider making it so if you press and hold it does something interesting
+  }
+
+  switch(button) {
+  case FOOT_BUTTON_1:
+    pause_everything = !pause_everything;
+    return;
+  case FOOT_BUTTON_2:
+    pause_arpeggiator = !pause_arpeggiator;
+    return;
+  case FOOT_BUTTON_3:
+    pause_drum = !pause_drum;
+    return;
+  case FOOT_BUTTON_4:
+    pause_drum_interpolation = !pause_drum_interpolation;
+    return;
+  case FOOT_BUTTON_5:
+    return;
+  case FOOT_BUTTON_6:
+    return;
+  }
+}
+
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
@@ -1496,6 +1548,8 @@ void handle_control_helper(unsigned int note_in) {
   }
 }
 
+
+
 void handle_control(unsigned int note_in) {
   handle_control_helper(note_in);
 }
@@ -1602,7 +1656,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   int drum_note = is_low ? current_drum_pedal_kick_note : current_drum_pedal_tss_note;
-  if (drum_note != 0 || fc_feet_on) {
+  if (!drum_paused() && (drum_note != 0 || fc_feet_on)) {
     printf("sending %d to drum\n", drum_note);
     if (fc_feet_on) {
       send_midi(mode, drum_note, val, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
@@ -1937,7 +1991,11 @@ void value_entered_callback(void* ignored, IOReturn result, void* sender, IOHIDV
   uint32_t button = IOHIDElementGetUsage(element);
   CFIndex button_value = IOHIDValueGetIntegerValue(value);
 
-  printf("button %u got %ld\n", button, button_value);
+  if (button >= 1 && button <= 6) {
+    handle_foot_button(button, button_value);
+  } else {
+    printf("unknown button %u got %ld\n", button, button_value);
+  }
 }
 
 void device_added_callback(void *ctx, IOReturn res, void *sender, IOHIDDeviceRef device) {
