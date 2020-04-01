@@ -8,7 +8,7 @@
 
 int main(int argc, char** argv) {
   jml_setup();
-  while (true) {
+  while (CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, TRUE)) {
     usleep(TICK_MS * 1000);
     jml_tick();
   }

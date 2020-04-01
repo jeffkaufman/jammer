@@ -4,6 +4,7 @@ jammermidi: jammermidi.m jammermidilib.h
 	  -framework CoreMIDI \
     -framework CoreFoundation \
     -framework CoreAudio \
+    -framework IOKit \
     -framework Foundation \
 	  jammermidi.m -o jammermidi -std=c99 -Wall
 

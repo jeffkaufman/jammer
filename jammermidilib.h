@@ -6,6 +6,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/MIDIServices.h>
 #include <CoreAudio/HostTime.h>
+#include <IOKit/hid/IOHIDDevice.h>
+#include <IOKit/hid/IOHIDManager.h>
 #import <Foundation/Foundation.h>
 
 // Spec:
@@ -163,6 +165,13 @@ arl  rho  ham  atd  pd2  flx   HH
 #define MAX_SCHEDULED_NOTES 64
 
 #define MAX_HAMMOND_NOTE 96  // the hammond can't play higher than this note
+
+#define FOOT_BUTTON_1 5
+#define FOOT_BUTTON_2 4
+#define FOOT_BUTTON_3 1
+#define FOOT_BUTTON_4 3
+#define FOOT_BUTTON_5 6
+#define FOOT_BUTTON_6 2
 
 /**
  * Drum settings
@@ -733,7 +742,8 @@ void arpeggiate(int subbeat) {
     }
   }
 
-  if (fc_feet_on) {
+  if (subbeat == 0) {
+  } else if (fc_feet_on) {
     bool send_kick = false;
     bool send_tss = false;
 
@@ -796,7 +806,7 @@ void arpeggiate(int subbeat) {
     }
     
     int auto_hihat_vol = 0;
-    if (subbeat == 8) {
+    if (downbeat(subbeat)) {
       auto_hihat_vol = auto_hihat_1_vol;
     } else if (preup(subbeat)) {
       auto_hihat_vol = auto_hihat_2_vol;
@@ -1916,7 +1926,45 @@ void calculate_breath_speeds() {
          max_air, fill_time_ms, fill_time_ticks, breath_gain);
 }
 
+void value_entered_callback(void* ignored, IOReturn result, void* sender, IOHIDValueRef value) {
+  IOHIDElementRef element =  IOHIDValueGetElement(value);
+
+  if (IOHIDElementGetType(element) != kIOHIDElementTypeInput_Button ||
+      IOHIDElementGetUsagePage(element) != 9) {
+    return;
+  }
+
+  uint32_t button = IOHIDElementGetUsage(element);
+  CFIndex button_value = IOHIDValueGetIntegerValue(value);
+
+  printf("button %u got %ld\n", button, button_value);
+}
+
+void device_added_callback(void *ctx, IOReturn res, void *sender, IOHIDDeviceRef device) {
+  IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+  attempt(IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone), "opening device");
+  IOHIDDeviceRegisterInputValueCallback(device, value_entered_callback, NULL);
+}
+
+void device_removed_callback(void *ctx, IOReturn res, void *sender, IOHIDDeviceRef device) {
+  IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+}
+
+void gc_setup() {
+  IOHIDManagerRef hidman = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+
+  attempt(IOHIDManagerOpen(hidman, kIOHIDOptionsTypeNone),
+          "opening iohidmanager");
+  if (!hidman) die("couldn't allocate hidmanager");
+
+  IOHIDManagerSetDeviceMatching(hidman, NULL);
+  IOHIDManagerRegisterDeviceMatchingCallback(hidman, device_added_callback, NULL);
+  IOHIDManagerRegisterDeviceRemovalCallback(hidman, device_removed_callback, NULL);
+  IOHIDManagerScheduleWithRunLoop(hidman, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+}
+
 void jml_setup() {
+  gc_setup();
   calculate_breath_speeds();
   full_reset();
 
