@@ -1328,24 +1328,41 @@ void air_lock() {
   locked_air = air;
 }
 
-void handle_foot_button(uint32_t button, CFIndex value) {
-  if (!value) {
-    return;  // only handling presses for now
-    // TODO: consider making it so if you press and hold it does something interesting
-  }
 
+uint64_t last_foot_button_1_down_ns = 0;
+uint64_t last_foot_button_2_down_ns = 0;
+uint64_t last_foot_button_3_down_ns = 0;
+uint64_t last_foot_button_4_down_ns = 0;
+uint64_t last_foot_button_5_down_ns = 0;
+uint64_t last_foot_button_6_down_ns = 0;
+
+void handle_specific_button(bool* pause_toggle, uint64_t* last_down_ns, CFIndex value) {
+  uint64_t now_ns = now();
+  if (value) {
+    // press
+    *pause_toggle = !*pause_toggle;
+    *last_down_ns = now_ns;
+  } else {
+    // release
+    if (now_ns - *last_down_ns > NS_PER_SEC/2) {
+      *pause_toggle = !*pause_toggle;
+    }      
+  }
+}
+
+void handle_foot_button(uint32_t button, CFIndex value) {
   switch(button) {
   case FOOT_BUTTON_1:
-    pause_everything = !pause_everything;
+    handle_specific_button(&pause_everything, &last_foot_button_1_down_ns, value);
     return;
   case FOOT_BUTTON_2:
-    pause_arpeggiator = !pause_arpeggiator;
+    handle_specific_button(&pause_arpeggiator, &last_foot_button_2_down_ns, value);
     return;
   case FOOT_BUTTON_3:
-    pause_drum = !pause_drum;
+    handle_specific_button(&pause_drum, &last_foot_button_3_down_ns, value);
     return;
   case FOOT_BUTTON_4:
-    pause_drum_interpolation = !pause_drum_interpolation;
+    handle_specific_button(&pause_drum_interpolation, &last_foot_button_4_down_ns, value);
     return;
   case FOOT_BUTTON_5:
     return;
