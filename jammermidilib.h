@@ -1334,13 +1334,17 @@ uint64_t last_foot_button_6_down_ns = 0;
 
 void handle_specific_button(bool* pause_toggle, uint64_t* last_down_ns, CFIndex value) {
   uint64_t now_ns = now();
-  if (value) {
-    // press
+  if (value) { // press
     *pause_toggle = !*pause_toggle;
     *last_down_ns = now_ns;
-  } else {
-    // release
-    if (now_ns - *last_down_ns > NS_PER_SEC/2) {
+  } else { // release
+    // if we've been holding it down for a medium amount of time,
+    // bring things back in, but not for momentary presses or very
+    // long presses.  For now, a medium amount is between ~1 beat and
+    // ~32 beats, so ~1/2s and ~16s.
+    uint64_t button_down_ns = now_ns - *last_down_ns;
+    if (button_down_ns > NS_PER_SEC / 2 &&
+	button_down_ns < NS_PER_SEC * 16) {
       *pause_toggle = !*pause_toggle;
     }      
   }
