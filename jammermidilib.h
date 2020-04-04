@@ -77,7 +77,7 @@ arl  rho  ham  atd  pd2  flx   HH
 
 #define N_ARPEGGIATOR_PATTERNS 9
 #define N_RHYTHM_MODES 2
-#define N_AUTO_HIHAT_MODES 10
+#define N_AUTO_HIHAT_MODES 7
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -658,9 +658,7 @@ void arpeggiate_tambourine(int subbeat) {
     return;
   }
 
-  if ((auto_hihat_mode == 1 && upbeat(subbeat)) ||
-      (auto_hihat_mode == 2 && (downbeat(subbeat) || upbeat(subbeat))) ||
-      (auto_hihat_mode == 6 && (downbeat(subbeat) || upbeat(subbeat)))) {
+  if (auto_hihat_mode == 6 && (downbeat(subbeat) || upbeat(subbeat))) {
     send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, upbeat(subbeat) ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
   }     
 }  
@@ -812,31 +810,28 @@ void arpeggiate(int subbeat) {
     int auto_hihat_2_vol = 0;
     int auto_hihat_3_vol = 0;
     int auto_hihat_4_vol = 0;
-    if (auto_hihat_mode == 0 ||
-	auto_hihat_mode == 1 ||
-	auto_hihat_mode == 2) {
-    } else if (auto_hihat_mode == 3) {
+    if (auto_hihat_mode == 0) {
       auto_hihat_3_vol = 100;
-    } else if (auto_hihat_mode == 4) {
+    } else if (auto_hihat_mode == 1) {
       auto_hihat_1_vol = 100;
       auto_hihat_3_vol = 100;
-    } else if (auto_hihat_mode == 5) {
+    } else if (auto_hihat_mode == 2) {
       auto_hihat_3_vol = 100;
       auto_hihat_4_vol = 90;
-    } else if (auto_hihat_mode == 6) {
+    } else if (auto_hihat_mode == 3) {
       auto_hihat_3_vol = 100;
       auto_hihat_4_vol = 90;
-    } else if (auto_hihat_mode == 7) {
+    } else if (auto_hihat_mode == 4) {
       auto_hihat_1_vol = 70;
       auto_hihat_2_vol = 60;
       auto_hihat_3_vol = 100;
       auto_hihat_4_vol = 60;
-    } else if (auto_hihat_mode == 8) {
+    } else if (auto_hihat_mode == 5) {
       auto_hihat_1_vol = 70;
       auto_hihat_2_vol = 60;
       auto_hihat_3_vol = 100;
       auto_hihat_4_vol = 100;
-    } else if (auto_hihat_mode == 9) {
+    } else if (auto_hihat_mode == 6) {
       auto_hihat_1_vol = 70;
       auto_hihat_2_vol = 60;
       auto_hihat_3_vol = 100;
@@ -855,10 +850,6 @@ void arpeggiate(int subbeat) {
     }
     
     int drum_note = MIDI_DRUM_HIHAT_CLOSED;
-    
-    if (auto_hihat_mode == 9 && (upbeat(subbeat) || predown(subbeat))) {			       
-      drum_note = MIDI_DRUM_COWBELL;
-    }
     
     if (drum_breath_on) {
       if (breath > 60 && 
