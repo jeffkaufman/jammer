@@ -73,6 +73,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define BUTTON_MAJOR 98
 #define BUTTON_MIXO 97
 #define BUTTON_MINOR 96
+#define BUTTON_RACOON 95
 
 #define N_ARPEGGIATOR_PATTERNS 9
 #define N_RHYTHM_MODES 2
@@ -154,6 +155,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define MODE_MAJOR 0
 #define MODE_MIXO 1
 #define MODE_MINOR 2
+#define MODE_RACOON 3
 
 #define KICK_TIMES_LENGTH 12
 #define SNARE_TIMES_LENGTH 12
@@ -528,6 +530,16 @@ int current_drum_pedal_note() {
       is_minor_chord = true;  // i
     }
     note += 12;
+  } else if (musical_mode == MODE_RACOON) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 2; // VII
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note + 3;  // III
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note = root_note + 5;  // IV
+    } else {
+      is_minor_chord = true;  // i
+    }
   }
 
   return note;
@@ -1858,6 +1870,7 @@ void handle_axis_49(int mode, int note_in, int val) {
   if (listen_drum_pedal &&
       (note_in == BUTTON_MAJOR ||
        note_in == BUTTON_MIXO || 
+       note_in == BUTTON_RACOON ||
        note_in == BUTTON_MINOR)) {
     if (note_in == BUTTON_MAJOR) {
       musical_mode = MODE_MAJOR;
@@ -1865,6 +1878,8 @@ void handle_axis_49(int mode, int note_in, int val) {
       musical_mode = MODE_MIXO;
     } else if (note_in == BUTTON_MINOR) {
       musical_mode = MODE_MINOR;
+    } else if (note_in == BUTTON_RACOON) {
+      musical_mode = MODE_RACOON;
     }
     printf("Chose mode %d\n", musical_mode);
   } else if (note_in <= CONTROL_MAX) {
