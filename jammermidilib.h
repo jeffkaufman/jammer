@@ -53,15 +53,15 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_ARPEGGIATOR          21
 #define ROTATE_ARPEGGIATOR_PATTERN  20
 #define TOGGLE_LISTEN_DRUM_PEDAL    19
-#define ROTATE_DRUM_PEDAL_HH        18
-#define ROTATE_DRUM_PEDAL_SNARE     17
-#define ROTATE_DRUM_PEDAL_KICK      16
+#define TOGGLE_AUTO_SNARE           18
+#define TOGGLE_MANUAL_TSS           17
+#define TOGGLE_MANUAL_KICK          16
 #define TOGGLE_FC_FEET              15
 
 #define TOGGLE_KICK_BREATH          27
 #define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
-#define TOGGLE_PULSATOR             24
+#define ROTATE_DRUM_KIT             24
 #define ROTATE_RHYTHM_MODE          23
 #define TOGGLE_BREATH_CHORD         22
 
@@ -78,9 +78,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define N_ARPEGGIATOR_PATTERNS 8
 #define N_RHYTHM_MODES 2
 #define N_AUTO_HIHAT_MODES 9
-#define N_KICK_SOUNDS 7
-#define N_HH_SOUNDS 4
-#define N_SNARE_SOUNDS 7
+#define N_DRUM_KIT_SOUNDS 5
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -106,8 +104,7 @@ arl  rho  ham  atd  pd2  flx   HH
 // These two are from https://www.jefftk.com/p/what-noise-does-a-tambourine-make
 #define ENDPOINT_TAMBOURINE_FREE 23
 #define ENDPOINT_TAMBOURINE_STOPPED 24
-#define ENDPOINT_PULSATOR 25
-#define N_ENDPOINTS (ENDPOINT_PULSATOR+1)
+#define N_ENDPOINTS (ENDPOINT_TAMBOURINE_STOPPED+1)
 
 // aliases
 #define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
@@ -260,9 +257,11 @@ int auto_hihat_mode;
 bool sax_on;
 bool listen_drum_pedal;
 int most_recent_drum_pedal;
-int kick_sound;
-int hh_sound;
-int snare_sound;
+bool manual_kick_on;
+bool manual_tss_on;
+bool auto_snare_on;
+uint64_t last_auto_snare_ns;
+int drum_kit_sound;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
@@ -296,9 +295,6 @@ bool breath_chord_on;
 bool breath_chord_playing;
 bool is_minor_chord;  // only used when listen_drum_pedal=true
 int current_drum_vel;
-bool pulsator_on;
-int pulsator_pattern;
-int current_pulsator_note;
 bool pause_everything;
 bool pause_arpeggiator;
 bool pause_drum;
@@ -320,9 +316,11 @@ void voices_reset() {
   auto_hihat_mode = 0;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
-  kick_sound = 0;
-  hh_sound = 1;
-  snare_sound = 0;
+  manual_kick_on = false;
+  manual_tss_on = false;
+  auto_snare_on = false;
+  last_auto_snare_ns = 0;
+  drum_kit_sound = 0;
   atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
     atmospheric_drone_notes[i] = false;
@@ -381,10 +379,6 @@ void voices_reset() {
   is_minor_chord = false;
 
   current_drum_vel = 0;
-
-  pulsator_on = false;
-  pulsator_pattern = 0;
-  current_pulsator_note = 0;
 
   pause_everything = false;
   pause_arpeggiator = false;
@@ -668,83 +662,66 @@ void arpeggiate_tambourine(int subbeat) {
   }     
 }  
 
+/* drum kits:
+ *   0: acoustic #1
+ *   1: acoustic #2
+ *   2: electronic #1
+ *   3: electronic #2
+ *   4: electronic #1 and #2
+ */
 void send_kick() {
-  int endpoint = ENDPOINT_DRUM_A;
-  int note = MIDI_DRUM_KICK;
-  if (kick_sound == 0) {
-    return;
-  } else if (kick_sound == 1) {
-    endpoint = ENDPOINT_DRUM_A;
-    note = MIDI_DRUM_KICK;
-  } else if (kick_sound == 2) {
-    endpoint = ENDPOINT_DRUM_A;
-    note = MIDI_DRUM_KICK_B;
-  } else if (kick_sound == 3) {
-    endpoint = ENDPOINT_DRUM_B;
-    note = MIDI_DRUM_KICK;
-  } else if (kick_sound == 4) {
-    endpoint = ENDPOINT_DRUM_B;
-    note = MIDI_DRUM_KICK_B;
-  } else if (kick_sound == 5) {
-    endpoint = ENDPOINT_DRUM_C;
-    note = MIDI_DRUM_KICK;
-  } else if (kick_sound == 6) {
-    endpoint = ENDPOINT_DRUM_C;
-    note = MIDI_DRUM_KICK_B;
+  if (drum_kit_sound == 0) {
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_A);
+  } else if (drum_kit_sound == 1) {
+    send_midi(MIDI_ON, MIDI_DRUM_KICK_B, current_drum_vel, ENDPOINT_DRUM_A);
+  } else if (drum_kit_sound == 2) {
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_B);
+  } else if (drum_kit_sound == 3) {
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_C);
+  } else if (drum_kit_sound == 4) {
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_C);
   }
-  send_midi(MIDI_ON, note, current_drum_vel, endpoint);
 }
 
 void send_hh(int relative_vel) {
-  int endpoint = ENDPOINT_DRUM_A;
-  if (hh_sound == 0) {
-    return;
-  } else if (hh_sound == 1) {
-    endpoint = ENDPOINT_DRUM_A;
-  } else if (hh_sound == 2) {
-    endpoint = ENDPOINT_DRUM_B;
-  } else if (hh_sound == 3) {
-    endpoint = ENDPOINT_DRUM_C;
-  }
-  send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, current_drum_vel * relative_vel / 100, endpoint);
+  int vel = current_drum_vel * relative_vel / 100;
+  if (drum_kit_sound == 0 || drum_kit_sound == 1) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_A);
+  } else if (drum_kit_sound == 2) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_B);
+  } else if (drum_kit_sound == 3) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_C);
+  } else if (drum_kit_sound == 4) {
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_C);
+  } 
 }
 
 void send_snare(int vel) {
-  int endpoint = ENDPOINT_DRUM_A;
-  int note = MIDI_DRUM_SNARE;
-  if (snare_sound == 0) {
-    return;
-  } else if (snare_sound == 1) {
-    endpoint = ENDPOINT_DRUM_D;
-    note = MIDI_DRUM_SNARE;
-  } else if (snare_sound == 2) {
-    endpoint = ENDPOINT_DRUM_B;
-    note = MIDI_DRUM_SNARE;
-  } else if (snare_sound == 3) {
-    endpoint = ENDPOINT_DRUM_B;
-    note = MIDI_DRUM_CLAP;
-  } else if (snare_sound == 4) {
-    endpoint = ENDPOINT_DRUM_C;
-    note = MIDI_DRUM_SNARE;
-  } else if (snare_sound == 5) {
-    endpoint = ENDPOINT_DRUM_C;
-    note = MIDI_DRUM_CLAP;
-  } else if (snare_sound == 6) {
-    endpoint = ENDPOINT_DRUM_D;
-    note = MIDI_DRUM_CLAP;
+  if (drum_kit_sound == 0) {
+    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_D);
+  } else if (drum_kit_sound == 1) {
+    send_midi(MIDI_ON, MIDI_DRUM_CLAP, vel, ENDPOINT_DRUM_D);
+  } else if (drum_kit_sound == 2) {
+    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_B);
+  } else if (drum_kit_sound == 3) {
+    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_C);
+  } else if (drum_kit_sound == 4) {
+    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_C);
   }
-  send_midi(MIDI_ON, note, vel, endpoint);  
+}
+
+void send_auto_snare() {
+  if (auto_snare_on) {
+    send_snare(current_drum_vel);
+  }
 }
 
 void arpeggiate(int subbeat) {
   int note_out = active_note();
   int selected_note = note_out;
-
-  if (pulsator_on) {
-    send_midi(MIDI_OFF, current_pulsator_note, 0, ENDPOINT_PULSATOR);
-    current_pulsator_note = note_out + 48;
-    send_midi(MIDI_ON, current_pulsator_note, 100, ENDPOINT_PULSATOR);
-  }
 
   bool send_note = downbeat(subbeat) || upbeat(subbeat);
   bool end_note = send_note;
@@ -1043,6 +1020,21 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
   
   if (acceptable_error) {
     current_beat_ns = whole_beat;
+
+    if (last_auto_snare_ns < (current_time - whole_beat*4)) {
+      last_auto_snare_ns = current_time - whole_beat;
+    }
+
+    if ((current_time - last_auto_snare_ns < whole_beat * 2.25 &&
+	 current_time - last_auto_snare_ns > whole_beat * 1.75) ||
+	(current_time - last_auto_snare_ns < whole_beat * 4.25 &&
+	 current_time - last_auto_snare_ns > whole_beat * 4.75)) {
+      // looks like the auto snare last fired about two beats ago, so
+      // it's time to fire it again.
+      send_auto_snare();
+      last_auto_snare_ns = current_time;
+    }
+
     arpeggiate(0);
 
     next_ns[0] = current_time;
@@ -1470,11 +1462,6 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_PULSATOR:
-    endpoint_notes_off(ENDPOINT_PULSATOR);
-    pulsator_on = !pulsator_on;
-    return;
-
   case TOGGLE_BREATH_CHORD:
     if (breath_chord_on) {
       breath_chord_on = false;
@@ -1551,16 +1538,20 @@ void handle_control_helper(unsigned int note_in) {
     }
     return;
 
-  case ROTATE_DRUM_PEDAL_KICK:
-    kick_sound = (kick_sound + 1) % N_KICK_SOUNDS;
+  case ROTATE_DRUM_KIT:
+    drum_kit_sound = (drum_kit_sound + 1) % N_DRUM_KIT_SOUNDS;
     return;
 
-  case ROTATE_DRUM_PEDAL_SNARE:
-    snare_sound = (snare_sound + 1) % N_SNARE_SOUNDS;
+  case TOGGLE_AUTO_SNARE:
+    auto_snare_on = !auto_snare_on;
     return;
 
-  case ROTATE_DRUM_PEDAL_HH:
-    hh_sound = (hh_sound + 1) % N_HH_SOUNDS;
+  case TOGGLE_MANUAL_TSS:
+    manual_tss_on = !manual_tss_on;
+    return;
+
+  case TOGGLE_MANUAL_KICK:
+    manual_kick_on = !manual_kick_on;
     return;
 
   case ROTATE_RHYTHM_MODE:
@@ -1570,8 +1561,7 @@ void handle_control_helper(unsigned int note_in) {
   case TOGGLE_LISTEN_DRUM_PEDAL:
     listen_drum_pedal = !listen_drum_pedal;
     if (listen_drum_pedal) {
-      kick_sound = 1;
-      snare_sound = 1;
+      manual_kick_on = manual_tss_on = true;
     } 
     return;
 
@@ -1731,9 +1721,9 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (!drum_paused()) {
     if (fc_feet_on) {
       send_midi(mode, MIDI_DRUM_KICK, val, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
-    } else if (is_low) {
+    } else if (is_low && manual_kick_on) {
       send_kick();
-    } else {
+    } else if (!is_low && manual_tss_on) {
       send_snare(val);
     }
   }
@@ -2156,7 +2146,6 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_FOOT_4],             CFSTR("jammer-foot-4"));
   create_source(&endpoints[ENDPOINT_TAMBOURINE_FREE],    CFSTR("jammer-tambourine-free"));
   create_source(&endpoints[ENDPOINT_TAMBOURINE_STOPPED], CFSTR("jammer-tambourine-stopped"));
-  create_source(&endpoints[ENDPOINT_PULSATOR],           CFSTR("jammer-pulsator"));
 }
 
 void update_air() {
