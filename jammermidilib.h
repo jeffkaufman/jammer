@@ -146,6 +146,9 @@ arl  rho  ham  atd  pd2  flx   HH
 #define MIDI_DRUM_HIHAT_CLOSED 42
 #define MIDI_DRUM_TAMBOURINE 54
 #define MIDI_DRUM_COWBELL 56
+#define MIDI_DRUM_CRASH 49
+#define MIDI_DRUM_CRASH_2 57
+#define MIDI_DRUM_SPLASH 55
 
 #define MIDI_DRUM_PEDAL_1 46
 #define MIDI_DRUM_PEDAL_2 38
@@ -217,6 +220,16 @@ void attempt(OSStatus result, char* errmsg) {
 
 uint64_t now() {
   return clock_gettime_nsec_np(CLOCK_MONOTONIC);
+}
+
+int normalize(int val) {
+  if (val > MIDI_MAX) {
+    return MIDI_MAX;
+  }
+  if (val < 0) {
+    return 0;
+  }
+  return val;
 }
 
 struct ScheduledNote {
@@ -296,9 +309,11 @@ bool breath_chord_playing;
 bool is_minor_chord;  // only used when listen_drum_pedal=true
 int current_drum_vel;
 bool pause_everything;
+bool pause_low;
+bool pause_high;
 bool pause_arpeggiator;
-bool pause_drum;
-bool pause_drum_interpolation;
+bool pause_auto_drums;
+bool pause_auto_hh;
 
 void voices_reset() {
   jawharp_on = false;
@@ -381,9 +396,11 @@ void voices_reset() {
   current_drum_vel = 0;
 
   pause_everything = false;
+  pause_low = false;
+  pause_high = false;
   pause_arpeggiator = false;
-  pause_drum = false;
-  pause_drum_interpolation = false;
+  pause_auto_drums = false;
+  pause_auto_hh = false;
 }
 
 struct ScheduledNote* allocate_scheduled_note() {
@@ -415,16 +432,24 @@ void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int
 	 on->ts, off->ts, length,  on->actionType, off->actionType, on->noteNo, on->velocity, on->endpoint);
 }
 
-bool drum_paused() {
-  return pause_everything || pause_drum;
+bool kick_paused() {
+  return pause_everything || pause_low;
 }
 
-bool drum_interpolation_paused() {
-  return drum_paused() || pause_drum_interpolation;
+bool snare_paused() {
+  return pause_everything || pause_high;
+}
+
+bool auto_snare_paused() {
+    return snare_paused() || pause_auto_drums;
+}
+
+bool auto_hh_paused() {
+  return pause_everything || pause_high || pause_auto_drums || pause_auto_hh;
 }
 
 bool arpeggiator_paused() {
-  return pause_everything || pause_arpeggiator;
+  return pause_everything || pause_low || pause_arpeggiator;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -653,7 +678,7 @@ bool predown(subbeat) {
 }
 
 void arpeggiate_tambourine(int subbeat) {
-  if (subbeat == 0 || drum_interpolation_paused()) {
+  if (subbeat == 0 || auto_hh_paused()) {
     return;
   }
 
@@ -684,8 +709,9 @@ void send_kick() {
   }
 }
 
-void send_hh(int relative_vel) {
-  int vel = current_drum_vel * relative_vel / 100;
+void send_raw_hh(int vel) {
+  vel = normalize(vel);
+
   if (drum_kit_sound == 0 || drum_kit_sound == 1) {
     send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_A);
   } else if (drum_kit_sound == 2) {
@@ -698,7 +724,47 @@ void send_hh(int relative_vel) {
   } 
 }
 
+void send_hh(int relative_vel) {
+  send_raw_hh(current_drum_vel * relative_vel / 100);
+}
+
+void send_rim(int vel) {
+  vel = normalize(vel);
+
+  if (drum_kit_sound == 0) {
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_A);
+  } else if (drum_kit_sound == 1) {
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_D);
+  } else if (drum_kit_sound == 2) {
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_B);
+  } else if (drum_kit_sound == 3) {
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_C);
+  } else if (drum_kit_sound == 4) {
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_C);
+  }
+}
+
+void send_crash(int vel) {
+  vel = normalize(vel);
+
+  if (drum_kit_sound == 0) {
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_A);
+  } else if (drum_kit_sound == 1) {
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH_2, vel, ENDPOINT_DRUM_A);
+  } else if (drum_kit_sound == 2) {
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_B);
+  } else if (drum_kit_sound == 3) {
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_C);
+  } else if (drum_kit_sound == 4) {
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_C);
+  }
+}
+
 void send_snare(int vel) {
+  vel = normalize(vel);
+
   if (drum_kit_sound == 0) {
     send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_D);
   } else if (drum_kit_sound == 1) {
@@ -714,7 +780,7 @@ void send_snare(int vel) {
 }
 
 void send_auto_snare() {
-  if (auto_snare_on) {
+  if (auto_snare_on && !auto_snare_paused()) {
     send_snare(current_drum_vel);
   }
 }
@@ -823,7 +889,7 @@ void arpeggiate(int subbeat) {
     }
   }
 
-  if (subbeat == 0 || drum_interpolation_paused()) {
+  if (subbeat == 0) {
   } else if (fc_feet_on) {
     bool send_kick = false;
     bool send_tss = false;
@@ -844,9 +910,9 @@ void arpeggiate(int subbeat) {
       }
     }	
 
-    if (send_kick) {
+    if (send_kick && !kick_paused()) {
       send_midi(MIDI_ON, MIDI_DRUM_KICK, MIDI_MAX, ENDPOINT_FOOT_1);
-    } else if (send_tss) {
+    } else if (send_tss && !auto_hh_paused()) {
       send_midi(MIDI_ON,  MIDI_DRUM_KICK, MIDI_MAX, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
       last_fc_foot = !last_fc_foot;
     }
@@ -912,12 +978,13 @@ void arpeggiate(int subbeat) {
     
     if (kick_breath_on &&
 	!downbeat(subbeat) &&
+	!kick_paused() &&
 	((breath > 70 && upbeat(subbeat)) ||
 	 (breath == MIDI_MAX && (preup(subbeat) || predown(subbeat))))) {
       send_kick();
     }
     
-    if (auto_hihat_vol) {
+    if (auto_hihat_vol && !auto_hh_paused()) {
       send_hh(auto_hihat_vol);
     }
   }
@@ -1414,17 +1481,19 @@ void handle_foot_button(uint32_t button, CFIndex value) {
     handle_specific_button(&pause_everything, &last_foot_button_1_down_ns, value);
     return;
   case FOOT_BUTTON_2:
-    handle_specific_button(&pause_arpeggiator, &last_foot_button_2_down_ns, value);
+    handle_specific_button(&pause_low, &last_foot_button_2_down_ns, value);
     return;
   case FOOT_BUTTON_3:
-    handle_specific_button(&pause_drum, &last_foot_button_3_down_ns, value);
+    handle_specific_button(&pause_high, &last_foot_button_3_down_ns, value);
     return;
   case FOOT_BUTTON_4:
-    handle_specific_button(&pause_drum_interpolation, &last_foot_button_4_down_ns, value);
+    handle_specific_button(&pause_arpeggiator, &last_foot_button_4_down_ns, value);
     return;
   case FOOT_BUTTON_5:
+    handle_specific_button(&pause_auto_drums, &last_foot_button_5_down_ns, value);
     return;
   case FOOT_BUTTON_6:
+    handle_specific_button(&pause_auto_hh, &last_foot_button_6_down_ns, value);
     return;
   }
 }
@@ -1712,19 +1781,33 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   count_drum_hit(is_low);
   if (is_low) {
-    if (val < 80) {
-      val = 80;
-    }
+    val = (val-30)*1.5;
     current_drum_vel = val;
   }
-  
-  if (!drum_paused()) {
+
+  if (is_low && !kick_paused()) {
     if (fc_feet_on) {
-      send_midi(mode, MIDI_DRUM_KICK, val, is_low ? ENDPOINT_FOOT_1 : ENDPOINT_FOOT_3);
-    } else if (is_low && manual_kick_on) {
+      send_midi(mode, MIDI_DRUM_KICK, val, ENDPOINT_FOOT_1);
+    } else if (manual_kick_on) {
       send_kick();
-    } else if (!is_low && manual_tss_on) {
-      send_snare(val);
+    }
+  } else if (!is_low) {
+    if (fc_feet_on) {
+      send_midi(mode, MIDI_DRUM_KICK, val, ENDPOINT_FOOT_3);
+    } else if (manual_tss_on) {
+      if (note_in == MIDI_DRUM_PEDAL_1) {
+	if (drum_kit_sound == 0) {
+	  send_raw_hh((val-10)*1.5);
+	} else {
+	  send_kick();
+	}
+      } else if (note_in == MIDI_DRUM_PEDAL_2) {
+	send_rim((val-10)*2);
+      } else if (note_in == MIDI_DRUM_PEDAL_4) {
+	send_crash((val-10)*1.5);
+      } else {
+	send_snare((val-10)*1.5);
+      }
     }
   }
 }
@@ -1793,10 +1876,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
         endpoint != ENDPOINT_BASS_TROMBONE) {
       continue;
     }
-    int use_val = val;
-    if (use_val > MIDI_MAX) {
-      use_val = MIDI_MAX;
-    }
+    int use_val = normalize(val);
+
     if (endpoint == ENDPOINT_TROMBONE ||
         endpoint == ENDPOINT_BASS_TROMBONE) {
       use_val -= MIN_TROMBONE;
