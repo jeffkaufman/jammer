@@ -331,8 +331,8 @@ void voices_reset() {
   auto_hihat_mode = 0;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
-  manual_kick_on = false;
-  manual_tss_on = false;
+  manual_kick_on = true;
+  manual_tss_on = true;
   auto_snare_on = false;
   last_auto_snare_ns = 0;
   drum_kit_sound = 0;
