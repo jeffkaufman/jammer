@@ -465,6 +465,10 @@ bool arpeggiator_paused() {
   return pause_everything || pause_low || pause_arpeggiator;
 }
 
+bool auto_righthand_paused() {
+  return pause_everything || pause_high || pause_arpeggiator;
+}
+
 //  The flex organ follows organ_flex_breath and organ_flex_base.
 //  organ_flex_min follows air, organ_flex_breath follows breath.
 int organ_flex_base = 0;
@@ -1055,14 +1059,16 @@ void arpeggiate_drums(int subbeat) {
 
 int last_auto_righthand = 0;
 void arpeggiate_righthand(int subbeat) {
-  send_midi(MIDI_OFF, last_auto_righthand, 0, ENDPOINT_AUTO_RIGHTHAND);
   if (!auto_righthand_on) {
     return;
   }
   if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
-    last_auto_righthand = select_righthand_note(70);
-    printf("sending %d\n", last_auto_righthand);
-    send_midi(MIDI_ON, last_auto_righthand, 100, ENDPOINT_AUTO_RIGHTHAND);
+    send_midi(MIDI_OFF, last_auto_righthand, 0, ENDPOINT_AUTO_RIGHTHAND);
+    if (subbeat < 72 && !auto_righthand_paused()) {
+      last_auto_righthand = select_righthand_note(70);
+      printf("sending %d\n", last_auto_righthand);
+      send_midi(MIDI_ON, last_auto_righthand, 100, ENDPOINT_AUTO_RIGHTHAND);
+    }
   }
 }    
 
