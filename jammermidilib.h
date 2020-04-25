@@ -24,7 +24,7 @@
    rst  odr  rg   bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rdh  rds  rdk  fcf
-     tkb  tdb  api  pls  rrm  brc
+rht  tkb  tdb  api  pls  rrm  brc
    ...
 
    maj min mix               b3  b24
@@ -58,6 +58,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define TOGGLE_MANUAL_KICK          16
 #define TOGGLE_FC_FEET              15
 
+#define TOGGLE_AUTO_RIGHTHAND       28
 #define TOGGLE_KICK_BREATH          27
 #define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
@@ -65,7 +66,7 @@ arl  rho  ham  atd  pd2  flx   HH
 #define ROTATE_RHYTHM_MODE          23
 #define TOGGLE_BREATH_CHORD         22
 
-#define CONTROL_MAX TOGGLE_KICK_BREATH
+#define CONTROL_MAX TOGGLE_AUTO_RIGHTHAND
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -104,7 +105,8 @@ arl  rho  ham  atd  pd2  flx   HH
 // These two are from https://www.jefftk.com/p/what-noise-does-a-tambourine-make
 #define ENDPOINT_TAMBOURINE_FREE 23
 #define ENDPOINT_TAMBOURINE_STOPPED 24
-#define N_ENDPOINTS (ENDPOINT_TAMBOURINE_STOPPED+1)
+#define ENDPOINT_AUTO_RIGHTHAND 25
+#define N_ENDPOINTS (ENDPOINT_AUTO_RIGHTHAND+1)
 
 // aliases
 #define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
@@ -315,6 +317,12 @@ bool pause_arpeggiator;
 bool pause_auto_drums;
 bool pause_auto_hh;
 
+// For each lefthand note L, what righthand notes have we had?  See
+// register_righthand_note(), age_righthand_notes(), and
+// select_righthand_note().
+float righthand_by_lefthand[12*12];
+bool auto_righthand_on;
+
 void voices_reset() {
   jawharp_on = false;
   bass_trombone_on = false;
@@ -401,6 +409,11 @@ void voices_reset() {
   pause_arpeggiator = false;
   pause_auto_drums = false;
   pause_auto_hh = false;
+
+  for (int i = 0; i < 12*12; i++) {
+    righthand_by_lefthand[i] = 0;
+  }
+  auto_righthand_on = false;
 }
 
 struct ScheduledNote* allocate_scheduled_note() {
@@ -574,6 +587,54 @@ char active_note() {
     return current_drum_pedal_note();
   }
   return root_note;
+}
+
+void register_righthand_note(int righthand_note) {
+  righthand_by_lefthand[(active_note() % 12) * 12 +
+			(righthand_note % 12)]++;
+}
+
+void age_righthand_notes(float age_amount) {
+  for (int i = 0 ; i < 12*12; i++) {
+    righthand_by_lefthand[i] *= age_amount;
+  }
+}
+
+float random_float() {
+  return (float)rand()/(float)(RAND_MAX);
+}
+
+int random_righthand_note() {
+  int lefthand_note = active_note() % 12;
+  float righthand_sum = 0;
+  printf("RH for %d\n", lefthand_note);
+  for (int righthand_note = 0; righthand_note < 12; righthand_note++) {
+    righthand_sum += righthand_by_lefthand[lefthand_note*12 + righthand_note];
+    printf("  %d: %.5f\n", righthand_note, righthand_by_lefthand[lefthand_note*12 + righthand_note]);
+  }
+  if (righthand_sum < 0.01) {
+    printf("too low, kept LH\n");
+    return lefthand_note;
+  }
+  float weighted_random = random_float() * righthand_sum;
+  righthand_sum = 0;
+  for (int righthand_note = 0; righthand_note < 12; righthand_note++) {
+    righthand_sum += righthand_by_lefthand[lefthand_note*12 + righthand_note];
+    if (righthand_sum >= weighted_random) {
+      printf("picked %d\n", righthand_note);
+      return righthand_note;
+    }
+  }
+  printf("this should never happen: %f %f\n", weighted_random, righthand_sum);
+  return lefthand_note;
+}
+
+int select_righthand_note(int min_note) {
+  int righthand_note = random_righthand_note();
+  while (righthand_note < min_note) {
+    righthand_note += 12;
+  }
+  return righthand_note;
 }
 
 void jawharp_off() {
@@ -785,7 +846,7 @@ void send_auto_snare() {
   }
 }
 
-void arpeggiate(int subbeat) {
+void arpeggiate_bass(int subbeat) {
   int note_out = active_note();
   int selected_note = note_out;
 
@@ -888,7 +949,9 @@ void arpeggiate(int subbeat) {
       }
     }
   }
+}
 
+void arpeggiate_drums(int subbeat) {
   if (subbeat == 0) {
   } else if (fc_feet_on) {
     bool send_kick = false;
@@ -988,6 +1051,25 @@ void arpeggiate(int subbeat) {
       send_hh(auto_hihat_vol);
     }
   }
+}
+
+int last_auto_righthand = 0;
+void arpeggiate_righthand(int subbeat) {
+  send_midi(MIDI_OFF, last_auto_righthand, 0, ENDPOINT_AUTO_RIGHTHAND);
+  if (!auto_righthand_on) {
+    return;
+  }
+  if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
+    last_auto_righthand = select_righthand_note(70);
+    printf("sending %d\n", last_auto_righthand);
+    send_midi(MIDI_ON, last_auto_righthand, 100, ENDPOINT_AUTO_RIGHTHAND);
+  }
+}    
+
+void arpeggiate(int subbeat) {
+  arpeggiate_bass(subbeat);
+  arpeggiate_drums(subbeat);
+  arpeggiate_righthand(subbeat);
 }
 
 uint64_t delta(uint64_t a, uint64_t b) {
@@ -1402,6 +1484,8 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 	update_bass();
       }
     }
+  } else {
+    register_righthand_note(note_in);
   }
 
   //if (current_beat_ns != 0 && mode == MIDI_ON) {
@@ -1646,6 +1730,7 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_ARPEGGIATOR:
     arpeggiator_on = !arpeggiator_on;
+    endpoint_notes_off(ENDPOINT_FOOTBASS);
     if (arpeggiator_on) {
       send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
     }
@@ -1661,6 +1746,11 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_KICK_BREATH:
     kick_breath_on = !kick_breath_on;
+    return;
+
+  case TOGGLE_AUTO_RIGHTHAND:
+    auto_righthand_on = !auto_righthand_on;
+    endpoint_notes_off(ENDPOINT_AUTO_RIGHTHAND);
     return;
 
   case ROTATE_ARPEGGIATOR_PATTERN:
@@ -2227,6 +2317,7 @@ void jml_setup() {
   create_source(&endpoints[ENDPOINT_FOOT_4],             CFSTR("jammer-foot-4"));
   create_source(&endpoints[ENDPOINT_TAMBOURINE_FREE],    CFSTR("jammer-tambourine-free"));
   create_source(&endpoints[ENDPOINT_TAMBOURINE_STOPPED], CFSTR("jammer-tambourine-stopped"));
+  create_source(&endpoints[ENDPOINT_AUTO_RIGHTHAND],     CFSTR("jammer-auto-righthand"));
 }
 
 void update_air() {
@@ -2323,6 +2414,7 @@ void jml_tick() {
   // Called every TICK_MS
   update_air();
   forward_air();
+  age_righthand_notes(leakage);
   trigger_subbeats();
   //trigger_scheduled_notes();
 }
