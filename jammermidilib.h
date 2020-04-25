@@ -1802,7 +1802,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 	  send_kick();
 	}
       } else if (note_in == MIDI_DRUM_PEDAL_2) {
-	send_rim((val-10)*2);
+	send_rim((val-10)*1.5);
       } else if (note_in == MIDI_DRUM_PEDAL_4) {
 	send_crash((val-10)*1.5);
       } else {
