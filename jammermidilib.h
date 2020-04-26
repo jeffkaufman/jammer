@@ -1059,11 +1059,11 @@ void arpeggiate_drums(int subbeat) {
 
 int last_auto_righthand = 0;
 void arpeggiate_righthand(int subbeat) {
+  send_midi(MIDI_OFF, last_auto_righthand, 0, ENDPOINT_AUTO_RIGHTHAND);
   if (!auto_righthand_on) {
     return;
   }
   if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
-    send_midi(MIDI_OFF, last_auto_righthand, 0, ENDPOINT_AUTO_RIGHTHAND);
     if (subbeat < 72 && !auto_righthand_paused()) {
       last_auto_righthand = select_righthand_note(70);
       printf("sending %d\n", last_auto_righthand);
