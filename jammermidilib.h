@@ -401,7 +401,7 @@ void voices_reset() {
 
   is_minor_chord = false;
 
-  current_drum_vel = 0;
+  current_drum_vel = 100;
 
   pause_everything = false;
   pause_low = false;
@@ -978,9 +978,9 @@ void arpeggiate_drums(int subbeat) {
     }	
 
     if (send_kick && !kick_paused()) {
-      send_midi(MIDI_ON, MIDI_DRUM_KICK, MIDI_MAX, ENDPOINT_FOOT_1);
+      send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_FOOT_1);
     } else if (send_tss && !auto_hh_paused()) {
-      send_midi(MIDI_ON,  MIDI_DRUM_KICK, MIDI_MAX, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
+      send_midi(MIDI_ON,  MIDI_DRUM_KICK, current_drum_vel, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
       last_fc_foot = !last_fc_foot;
     }
   } else {
@@ -2416,7 +2416,29 @@ void trigger_subbeats() {
   }
 }
 
+int debug_tick_count = 0;
+int debug_subbeat = 0;
+bool debug = false;
+
 void jml_tick() {
+  if (debug) {
+    debug_tick_count++;
+    if (debug_tick_count % 7 == 0) {
+      debug_subbeat++;
+      debug_subbeat = debug_subbeat % 72;
+      if (debug_subbeat == 0) {
+	if (fc_feet_on) {
+	  send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_FOOT_1);
+	  current_drum_vel += 1;
+	  current_drum_vel = current_drum_vel % MIDI_MAX;
+	  printf("vel = %d\n", current_drum_vel);
+	}
+	arpeggiate(72);
+      }
+      arpeggiate(debug_subbeat);
+    }
+  }
+
   // Called every TICK_MS
   update_air();
   forward_air();
