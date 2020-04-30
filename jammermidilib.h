@@ -1877,7 +1877,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   count_drum_hit(is_low);
   if (is_low) {
-    val = (val-30)*1.5;
+    val = (val-(fc_feet_on ? 40 : 30))*1.5;
     current_drum_vel = val;
   }
 
