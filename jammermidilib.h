@@ -765,12 +765,12 @@ void send_kick() {
   } else if (drum_kit_sound == 1) {
     send_midi(MIDI_ON, MIDI_DRUM_KICK_B, current_drum_vel, ENDPOINT_DRUM_A);
   } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, 120, ENDPOINT_DRUM_B);
   } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, 120, ENDPOINT_DRUM_C);
   } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, 110, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_KICK, 110, ENDPOINT_DRUM_C);
   }
 }
 
@@ -780,12 +780,12 @@ void send_raw_hh(int vel) {
   if (drum_kit_sound == 0 || drum_kit_sound == 1) {
     send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_A);
   } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 120, ENDPOINT_DRUM_B);
   } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 120, ENDPOINT_DRUM_C);
   } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 110, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 110, ENDPOINT_DRUM_C);
   } 
 }
 
@@ -801,12 +801,12 @@ void send_rim(int vel) {
   } else if (drum_kit_sound == 1) {
     send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_D);
   } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, 120, ENDPOINT_DRUM_B);
   } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, 120, ENDPOINT_DRUM_C);
   } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, 110, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_RIM, 110, ENDPOINT_DRUM_C);
   }
 }
 
@@ -818,12 +818,12 @@ void send_crash(int vel) {
   } else if (drum_kit_sound == 1) {
     send_midi(MIDI_ON, MIDI_DRUM_CRASH_2, vel, ENDPOINT_DRUM_A);
   } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 120, ENDPOINT_DRUM_B);
   } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 120, ENDPOINT_DRUM_C);
   } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_C);
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 110, ENDPOINT_DRUM_B);
+    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 110, ENDPOINT_DRUM_C);
   }
 }
 
