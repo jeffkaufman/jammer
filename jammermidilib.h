@@ -283,6 +283,9 @@ bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
 bool breath_chord_notes[MIDI_MAX];
+bool sax_button_notes[MIDI_MAX];
+bool trombone_button_notes[MIDI_MAX];
+int ignored_trombone_button_vals[MIDI_MAX];
 bool arpeggiator_on;
 bool arpeggiator_breath_on;
 bool drum_breath_on;
@@ -351,6 +354,9 @@ void voices_reset() {
     atmospheric_drone_notes[i] = false;
     piano_notes[i] = false;
     breath_chord_notes[i] = false;
+    sax_button_notes[i] = false;
+    trombone_button_notes[i] = false;
+    ignored_trombone_button_vals[i] = 0;
   }
   arpeggiator_on = false;
   arpeggiator_breath_on = false;
@@ -1605,6 +1611,9 @@ void handle_control_helper(unsigned int note_in) {
   case ROTATE_SAX_TROMBONE:
     all_notes_off();
     sax_trombone_mode = (sax_trombone_mode + 1) % N_SAX_TROMBONE_MODES;
+    if (!piano_on && sax_trombone_mode == 0) {
+      sax_trombone_mode = 1;
+    }
     return;
 
   case TOGGLE_JAWHARP:
@@ -1797,15 +1806,67 @@ void play_sax_button(unsigned int mode, unsigned int note_out, unsigned int val)
   if (note_out < 54) {
     chosen_endpoint = ENDPOINT_BASS_SAX;
   }
+
+  sax_button_notes[note_out] = (mode == MIDI_ON);
+
   send_midi(mode, note_out, val, chosen_endpoint);
 }
 
-void play_trombone_button(unsigned int mode, unsigned int note_out, unsigned int val) {
+void play_trombone_note(unsigned int mode, unsigned int note_out, unsigned int val) {
   int chosen_endpoint = ENDPOINT_TROMBONE;
   if (note_out < 40) {
     chosen_endpoint = ENDPOINT_BASS_TROMBONE;
   }
   send_midi(mode, note_out, val, chosen_endpoint);
+}
+
+void play_trombone_button(unsigned int mode, unsigned int note_out, unsigned int val) {
+  // When you hold down one button, and press another, usually we just
+  // let the synth handle it, which it does by playing the newer note.
+  // When the sax and trombone are both on, have the trombone stay and
+  // the sax move.
+  if (sax_trombone_mode == 3 && mode == MIDI_ON && val > 0) {
+    for (int i = 0 ; i < MIDI_MAX; i++) {
+      if (trombone_button_notes[i]) {
+	// A note is already playing, so save this note for later, and
+	// maybe it won't play at all.
+	ignored_trombone_button_vals[note_out] = val;
+	return;
+      }
+    }
+  }
+
+  trombone_button_notes[note_out] = (mode == MIDI_ON);
+  if (mode == MIDI_OFF) {
+    // The ignored note was never sent to the synth, so just remove it
+    // from our records.
+    ignored_trombone_button_vals[note_out] = 0;
+  }
+  play_trombone_note(mode, note_out, val);
+
+  if (sax_trombone_mode == 3 && mode == MIDI_OFF) {
+    // If the last playing note is turned off, but we ignored a note
+    // earlier, then switch to that note.
+    bool any_note_on = false;
+    for (int i = 0; i < MIDI_MAX; i++) {
+      if (trombone_button_notes[i]) {
+	any_note_on = true;
+      }
+    }
+    int ignored_note = -1;
+    if (!any_note_on) {
+      for (int i = 0; i < MIDI_MAX; i++) {
+	if (ignored_trombone_button_vals[i] > 0) {
+	  ignored_note = i;
+	}
+      }
+    }
+    if (ignored_note != -1) {
+      play_trombone_note(MIDI_ON, ignored_note, ignored_trombone_button_vals[ignored_note]);
+      ignored_trombone_button_vals[ignored_note] = 0;
+      trombone_button_notes[ignored_note] = true;
+    }
+  }
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
