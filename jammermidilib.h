@@ -1113,8 +1113,8 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 
   int n_downbeats_to_consider = 4;
 
-  for (float candidate_bpm = 100;
-       candidate_bpm <= 140;
+  for (float candidate_bpm = 80;
+       candidate_bpm <= 160;
        candidate_bpm += 0.25) {
 
     uint64_t whole_note_ns = 60L * NS_PER_SEC / candidate_bpm;
