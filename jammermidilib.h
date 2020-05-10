@@ -47,7 +47,7 @@ rht  tkb  tdb  api  pls  rrm  brc
 #define TOGGLE_JAWHARP               2
 #define TOGGLE_ORGAN_FLEX         9
 
-#define SELECT_SAX_TROMBONE          1
+#define ROTATE_SAX_TROMBONE          1
 #define ROTATE_AUTO_HIHAT         8
 
 #define TOGGLE_ARPEGGIATOR          21
@@ -80,6 +80,8 @@ rht  tkb  tdb  api  pls  rrm  brc
 #define N_RHYTHM_MODES 2
 #define N_AUTO_HIHAT_MODES 9
 #define N_DRUM_KIT_SOUNDS 5
+
+#define N_SAX_TROMBONE_MODES 4
 
 /* endpoints */
 #define ENDPOINT_SAX 0
@@ -269,7 +271,7 @@ bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
 int auto_hihat_mode;
-bool sax_on;
+int sax_trombone_mode;
 bool listen_drum_pedal;
 int most_recent_drum_pedal;
 bool manual_kick_on;
@@ -358,7 +360,7 @@ void voices_reset() {
   current_arpeggiator_note = -1;
 
   button_endpoint = ENDPOINT_SAX;
-  sax_on = true;
+  sax_trombone_mode = 1;
   root_note = 26;  // D @ 37Hz
 
   air_locked = false;
@@ -1531,6 +1533,7 @@ void change_button_endpoint(int endpoint) {
     jawharp_on = false;
     jawharp_off();
   }
+  sax_trombone_mode = 0;
   button_endpoint = endpoint;
 }
 
@@ -1599,10 +1602,9 @@ void handle_control_helper(unsigned int note_in) {
     air_lock();
     return;
 
-  case SELECT_SAX_TROMBONE:
+  case ROTATE_SAX_TROMBONE:
     all_notes_off();
-    sax_on = !sax_on;
-    change_button_endpoint(sax_on ? ENDPOINT_SAX : ENDPOINT_TROMBONE);
+    sax_trombone_mode = (sax_trombone_mode + 1) % N_SAX_TROMBONE_MODES;
     return;
 
   case TOGGLE_JAWHARP:
@@ -1789,8 +1791,36 @@ int remap(int val, int min, int max) {
   return val * range / MIDI_MAX + min;
 }
 
+void play_sax_button(unsigned int mode, unsigned int note_out, unsigned int val) {
+  int chosen_endpoint = ENDPOINT_SAX;
+  note_out += 24;
+  if (note_out < 54) {
+    chosen_endpoint = ENDPOINT_BASS_SAX;
+  }
+  send_midi(mode, note_out, val, chosen_endpoint);
+}
+
+void play_trombone_button(unsigned int mode, unsigned int note_out, unsigned int val) {
+  int chosen_endpoint = ENDPOINT_TROMBONE;
+  if (note_out < 40) {
+    chosen_endpoint = ENDPOINT_BASS_TROMBONE;
+  }
+  send_midi(mode, note_out, val, chosen_endpoint);
+}
+
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
+
+  if (sax_trombone_mode == 1 || sax_trombone_mode == 3) {
+    play_sax_button(mode, note_out, val);
+  }
+  if (sax_trombone_mode == 2 || sax_trombone_mode == 3) {
+    play_trombone_button(mode, note_out, val);
+  }
+
+  if (sax_trombone_mode != 0) {
+    return;
+  }
 
   if (button_endpoint == ENDPOINT_JAWHARP) {
     root_note = note_out;
@@ -1798,22 +1828,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  int chosen_endpoint = button_endpoint;
-  if (button_endpoint == ENDPOINT_SAX) {
-    note_out += 24;
-    if (note_out < 54) {
-      chosen_endpoint = ENDPOINT_BASS_SAX;
-    }
-  } else if (button_endpoint == ENDPOINT_TROMBONE) {
-    if (note_out < 40) {
-      chosen_endpoint = ENDPOINT_BASS_TROMBONE;
-    }
-  } else if (button_endpoint == ENDPOINT_ORGAN_LOW ||
-             button_endpoint == ENDPOINT_JAWHARP) {
-    // pass
-  } else {
-    note_out += 12;
-  }
+  note_out += 12;
 
   if (button_endpoint == ENDPOINT_OVERDRIVEN_RHODES) {
     // This one is special: we fade from rhodes to overdriven rhodes based on
@@ -1826,15 +1841,14 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  if (button_endpoint == ENDPOINT_ORGAN_LOW ||
-      button_endpoint == ENDPOINT_HAMMOND ||
+  if (button_endpoint == ENDPOINT_HAMMOND ||
       button_endpoint == ENDPOINT_ORGAN_FLEX ||
       button_endpoint == ENDPOINT_SINE_PAD ||
       button_endpoint == ENDPOINT_SWEEP_PAD) {
     val = MIDI_MAX;
   }
 
-  send_midi(mode, note_out, val, chosen_endpoint);
+  send_midi(mode, note_out, val, button_endpoint);
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
