@@ -176,6 +176,7 @@ rht  tkb  tdb  api  pls  rrm  brc
 
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS+1)
+#define N_SUBBEAT_UPBEAT_CANDIDATES 8
 
 #define MAX_SCHEDULED_NOTES 64
 
@@ -334,6 +335,9 @@ bool auto_righthand_on;
 // For each time slice, how often has a note fallen here?
 float subbeat_frequencies[N_NOTE_DIVISIONS];
 bool groove_follows_piano;
+float subbeat_upbeat_candidates[N_SUBBEAT_UPBEAT_CANDIDATES];
+int subbeat_upbeat_candidates_index;
+int best_subbeat_upbeat_candidate;
 
 void voices_reset() {
   jawharp_on = false;
@@ -435,6 +439,21 @@ void voices_reset() {
     subbeat_frequencies[i] = 0;
   }
   groove_follows_piano = false;
+  for (int i = 0 ; i < N_SUBBEAT_UPBEAT_CANDIDATES; i++) {
+    subbeat_upbeat_candidates[i] = 0.5;
+  }
+  subbeat_upbeat_candidates_index = 0;
+  best_subbeat_upbeat_candidate = N_NOTE_DIVISIONS/2;
+}
+
+void compute_best_subbeat_upbeat_candidate() {
+  float sum = 0;
+  for (int i = 0; i < N_SUBBEAT_UPBEAT_CANDIDATES; i++) {
+    sum += subbeat_upbeat_candidates[i];
+  }
+  best_subbeat_upbeat_candidate =
+    (sum / N_SUBBEAT_UPBEAT_CANDIDATES +
+     0.5/N_NOTE_DIVISIONS)*N_NOTE_DIVISIONS;
 }
 
 struct ScheduledNote* allocate_scheduled_note() {
@@ -691,6 +710,14 @@ void register_subbeat_frequency() {
     if (subbeat_frequency < N_NOTE_DIVISIONS) {
       subbeat_frequencies[subbeat_frequency]++;
     }
+    float subbeat_location =
+      1.0 * (now() - last_downbeat_ns) / current_beat_ns;
+    if (subbeat_location >= 3.0/8 && subbeat_location <= 3.0/4) {
+      subbeat_upbeat_candidates[subbeat_upbeat_candidates_index] =
+        subbeat_location;
+      subbeat_upbeat_candidates_index =
+        (subbeat_upbeat_candidates_index+1)%N_SUBBEAT_UPBEAT_CANDIDATES;
+    }
   }
 }
 
@@ -774,12 +801,20 @@ bool downbeat(subbeat) {
   return subbeat % 72 == 0;
 }
 bool preup(subbeat) {
+  if (groove_follows_piano) {
+    return subbeat == best_subbeat_upbeat_candidate/2;
+  }
+
   if (rhythm_mode == 1) {
     subbeat -= 2;  // Hold the beat slightly.
   }
   return subbeat == (jig_time ? (72/3-1) : (72/4-1));
 }
 bool upbeat(subbeat) {
+  if (groove_follows_piano) {
+    return subbeat == best_subbeat_upbeat_candidate;
+  }
+
   if (rhythm_mode == 1) {
     subbeat += 2;  // Push the beat slightly.
   }
@@ -787,6 +822,16 @@ bool upbeat(subbeat) {
   return subbeat == (jig_time ? (2*72/3-1) : (72/2-1));
 }
 bool predown(subbeat) {
+  if (groove_follows_piano) {
+    if (best_subbeat_upbeat_candidate > 42) {
+      return false; // too swung for a predown
+    } else {
+      // split the difference
+      return subbeat == 
+        best_subbeat_upbeat_candidate + (72 - best_subbeat_upbeat_candidate)/2;
+    }
+  }
+
   if (jig_time) return false;  // This beat doesn't happen in jig time.
 
   if (rhythm_mode == 1) {
@@ -1256,6 +1301,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
     }
 
     arpeggiate(0);
+    compute_best_subbeat_upbeat_candidate();
     print_subbeat_frequencies();
     last_downbeat_ns = current_time;
 
