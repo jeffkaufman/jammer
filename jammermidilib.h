@@ -679,18 +679,18 @@ void print_subbeat_frequencies() {
   }
 }  
 
+void age_subeat_frequencies(float age_amount) {
+  for (int i = 0; i < N_NOTE_DIVISIONS; i++) {
+    subbeat_frequencies[i] *= age_amount;
+  }
+}
+
 void register_subbeat_frequency() {
   if (last_downbeat_ns > 0 && current_beat_ns > 0) {
     uint64_t subbeat_frequency = N_NOTE_DIVISIONS * (now() - last_downbeat_ns) / current_beat_ns;
     if (subbeat_frequency < N_NOTE_DIVISIONS) {
       subbeat_frequencies[subbeat_frequency]++;
     }
-  }
-}
-
-void age_subeat_frequencies(float age_amount) {
-  for (int i = 0; i < N_NOTE_DIVISIONS; i++) {
-    subbeat_frequencies[i] *= age_amount;
   }
 }
 
@@ -1115,16 +1115,21 @@ void swell_groove_bass(int subbeat) {
   if (groove_bass_on) {
     int val = 0;
     if (subbeat < N_NOTE_DIVISIONS) {
-      float sum = 0;
+      float sum = 60;
       for (int i = 0; i < N_NOTE_DIVISIONS; i++) {
 	sum += subbeat_frequencies[i];
       }
-      if (sum > 4) {
-	val = MIDI_MAX * 32 * subbeat_frequencies[subbeat] / sum;
-	printf("%d: sum=%.2f cur=%.2f val=%d\n", subbeat, sum, subbeat_frequencies[subbeat], val);
-	if (val > MIDI_MAX) {
-	  val = MIDI_MAX;
-	}
+
+      val =
+	0.10 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-5] +
+	0.40 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-4] +
+	0.40 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-3] +
+	0.10 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-2];
+
+      val = MIDI_MAX * 32 * val / sum;
+      //printf("%d: sum=%.2f cur=%.2f val=%d\n", subbeat, sum, subbeat_frequencies[subbeat], val);
+      if (val > MIDI_MAX) {
+	val = MIDI_MAX;
       }
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_GROOVE_BASS);
@@ -1304,9 +1309,9 @@ void update_bass() {
   if (groove_bass_on) {
     if (current_note[ENDPOINT_GROOVE_BASS] != note_out) {
       send_midi(MIDI_OFF, current_note[ENDPOINT_GROOVE_BASS], 0, ENDPOINT_GROOVE_BASS);
+      current_note[ENDPOINT_GROOVE_BASS] = note_out;
+      send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_GROOVE_BASS);
     }
-    current_note[ENDPOINT_GROOVE_BASS] = note_out;
-    send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_GROOVE_BASS);
   }
 
   if (atmospheric_drone && current_note[ENDPOINT_SINE_PAD] != note_out) {
@@ -1534,8 +1539,9 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  register_subbeat_frequency();
-
+  if (mode == MIDI_ON) {
+    register_subbeat_frequency();
+  }
   piano_notes[note_in] = (mode == MIDI_ON);
 
   unsigned int max_bass = 50;
@@ -1943,6 +1949,10 @@ void play_trombone_button(unsigned int mode, unsigned int note_out, unsigned int
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
+
+  if (mode == MIDI_ON) {
+    register_subbeat_frequency();
+  }
 
   if (sax_trombone_mode == 1 || sax_trombone_mode == 3) {
     play_sax_button(mode, note_out, val);
