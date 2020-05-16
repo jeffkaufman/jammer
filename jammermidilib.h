@@ -35,7 +35,7 @@ rht  TBD  tdb  api  pls  TBD  brc
 #define TOGGLE_OVERDRIVEN_RHODES     6
 #define TOGGLE_RHODES            13
 
-// #define TBD                       5
+#define TOGGLE_KEEP_GOING            5
 #define TOGGLE_HAMMOND           12
 
 #define TOGGLE_BASS_TROMBONE         4
@@ -176,6 +176,7 @@ rht  TBD  tdb  api  pls  TBD  brc
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS+1)
 #define N_SUBBEAT_UPBEAT_CANDIDATES 8
+#define N_SUBBEAT_DOWNBEAT_CANDIDATES 8
 
 #define MAX_SCHEDULED_NOTES 64
 
@@ -333,6 +334,12 @@ float subbeat_upbeat_candidates[N_SUBBEAT_UPBEAT_CANDIDATES];
 int subbeat_upbeat_candidates_index;
 int best_subbeat_upbeat_candidate;
 
+uint64_t subbeat_downbeat_candidates[N_SUBBEAT_DOWNBEAT_CANDIDATES];
+int subbeat_downbeat_candidates_index;
+
+bool keep_going;
+
+
 void voices_reset() {
   jawharp_on = false;
   bass_trombone_on = false;
@@ -431,6 +438,13 @@ void voices_reset() {
   }
   subbeat_upbeat_candidates_index = 0;
   best_subbeat_upbeat_candidate = N_NOTE_DIVISIONS/2;
+
+  for (int i = 0 ; i < N_SUBBEAT_DOWNBEAT_CANDIDATES; i++) {
+    subbeat_downbeat_candidates[i] = 0;
+  }
+  subbeat_downbeat_candidates_index = 0;
+
+  keep_going = true;
 }
 
 void compute_best_subbeat_upbeat_candidate() {
@@ -668,16 +682,29 @@ int select_righthand_note(int min_note) {
   return righthand_note;
 }
 
-void maybe_register_upbeat() {
+float subbeat_location() {
   if (last_downbeat_ns > 0 && current_beat_ns > 0) {
-    float subbeat_location =
-      1.0 * (now() - last_downbeat_ns) / current_beat_ns;
-    if (subbeat_location >= 3.0/8 && subbeat_location <= 3.0/4) {
-      subbeat_upbeat_candidates[subbeat_upbeat_candidates_index] =
-        subbeat_location;
-      subbeat_upbeat_candidates_index =
-        (subbeat_upbeat_candidates_index+1)%N_SUBBEAT_UPBEAT_CANDIDATES;
-    }
+    return 1.0 * (now() - last_downbeat_ns) / current_beat_ns;
+  }
+  return -1;
+}
+
+void maybe_register_upbeat() {
+  float loc = subbeat_location();
+  if (loc >= 3.0/8 && loc <= 3.0/4) {
+    subbeat_upbeat_candidates[subbeat_upbeat_candidates_index] = loc;
+    subbeat_upbeat_candidates_index =
+      (subbeat_upbeat_candidates_index+1)%N_SUBBEAT_UPBEAT_CANDIDATES;
+  }
+}
+
+void maybe_register_downbeat() {
+  float loc = subbeat_location();
+  if ((loc > -0.9 && loc < 0.1) ||
+      (loc > 0.9 && loc < 1.1)) {
+    subbeat_downbeat_candidates[subbeat_downbeat_candidates_index] = now();
+    subbeat_downbeat_candidates_index =
+      (subbeat_downbeat_candidates_index+1)%N_SUBBEAT_DOWNBEAT_CANDIDATES;
   }
 }
 
@@ -869,11 +896,11 @@ void arpeggiate_bass(int subbeat) {
   if (arpeggiator_on) {
     if (current_arpeggiator_pattern == 1) {
       if (upbeat(subbeat)) {
-	selected_note = note_out + 12;
+        selected_note = note_out + 12;
       }
     } else if (current_arpeggiator_pattern == 2) {
       if (downbeat(subbeat)) {
-	send_note = false;
+        send_note = false;
       }
     } else if (current_arpeggiator_pattern == 3) {
       if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
@@ -1120,13 +1147,14 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
     // kicks preceeding a snare to be half a beat early.
     for (int i = 0; i < n_downbeats_to_consider; i++) {
       uint64_t target = current_time - (i+1)*whole_note_ns;
-      uint64_t error = min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
-			   best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
+      uint64_t error =
+        min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
+            best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
       bool early_kick_allowed = i % 2 == (is_low ? 1 : 0);
       if (early_kick_allowed) {
-	uint64_t early_kick_target = target - (whole_note_ns/2);
-	uint64_t early_kick_error = best_match_hit(early_kick_target, kick_times, KICK_TIMES_LENGTH);
-	error = min(error, early_kick_error);
+        uint64_t early_kick_target = target - (whole_note_ns/2);
+        uint64_t early_kick_error = best_match_hit(early_kick_target, kick_times, KICK_TIMES_LENGTH);
+        error = min(error, early_kick_error);
       }
       candidate_error += error;
     }
@@ -1464,6 +1492,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   if (mode == MIDI_ON) {
     maybe_register_upbeat();
+    maybe_register_downbeat();
   }
   piano_notes[note_in] = (mode == MIDI_ON);
 
@@ -1767,6 +1796,10 @@ void handle_control_helper(unsigned int note_in) {
     fc_feet_on = !fc_feet_on;
     return;
 
+  case TOGGLE_KEEP_GOING:
+    keep_going = !keep_going;
+    return;
+
   }
 }
 
@@ -1853,6 +1886,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   if (mode == MIDI_ON) {
     maybe_register_upbeat();
+    maybe_register_downbeat();
   }
 
   if (sax_trombone_mode == 1 || sax_trombone_mode == 3) {
@@ -1899,6 +1933,8 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (mode != MIDI_ON) {
     return;
   }
+
+  maybe_register_downbeat();
 
   // Handle pedals after determining the active note, so that only
   // future notes are affected.
@@ -1950,17 +1986,17 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
       send_midi(mode, MIDI_DRUM_KICK, val, ENDPOINT_FOOT_3);
     } else if (manual_tss_on) {
       if (note_in == MIDI_DRUM_PEDAL_1) {
-	if (drum_kit_sound == 0) {
-	  send_raw_hh((val-10)*1.5);
-	} else {
-	  send_kick();
-	}
+        if (drum_kit_sound == 0) {
+          send_raw_hh((val-10)*1.5);
+        } else {
+          send_kick();
+        }
       } else if (note_in == MIDI_DRUM_PEDAL_2) {
-	send_rim((val-10)*1.5);
+        send_rim((val-10)*1.5);
       } else if (note_in == MIDI_DRUM_PEDAL_4) {
-	send_crash((val-10)*1.5);
+        send_crash((val-10)*1.5);
       } else {
-	send_snare((val-10)*1.5);
+        send_snare((val-10)*1.5);
       }
     }
   }
