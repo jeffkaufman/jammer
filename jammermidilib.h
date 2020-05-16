@@ -1172,7 +1172,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
 
-  if (imaginary) {
+  if (imaginary && !keep_going) {
     // If this is an imaginary beat, require there to have been at
     // kick hit about half a beat ago, since we're trying to handle
     // the case where the kick is played early.
