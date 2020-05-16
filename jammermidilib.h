@@ -21,10 +21,10 @@
 /*
  Controls:
 
-   rst  odr  rg   bt1  pd1  jaw  s/t
+   rst  odr  TBD   bt1  pd1  jaw  s/t
 arl  rho  ham  atd  pd2  flx   HH
    arp  app  ldp  rdh  rds  rdk  fcf
-rht  tkb  tdb  api  pls  rrm  brc
+rht  TBD  tdb  api  pls  TBD  brc
    ...
 
    maj min mix               b3  b24
@@ -35,7 +35,7 @@ rht  tkb  tdb  api  pls  rrm  brc
 #define TOGGLE_OVERDRIVEN_RHODES     6
 #define TOGGLE_RHODES            13
 
-#define TOGGLE_REEL_JIG             5
+// #define TBD                       5
 #define TOGGLE_HAMMOND           12
 
 #define TOGGLE_BASS_TROMBONE         4
@@ -59,11 +59,11 @@ rht  tkb  tdb  api  pls  rrm  brc
 #define TOGGLE_FC_FEET              15
 
 #define TOGGLE_AUTO_RIGHTHAND       28
-#define TOGGLE_GROOVE_BASS          27
+// #define TBD                      27
 #define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
 #define ROTATE_DRUM_KIT             24
-#define ROTATE_RHYTHM_MODE          23
+// #define TBD                      23
 #define TOGGLE_BREATH_CHORD         22
 
 #define CONTROL_MAX TOGGLE_AUTO_RIGHTHAND
@@ -77,7 +77,6 @@ rht  tkb  tdb  api  pls  rrm  brc
 #define BUTTON_RACOON 95
 
 #define N_ARPEGGIATOR_PATTERNS 8
-#define N_RHYTHM_MODES 2
 #define N_AUTO_HIHAT_MODES 9
 #define N_DRUM_KIT_SOUNDS 5
 
@@ -292,7 +291,6 @@ int ignored_trombone_button_vals[MIDI_MAX];
 bool arpeggiator_on;
 bool arpeggiator_breath_on;
 bool drum_breath_on;
-bool groove_bass_on;
 int current_arpeggiator_pattern;
 int current_arpeggiator_note;
 int button_endpoint;
@@ -309,9 +307,7 @@ uint64_t next_ns[N_SUBBEATS];
 uint64_t tambourine_next_ns[N_SUBBEATS];
 bool fc_feet_on;
 bool last_fc_foot;
-int rhythm_mode;
 int state;
-bool jig_time;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
@@ -333,8 +329,6 @@ float righthand_by_lefthand[12*12];
 bool auto_righthand_on;
 
 // For each time slice, how often has a note fallen here?
-float subbeat_frequencies[N_NOTE_DIVISIONS];
-bool groove_follows_piano;
 float subbeat_upbeat_candidates[N_SUBBEAT_UPBEAT_CANDIDATES];
 int subbeat_upbeat_candidates_index;
 int best_subbeat_upbeat_candidate;
@@ -372,7 +366,6 @@ void voices_reset() {
   arpeggiator_on = false;
   arpeggiator_breath_on = false;
   drum_breath_on = false;
-  groove_bass_on = false;
   current_arpeggiator_pattern = 0;
   current_arpeggiator_note = -1;
 
@@ -403,10 +396,8 @@ void voices_reset() {
 
   fc_feet_on = false;
   last_fc_foot = false;
-  rhythm_mode = 0;
 
   state = STATE_DEFAULT;
-  jig_time = false;
 
   for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
     scheduled_notes[i].ts = 0;
@@ -435,10 +426,6 @@ void voices_reset() {
   }
   auto_righthand_on = false;
 
-  for (int i = 0; i < N_NOTE_DIVISIONS; i++) {
-    subbeat_frequencies[i] = 0;
-  }
-  groove_follows_piano = false;
   for (int i = 0 ; i < N_SUBBEAT_UPBEAT_CANDIDATES; i++) {
     subbeat_upbeat_candidates[i] = 0.5;
   }
@@ -473,7 +460,7 @@ void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int
   struct ScheduledNote* on = allocate_scheduled_note();
   on->ts = current_time + wait;
   on->actionType = MIDI_ON;
-  struct ScheduledNote* off = allocate_scheduled_note(); 
+  struct ScheduledNote* off = allocate_scheduled_note();
   off->ts = on->ts + length;
   off->actionType = MIDI_OFF;
 
@@ -681,35 +668,8 @@ int select_righthand_note(int min_note) {
   return righthand_note;
 }
 
-void print_subbeat_frequencies() {
-  float max = 0;
-  for (int i = 0 ; i < N_NOTE_DIVISIONS; i++) {
-    if (subbeat_frequencies[i] > max) {
-      max = subbeat_frequencies[i];
-    }
-  }
-  if (max < 5) {
-    printf("subbeat frequencies: too little data (%.2f)\n", max);
-    return;
-  }
-  for (int i = 0 ; i < N_NOTE_DIVISIONS; i++) {
-    int width = 50 /* cols */ * subbeat_frequencies[i] / max;
-    printf("%02d  %*c%.2f\n", i, width, ' ', subbeat_frequencies[i]);
-  }
-}  
-
-void age_subeat_frequencies(float age_amount) {
-  for (int i = 0; i < N_NOTE_DIVISIONS; i++) {
-    subbeat_frequencies[i] *= age_amount;
-  }
-}
-
-void register_subbeat_frequency() {
+void maybe_register_upbeat() {
   if (last_downbeat_ns > 0 && current_beat_ns > 0) {
-    uint64_t subbeat_frequency = N_NOTE_DIVISIONS * (now() - last_downbeat_ns) / current_beat_ns;
-    if (subbeat_frequency < N_NOTE_DIVISIONS) {
-      subbeat_frequencies[subbeat_frequency]++;
-    }
     float subbeat_location =
       1.0 * (now() - last_downbeat_ns) / current_beat_ns;
     if (subbeat_location >= 3.0/8 && subbeat_location <= 3.0/4) {
@@ -773,71 +733,23 @@ void vbass_trombone_off() {
   }
 }
 
-/* Sometimes we want even divisions, and that's simple, but other
- * times we want it swung.  Here are some measurements from
- * playing around on mandolin:
- *
- *  0    0.000   0.000   0.000     00.0%   00.0%   00.0%      00.0%
- *  2    0.154   0.139   0.168     26.9%   26.0%   30.6%      27.8%
- *  4    0.275   0.253   0.264     47.9%   47.3%   48.1%      47.8%
- *  6    0.444   0.421   0.420     77.4%   78.7%   76.5%      77.5%
- *  8    0.574   0.535   0.549    100.0%  100.0%  100.0%     100.0%
- *
- * Here are some measurements of pushing the beat while playing strict
- * upbeats:
- *
- * 47.2 49.2 48.0 49.8 -> 48.6
- *
- * These are just 3s; I wasn't playing 2 or 4.
- *
- * These are 1/36 of a whole beat.  So when playing reel time we have:
- *  - downbeat: as normal
- *  - preup:   1/36 late,  so  9 instead of  8
- *  - upbeat:  1/36 early, so 16 instead of 17
- *  - predown: 1/36 late,  so 27 instead of 26
- * 
- */
 bool downbeat(subbeat) {
   return subbeat % 72 == 0;
 }
 bool preup(subbeat) {
-  if (groove_follows_piano) {
-    return subbeat == best_subbeat_upbeat_candidate/2;
-  }
-
-  if (rhythm_mode == 1) {
-    subbeat -= 2;  // Hold the beat slightly.
-  }
-  return subbeat == (jig_time ? (72/3-1) : (72/4-1));
+  return subbeat == best_subbeat_upbeat_candidate/2;
 }
 bool upbeat(subbeat) {
-  if (groove_follows_piano) {
-    return subbeat == best_subbeat_upbeat_candidate;
-  }
-
-  if (rhythm_mode == 1) {
-    subbeat += 2;  // Push the beat slightly.
-  }
-
-  return subbeat == (jig_time ? (2*72/3-1) : (72/2-1));
+  return subbeat == best_subbeat_upbeat_candidate;
 }
 bool predown(subbeat) {
-  if (groove_follows_piano) {
-    if (best_subbeat_upbeat_candidate > 42) {
-      return false; // too swung for a predown
-    } else {
-      // split the difference
-      return subbeat == 
-        best_subbeat_upbeat_candidate + (72 - best_subbeat_upbeat_candidate)/2;
-    }
+  if (best_subbeat_upbeat_candidate > 42) {
+    return false; // too swung for a predown
+  } else {
+    // split the difference
+    return subbeat ==
+      best_subbeat_upbeat_candidate + (72 - best_subbeat_upbeat_candidate)/2;
   }
-
-  if (jig_time) return false;  // This beat doesn't happen in jig time.
-
-  if (rhythm_mode == 1) {
-    subbeat -= 2;  // Hold the beat slightly.
-  }
-  return subbeat == (3*72/4-1);
 }
 
 void arpeggiate_tambourine(int subbeat) {
@@ -847,8 +759,8 @@ void arpeggiate_tambourine(int subbeat) {
 
   if (auto_hihat_mode == 6 && (downbeat(subbeat) || upbeat(subbeat))) {
     send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, upbeat(subbeat) ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
-  }     
-}  
+  }
+}
 
 /* drum kits:
  *   0: acoustic #1
@@ -884,7 +796,7 @@ void send_raw_hh(int vel) {
   } else if (drum_kit_sound == 4) {
     send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 110, ENDPOINT_DRUM_B);
     send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 110, ENDPOINT_DRUM_C);
-  } 
+  }
 }
 
 void send_hh(int relative_vel) {
@@ -1023,7 +935,7 @@ void arpeggiate_bass(int subbeat) {
 	end_note = true;
 	selected_note = note_out + 12;
       }
-      
+
       if (breath > 120) {
 	// triplets!
 	end_note = send_note = subbeat % 12 == 0;
@@ -1040,7 +952,7 @@ void arpeggiate_bass(int subbeat) {
     }
 
     if (end_note && current_arpeggiator_note != -1) {
-      send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS); 
+      send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS);
       current_arpeggiator_note = -1;
     }
 
@@ -1107,7 +1019,7 @@ void arpeggiate_drums(int subbeat) {
       auto_hihat_3_vol = 100;
       auto_hihat_4_vol = 100;
     }
-    
+
     int auto_hihat_vol = 0;
     if (downbeat(subbeat)) {
       auto_hihat_vol = auto_hihat_1_vol;
@@ -1118,9 +1030,9 @@ void arpeggiate_drums(int subbeat) {
     } else if (predown(subbeat)) {
       auto_hihat_vol = auto_hihat_4_vol;
     }
-    
+
     if (drum_breath_on) {
-      if (breath > 60 && 
+      if (breath > 60 &&
 	  ((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
 	auto_hihat_vol = 100;
       }
@@ -1134,7 +1046,7 @@ void arpeggiate_drums(int subbeat) {
 	}
       }
     }
-    
+
     if (auto_hihat_vol && !auto_hh_paused()) {
       send_hh(auto_hihat_vol);
     }
@@ -1154,43 +1066,17 @@ void arpeggiate_righthand(int subbeat) {
       send_midi(MIDI_ON, last_auto_righthand, 100, ENDPOINT_AUTO_RIGHTHAND);
     }
   }
-}    
-
-void swell_groove_bass(int subbeat) {
-  if (groove_bass_on) {
-    int val = 0;
-    if (subbeat < N_NOTE_DIVISIONS) {
-      float sum = 60;
-      for (int i = 0; i < N_NOTE_DIVISIONS; i++) {
-	sum += subbeat_frequencies[i];
-      }
-
-      val =
-	0.10 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-5] +
-	0.40 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-4] +
-	0.40 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-3] +
-	0.10 * subbeat_frequencies[(subbeat+N_NOTE_DIVISIONS)%N_NOTE_DIVISIONS-2];
-
-      val = MIDI_MAX * 32 * val / sum;
-      //printf("%d: sum=%.2f cur=%.2f val=%d\n", subbeat, sum, subbeat_frequencies[subbeat], val);
-      if (val > MIDI_MAX) {
-	val = MIDI_MAX;
-      }
-    }
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_GROOVE_BASS);
-  }
 }
 
 void arpeggiate(int subbeat) {
   arpeggiate_bass(subbeat);
   arpeggiate_drums(subbeat);
   arpeggiate_righthand(subbeat);
-  swell_groove_bass(subbeat);
 }
 
 uint64_t delta(uint64_t a, uint64_t b) {
   return a > b ? a - b : b - a;
-}    
+}
 
 uint64_t min(uint64_t a, uint64_t b) {
   return a < b ? a : b;
@@ -1216,10 +1102,10 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
   //
   // If the hit doesn't fit the pattern, don't give up, treat it as
   // an extra hit and ignore it.
-  
+
   float best_bpm = -1;
   // something way high, in case we fail to find anything
-  uint64_t best_error = NS_PER_SEC * 100; 
+  uint64_t best_error = NS_PER_SEC * 100;
 
   int n_downbeats_to_consider = 4;
 
@@ -1282,7 +1168,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 	 best_error,
 	 max_allowed_error,
 	 100 * (float)best_error / (float)max_allowed_error);
-  
+
   if (acceptable_error) {
     current_beat_ns = whole_beat;
 
@@ -1302,7 +1188,6 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 
     arpeggiate(0);
     compute_best_subbeat_upbeat_candidate();
-    print_subbeat_frequencies();
     last_downbeat_ns = current_time;
 
     next_ns[0] = current_time;
@@ -1341,7 +1226,7 @@ void trigger_breath_chord(int note_out) {
   int fifth = note_out + 7;
   while (fifth + 12 <= MAX_HAMMOND_NOTE) fifth += 12;
   breath_chord_note_on(fifth);
-  
+
   if (listen_drum_pedal) {
     int third = note_out + (is_minor_chord ? 3 : 4);
     while (third + 12 <= MAX_HAMMOND_NOTE) third += 12;
@@ -1351,14 +1236,6 @@ void trigger_breath_chord(int note_out) {
 
 void update_bass() {
   int note_out = active_note();
-
-  if (groove_bass_on) {
-    if (current_note[ENDPOINT_GROOVE_BASS] != note_out) {
-      send_midi(MIDI_OFF, current_note[ENDPOINT_GROOVE_BASS], 0, ENDPOINT_GROOVE_BASS);
-      current_note[ENDPOINT_GROOVE_BASS] = note_out;
-      send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_GROOVE_BASS);
-    }
-  }
 
   if (atmospheric_drone && current_note[ENDPOINT_SINE_PAD] != note_out) {
     atmospheric_drone_off();
@@ -1371,7 +1248,7 @@ void update_bass() {
 
   if (breath_chord_playing && current_note[ENDPOINT_HAMMOND] != note_out) {
     trigger_breath_chord(note_out);
-  }    
+  }
 
   if (breath < 3) return;
 
@@ -1586,7 +1463,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   if (mode == MIDI_ON) {
-    register_subbeat_frequency();
+    maybe_register_upbeat();
   }
   piano_notes[note_in] = (mode == MIDI_ON);
 
@@ -1686,7 +1563,7 @@ void handle_specific_button(bool* pause_toggle, uint64_t* last_down_ns, CFIndex 
     if (button_down_ns > NS_PER_SEC / 2 &&
 	button_down_ns < NS_PER_SEC * 16) {
       *pause_toggle = !*pause_toggle;
-    }      
+    }
   }
 }
 
@@ -1840,15 +1717,11 @@ void handle_control_helper(unsigned int note_in) {
     manual_kick_on = !manual_kick_on;
     return;
 
-  case ROTATE_RHYTHM_MODE:
-    rhythm_mode = (rhythm_mode + 1) % N_RHYTHM_MODES;
-    return;
-
   case TOGGLE_LISTEN_DRUM_PEDAL:
     listen_drum_pedal = !listen_drum_pedal;
     if (listen_drum_pedal) {
       manual_kick_on = manual_tss_on = true;
-    } 
+    }
     return;
 
   case TOGGLE_ATMOSPHERIC_DRONE:
@@ -1877,15 +1750,6 @@ void handle_control_helper(unsigned int note_in) {
     drum_breath_on = !drum_breath_on;
     return;
 
-  case TOGGLE_GROOVE_BASS:
-    groove_bass_on = !groove_bass_on;
-    groove_follows_piano = groove_bass_on;
-    send_midi(MIDI_CC, CC_07, 0, ENDPOINT_GROOVE_BASS);
-    if (!groove_bass_on) {
-      endpoint_notes_off(ENDPOINT_GROOVE_BASS);
-    }
-    return;
-
   case TOGGLE_AUTO_RIGHTHAND:
     auto_righthand_on = !auto_righthand_on;
     endpoint_notes_off(ENDPOINT_AUTO_RIGHTHAND);
@@ -1903,18 +1767,8 @@ void handle_control_helper(unsigned int note_in) {
     fc_feet_on = !fc_feet_on;
     return;
 
-  case TOGGLE_REEL_JIG:
-    jig_time = !jig_time;
-    // reset groove bass knowledge
-    for (int i = 0; i < N_NOTE_DIVISIONS; i++) {
-      subbeat_frequencies[i] = 0;
-    }
-    return;
-
   }
 }
-
-
 
 void handle_control(unsigned int note_in) {
   handle_control_helper(note_in);
@@ -1998,7 +1852,7 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
 
   if (mode == MIDI_ON) {
-    register_subbeat_frequency();
+    maybe_register_upbeat();
   }
 
   if (sax_trombone_mode == 1 || sax_trombone_mode == 3) {
@@ -2055,7 +1909,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
         note_in == MIDI_DRUM_PEDAL_4) {
       most_recent_drum_pedal = note_in;
     }
-  }			    
+  }
 
   update_bass();
 
@@ -2274,12 +2128,12 @@ void handle_axis_49(int mode, int note_in, int val) {
       // move beat ahead
       adjustment = -(note_in - 77) * 0.015;
     }
-    
+
     // TODO: rip this out
   }
   if (listen_drum_pedal &&
       (note_in == BUTTON_MAJOR ||
-       note_in == BUTTON_MIXO || 
+       note_in == BUTTON_MIXO ||
        note_in == BUTTON_RACOON ||
        note_in == BUTTON_MINOR)) {
     if (note_in == BUTTON_MAJOR) {
@@ -2580,7 +2434,7 @@ void forward_air() {
   }
   if (organ_flex_value != last_organ_flex_val) {
     send_midi(MIDI_CC, CC_11, organ_flex_value, ENDPOINT_ORGAN_FLEX);
-      
+
     last_organ_flex_val = organ_flex_value;
   }
 }
@@ -2648,7 +2502,6 @@ void jml_tick() {
   update_air();
   forward_air();
   age_righthand_notes(leakage);
-  age_subeat_frequencies(((leakage-1)/10)+1);
   trigger_subbeats();
   //trigger_scheduled_notes();
 }
