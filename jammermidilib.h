@@ -1879,6 +1879,7 @@ void handle_control_helper(unsigned int note_in) {
 
   case TOGGLE_GROOVE_BASS:
     groove_bass_on = !groove_bass_on;
+    groove_follows_piano = groove_bass_on;
     send_midi(MIDI_CC, CC_07, 0, ENDPOINT_GROOVE_BASS);
     if (!groove_bass_on) {
       endpoint_notes_off(ENDPOINT_GROOVE_BASS);
