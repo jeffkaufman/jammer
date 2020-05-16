@@ -19,16 +19,16 @@
 #define PIANO_MIDI_NAME "USB MIDI Interface"
 
 /*
- Controls:
+  Controls:
 
-   rst  odr  TBD   bt1  pd1  jaw  s/t
-arl  rho  ham  atd  pd2  flx   HH
-   arp  app  ldp  rdh  rds  rdk  fcf
-rht  TBD  tdb  api  pls  TBD  brc
-   ...
+  rst  odr  TBD   bt1  pd1  jaw  s/t
+  arl  rho  ham  atd  pd2  flx   HH
+  arp  app  ldp  rdh  rds  rdk  fcf
+  rht  TBD  tdb  api  pls  TBD  brc
+  ...
 
-   maj min mix               b3  b24
- */
+  maj min mix               b3  b24
+*/
 #define FULL_RESET                  7
 #define AIR_LOCK                 14
 
@@ -203,15 +203,15 @@ rht  TBD  tdb  api  pls  TBD  brc
  */
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-#define BYTE_TO_BINARY(byte) \
-  (byte & 0x80 ? '1' : '0'), \
-  (byte & 0x40 ? '1' : '0'), \
-  (byte & 0x20 ? '1' : '0'), \
-  (byte & 0x10 ? '1' : '0'), \
-  (byte & 0x08 ? '1' : '0'), \
-  (byte & 0x04 ? '1' : '0'), \
-  (byte & 0x02 ? '1' : '0'), \
-  (byte & 0x01 ? '1' : '0')
+#define BYTE_TO_BINARY(byte)                    \
+  (byte & 0x80 ? '1' : '0'),                    \
+    (byte & 0x40 ? '1' : '0'),                  \
+    (byte & 0x20 ? '1' : '0'),                  \
+    (byte & 0x10 ? '1' : '0'),                  \
+    (byte & 0x08 ? '1' : '0'),                  \
+    (byte & 0x04 ? '1' : '0'),                  \
+    (byte & 0x02 ? '1' : '0'),                  \
+    (byte & 0x01 ? '1' : '0')
 
 
 void die(char *errmsg) {
@@ -483,7 +483,7 @@ void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int
   on->endpoint = off->endpoint = endpoint;
 
   printf("scheduled %llu %llu %llu  %d %d %d %d %d\n",
-	 on->ts, off->ts, length,  on->actionType, off->actionType, on->noteNo, on->velocity, on->endpoint);
+         on->ts, off->ts, length,  on->actionType, off->actionType, on->noteNo, on->velocity, on->endpoint);
 }
 
 bool kick_paused() {
@@ -495,7 +495,7 @@ bool snare_paused() {
 }
 
 bool auto_snare_paused() {
-    return snare_paused() || pause_auto_drums;
+  return snare_paused() || pause_auto_drums;
 }
 
 bool auto_hh_paused() {
@@ -538,11 +538,11 @@ double air = 0;  // maintained by update_air()
 void send_midi(char actionType, int noteNo, int v, int endpoint) {
   /*if (endpoint == ENDPOINT_RHODES) {
     printf("sending %d %x:%d = %d\n",
-           endpoint,
-           (unsigned char) actionType,
-           noteNo,
-           v);
-           }*/
+    endpoint,
+    (unsigned char) actionType,
+    noteNo,
+    v);
+    }*/
 
   Byte buffer[PACKET_BUF_SIZE];
   Byte msg[3];
@@ -554,13 +554,13 @@ void send_midi(char actionType, int noteNo, int v, int endpoint) {
   MIDIPacket *curPacket = MIDIPacketListInit(packetList);
 
   curPacket = MIDIPacketListAdd(packetList,
-				PACKET_BUF_SIZE,
-				curPacket,
-				AudioGetCurrentHostTime(),
-				3,
-				msg);
+                                PACKET_BUF_SIZE,
+                                curPacket,
+                                AudioGetCurrentHostTime(),
+                                3,
+                                msg);
   if (!curPacket) {
-      die("packet list allocation failed");
+    die("packet list allocation failed");
   }
 
   attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
@@ -636,7 +636,7 @@ char active_note() {
 
 void register_righthand_note(int righthand_note) {
   righthand_by_lefthand[(active_note() % 12) * 12 +
-			(righthand_note % 12)]++;
+                        (righthand_note % 12)]++;
 }
 
 void age_righthand_notes(float age_amount) {
@@ -904,47 +904,47 @@ void arpeggiate_bass(int subbeat) {
       }
     } else if (current_arpeggiator_pattern == 3) {
       if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
-	end_note = send_note = true;
+        end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 4) {
       if (downbeat(subbeat) || preup(subbeat)) {
-	end_note = send_note = true;
+        end_note = send_note = true;
       } else if (upbeat(subbeat) || predown(subbeat)) {
-	selected_note = note_out + 12;
-	end_note = send_note = true;
+        selected_note = note_out + 12;
+        end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 5) {
       if (downbeat(subbeat)) {
       } else if (preup(subbeat)) {
-	selected_note = note_out + 7;
-	end_note = send_note = true;
+        selected_note = note_out + 7;
+        end_note = send_note = true;
       } else if (upbeat(subbeat)) {
-	selected_note = note_out + 12;
+        selected_note = note_out + 12;
       } else if (predown(subbeat)) {
-	selected_note = note_out + 12 + 7;
-	end_note = send_note = true;
+        selected_note = note_out + 12 + 7;
+        end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 6) {
       if (downbeat(subbeat)) {
       } else if (preup(subbeat)) {
-	selected_note = note_out + 12;
-	end_note = send_note = true;
+        selected_note = note_out + 12;
+        end_note = send_note = true;
       } else if (upbeat(subbeat)) {
-	selected_note = note_out + 12 + 7;
+        selected_note = note_out + 12 + 7;
       } else if (predown(subbeat)) {
-	selected_note = note_out + 12 + 12;
-	end_note = send_note = true;
+        selected_note = note_out + 12 + 12;
+        end_note = send_note = true;
       }
     } else if (current_arpeggiator_pattern == 7) {
       if (downbeat(subbeat)) {
       } else if (preup(subbeat)) {
-	selected_note = note_out + 12;
-	end_note = send_note = true;
+        selected_note = note_out + 12;
+        end_note = send_note = true;
       } else if (upbeat(subbeat)) {
-	selected_note = note_out + 12 + 12;
+        selected_note = note_out + 12 + 12;
       } else if (predown(subbeat)) {
-	selected_note = note_out + 12 + 12 + 12;
-	end_note = send_note = true;
+        selected_note = note_out + 12 + 12 + 12;
+        end_note = send_note = true;
       }
     }
 
@@ -952,24 +952,24 @@ void arpeggiate_bass(int subbeat) {
       // Get more and more intense the more blowing happens.
 
       if (breath > 80 && (downbeat(subbeat) || upbeat(subbeat))) {
-	send_note = true;
-	end_note = true;
-	selected_note = note_out + 12;
+        send_note = true;
+        end_note = true;
+        selected_note = note_out + 12;
       }
 
       if (breath > 100 && (preup(subbeat) || predown(subbeat))) {
-	send_note = true;
-	end_note = true;
-	selected_note = note_out + 12;
+        send_note = true;
+        end_note = true;
+        selected_note = note_out + 12;
       }
 
       if (breath > 120) {
-	// triplets!
-	end_note = send_note = subbeat % 12 == 0;
+        // triplets!
+        end_note = send_note = subbeat % 12 == 0;
       }
 
       if (breath == MIDI_MAX) {
-	selected_note += 12;
+        selected_note += 12;
       }
     }
 
@@ -985,8 +985,8 @@ void arpeggiate_bass(int subbeat) {
 
     if (send_note) {
       if (selected_note != -1) {
-	send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
-	current_arpeggiator_note = selected_note;
+        send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
+        current_arpeggiator_note = selected_note;
       }
     }
   }
@@ -1004,7 +1004,7 @@ void arpeggiate_drums(int subbeat) {
 
     if (drum_breath_on) {
       if (breath > 60 && preup(subbeat)) {
-	send_tss = true;
+        send_tss = true;
       }
     }
 
@@ -1060,17 +1060,17 @@ void arpeggiate_drums(int subbeat) {
 
     if (drum_breath_on) {
       if (breath > 60 &&
-	  ((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
-	auto_hihat_vol = 100;
+          ((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
+        auto_hihat_vol = 100;
       }
       if (breath > 120) {
-	// triplets!
-	auto_hihat_vol = (subbeat % 12 == 0) ? 100 : 0;
+        // triplets!
+        auto_hihat_vol = (subbeat % 12 == 0) ? 100 : 0;
       }
       if (breath == MIDI_MAX) {
-	if (auto_hihat_vol > 0) {
-	  auto_hihat_vol = MIDI_MAX;
-	}
+        if (auto_hihat_vol > 0) {
+          auto_hihat_vol = MIDI_MAX;
+        }
       }
     }
 
@@ -1180,7 +1180,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
     uint64_t error = best_match_hit(target, kick_times, KICK_TIMES_LENGTH);
     if (error > whole_beat / 16) {
       printf("not firing imaginary beat: looked for %llu, best was %.2f%%",
-	     whole_beat / 2,  100*(float)error / (float) (whole_beat / 16));
+             whole_beat / 2,  100*(float)error / (float) (whole_beat / 16));
       return;
     }
   }
@@ -1193,9 +1193,9 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
   printf("%c BPM estimate: %f  (error: %llu, max allowed: %llu, frac: %.2f%%)\n",
          acceptable_error ? ' ' : '!',
          best_bpm,
-	 best_error,
-	 max_allowed_error,
-	 100 * (float)best_error / (float)max_allowed_error);
+         best_error,
+         max_allowed_error,
+         100 * (float)best_error / (float)max_allowed_error);
 
   if (acceptable_error) {
     current_beat_ns = whole_beat;
@@ -1205,9 +1205,9 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
     }
 
     if ((current_time - last_auto_snare_ns < whole_beat * 2.25 &&
-	 current_time - last_auto_snare_ns > whole_beat * 1.75) ||
-	(current_time - last_auto_snare_ns < whole_beat * 4.25 &&
-	 current_time - last_auto_snare_ns > whole_beat * 4.75)) {
+         current_time - last_auto_snare_ns > whole_beat * 1.75) ||
+        (current_time - last_auto_snare_ns < whole_beat * 4.25 &&
+         current_time - last_auto_snare_ns > whole_beat * 4.75)) {
       // looks like the auto snare last fired about two beats ago, so
       // it's time to fire it again.
       send_auto_snare();
@@ -1437,7 +1437,7 @@ void print_endpoints() {
   printf("MIDI Endpoints Detected:\n");
 
   int n_sources = MIDIGetNumberOfSources();
-   for (int i = 0; i < n_sources ; i++) {
+  for (int i = 0; i < n_sources ; i++) {
     MIDIEndpointRef src = MIDIGetSource(i);
     if (!src) continue;
 
@@ -1507,17 +1507,17 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       root_candidate_note_in = note_in;
     } else {
       for (int i = 0; i < max_bass; i++) {
-	if (piano_notes[i]) {
-	  root_candidate_note_in = i;
-	  break;
-	}
+        if (piano_notes[i]) {
+          root_candidate_note_in = i;
+          break;
+        }
       }
     }
     if (root_candidate_note_in != -1) {
       int new_root = to_root(root_candidate_note_in);
       if (new_root != root_note) {
-	root_note = new_root;
-	update_bass();
+        root_note = new_root;
+        update_bass();
       }
     }
   } else {
@@ -1590,7 +1590,7 @@ void handle_specific_button(bool* pause_toggle, uint64_t* last_down_ns, CFIndex 
     // ~32 beats, so ~1/2s and ~16s.
     uint64_t button_down_ns = now_ns - *last_down_ns;
     if (button_down_ns > NS_PER_SEC / 2 &&
-	button_down_ns < NS_PER_SEC * 16) {
+        button_down_ns < NS_PER_SEC * 16) {
       *pause_toggle = !*pause_toggle;
     }
   }
@@ -1840,10 +1840,10 @@ void play_trombone_button(unsigned int mode, unsigned int note_out, unsigned int
   if (sax_trombone_mode == 3 && mode == MIDI_ON && val > 0) {
     for (int i = 0 ; i < MIDI_MAX; i++) {
       if (trombone_button_notes[i]) {
-	// A note is already playing, so save this note for later, and
-	// maybe it won't play at all.
-	ignored_trombone_button_vals[note_out] = val;
-	return;
+        // A note is already playing, so save this note for later, and
+        // maybe it won't play at all.
+        ignored_trombone_button_vals[note_out] = val;
+        return;
       }
     }
   }
@@ -1862,15 +1862,15 @@ void play_trombone_button(unsigned int mode, unsigned int note_out, unsigned int
     bool any_note_on = false;
     for (int i = 0; i < MIDI_MAX; i++) {
       if (trombone_button_notes[i]) {
-	any_note_on = true;
+        any_note_on = true;
       }
     }
     int ignored_note = -1;
     if (!any_note_on) {
       for (int i = 0; i < MIDI_MAX; i++) {
-	if (ignored_trombone_button_vals[i] > 0) {
-	  ignored_note = i;
-	}
+        if (ignored_trombone_button_vals[i] > 0) {
+          ignored_note = i;
+        }
       }
     }
     if (ignored_note != -1) {
@@ -2089,7 +2089,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
       }
     }
     if ( ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
-         (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE))) {
+          (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE))) {
       if (breath < 2 &&
           current_note[endpoint] != -1) {
         send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
@@ -2221,7 +2221,7 @@ void read_midi(const MIDIPacketList *pktlist,
       if (srcConnRefCon == &midiport_piano) {
         handle_piano(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_axis_49) {
-	handle_axis_49(mode, note_in, val);
+        handle_axis_49(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_feet_controller) {
         handle_feet(mode, note_in, val);
       } else if (srcConnRefCon == &midiport_whistle) {
@@ -2238,29 +2238,29 @@ void read_midi(const MIDIPacketList *pktlist,
 
 void connect_source(MIDIEndpointRef endpoint_ref, MIDIPortRef* port_ref) {
   attempt(
-    MIDIInputPortCreate(
-      midiclient,
-      CFSTR("input port"),
-      &read_midi,
-      NULL /* refCon */,
-      port_ref),
-   "creating input port");
+          MIDIInputPortCreate(
+                              midiclient,
+                              CFSTR("input port"),
+                              &read_midi,
+                              NULL /* refCon */,
+                              port_ref),
+          "creating input port");
 
   attempt(
-    MIDIPortConnectSource(
-      *port_ref,
-      endpoint_ref,
-      port_ref /* connRefCon */),
-    "connecting to device");
+          MIDIPortConnectSource(
+                                *port_ref,
+                                endpoint_ref,
+                                port_ref /* connRefCon */),
+          "connecting to device");
 }
 
 void create_source(MIDIEndpointRef* endpoint_ref, CFStringRef name) {
   attempt(
-    MIDISourceCreate(
-      midiclient,
-      name,
-      endpoint_ref),
-   "creating OS-X virtual MIDI source." );
+          MIDISourceCreate(
+                           midiclient,
+                           name,
+                           endpoint_ref),
+          "creating OS-X virtual MIDI source." );
 }
 
 void calculate_breath_speeds() {
@@ -2359,10 +2359,10 @@ void jml_setup() {
   full_reset();
 
   attempt(
-    MIDIClientCreate(
-     CFSTR("jammer"),
-     NULL, NULL, &midiclient),
-    "creating OS-X MIDI client object." );
+          MIDIClientCreate(
+                           CFSTR("jammer"),
+                           NULL, NULL, &midiclient),
+          "creating OS-X MIDI client object." );
 
   print_endpoints();
 
@@ -2480,14 +2480,14 @@ void trigger_scheduled_notes() {
   for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
     if (scheduled_notes[i].ts != 0 && scheduled_notes[i].ts < current_time) {
       printf("trigger %d %d %d %d\n",
-	     scheduled_notes[i].actionType,
-	     scheduled_notes[i].noteNo,
-	     scheduled_notes[i].velocity,
-	     scheduled_notes[i].endpoint);
+             scheduled_notes[i].actionType,
+             scheduled_notes[i].noteNo,
+             scheduled_notes[i].velocity,
+             scheduled_notes[i].endpoint);
       send_midi(scheduled_notes[i].actionType,
-		scheduled_notes[i].noteNo,
-		scheduled_notes[i].velocity,
-		scheduled_notes[i].endpoint);
+                scheduled_notes[i].noteNo,
+                scheduled_notes[i].velocity,
+                scheduled_notes[i].endpoint);
       scheduled_notes[i].ts = 0;
     }
   }
@@ -2501,7 +2501,7 @@ void trigger_subbeats() {
       arpeggiate(i);
       next_ns[i] = 0;
       if (i == N_SUBBEATS - 1) {
-	estimate_tempo(current_time, /*imaginary=*/true, /*is_low=*/true);
+        estimate_tempo(current_time, /*imaginary=*/true, /*is_low=*/true);
       }
     }
     if (tambourine_next_ns[i] > 0 && current_time > tambourine_next_ns[i]) {
@@ -2522,13 +2522,13 @@ void jml_tick() {
       debug_subbeat++;
       debug_subbeat = debug_subbeat % 72;
       if (debug_subbeat == 0) {
-	if (fc_feet_on) {
-	  send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_FOOT_1);
-	  current_drum_vel += 1;
-	  current_drum_vel = current_drum_vel % MIDI_MAX;
-	  printf("vel = %d\n", current_drum_vel);
-	}
-	arpeggiate(72);
+        if (fc_feet_on) {
+          send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_FOOT_1);
+          current_drum_vel += 1;
+          current_drum_vel = current_drum_vel % MIDI_MAX;
+          printf("vel = %d\n", current_drum_vel);
+        }
+        arpeggiate(72);
       }
       arpeggiate(debug_subbeat);
     }
