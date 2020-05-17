@@ -444,7 +444,7 @@ void voices_reset() {
   }
   subbeat_downbeat_candidates_index = 0;
 
-  keep_going = true;
+  keep_going = false;
 }
 
 void compute_best_subbeat_upbeat_candidate() {
@@ -1121,6 +1121,10 @@ uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
 }
 
 void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
+  if (keep_going && !imaginary) {
+    return;
+  }
+
   current_beat_ns = 0;
 
   // Take a super naive approach: for each candidate tempo, consider
@@ -1197,7 +1201,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
          max_allowed_error,
          100 * (float)best_error / (float)max_allowed_error);
 
-  if (acceptable_error) {
+  if (acceptable_error || keep_going) {
     current_beat_ns = whole_beat;
 
     if (last_auto_snare_ns < (current_time - whole_beat*4)) {
@@ -1212,6 +1216,11 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
       // it's time to fire it again.
       send_auto_snare();
       last_auto_snare_ns = current_time;
+    }
+
+    if (keep_going) {
+      kick_times[kick_times_index] = current_time;
+      kick_times_index = (kick_times_index+1) % KICK_TIMES_LENGTH;
     }
 
     arpeggiate(0);
