@@ -7,19 +7,30 @@ still be useful if you want to build something similar.
 Run `make run` to build this software and run it.  It will look for various
 midi devices:
 
-* AXIS 49 Keyboard
 * MIO USB-MIDI representing a Yamaha DTX 500 used as foot pedals
 * TE-Control breath controller
-* Pitch Detect https://github.com/jeffkaufman/pitch-detect
+* Piano as "USB MIDI Interface"
 
-and present several virtual midi devices named "jammer-_foo_".
+And send audio to fluidsynth.
 
-## Reaper Configuration
+## Setup
+
+Install deps
+
+```
+sudo apt install fluidsynth fluid-soundfont-gm alsa-utils jackd2
+```
+
+(When JACK asks if it can have realtime priority, say yes)
+
+## Obsolete
+
+### Reaper Configuration
 
 Here's as much detail as possible on the Reaper configuration this is
 intended to drive.  This section will probably get out of date.
 
-### Installation
+#### Installation
 
 * Install Reaper: https://www.reaper.fm/download.php
   * To install the license key, find it in email and copy it to the
@@ -57,7 +68,7 @@ intended to drive.  This section will probably get out of date.
      
 * Open backup of Reaper configuration, though it may not import fully
 
-### Configuration
+#### Configuration
 
 * Start the jammer router (make run) to make the midi devices
   available
@@ -114,7 +125,7 @@ intended to drive.  This section will probably get out of date.
   * Jawharp: Sforzando > Converted > sf2 > FluidR3_GM_sf2 > 000 > 004_Rhodes_EP with CC7 vol max
 
 
-## Dealing with a Cracked Macbook Screen
+### Dealing with a Cracked Macbook Screen
 
 * Audacity, Export Multiple: shift + command + L
 

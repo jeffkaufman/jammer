@@ -8,5 +8,11 @@ jammermidi: jammermidi.m jammermidilib.h
     -framework Foundation \
 	  jammermidi.m -o jammermidi -std=c99 -Wall
 
-run: jammermidi
+jammer: jammer.c
+	gcc -lasound jammer.c -o jammer -std=c99 -Wall
+
+run: jammer
+	./jammer
+
+run-old: jammermidi
 	./jammermidi
