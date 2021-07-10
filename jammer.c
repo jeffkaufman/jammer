@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -5,6 +6,8 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <alsa/asoundlib.h>
+
+#define TICK_MS 1  // try to tick every N milliseconds
 
 #define FLUIDSYNTH_PORT_NAME "Synth input port (2132:0)"
 #define AXIS49_PORT_NAME "AXIS-49 2A MIDI 1"
@@ -61,6 +64,7 @@ void play(int type, int channel, int note, int velocity) {
   ev.data.note.channel = channel;
   ev.data.note.note = note;
   ev.data.note.velocity = velocity;
+  printf("sending %d %d %d %d\n", type, channel, note, velocity);
   attempt(snd_seq_event_output_direct(seq, &ev), "send event");
 }
 
@@ -234,6 +238,22 @@ void setup_ports() {
   }
 }
 
+void tick() {
+  // do nothing for now
+}
+
+void handle_event(snd_seq_event_t* event) {
+  if (event->type == SND_SEQ_EVENT_NOTEON) {
+    play(SND_SEQ_EVENT_NOTEON, 0,
+         event->data.note.note,
+         event->data.note.velocity);
+  } else if (event->type == SND_SEQ_EVENT_NOTEOFF) {
+    play(SND_SEQ_EVENT_NOTEOFF, 0,
+         event->data.note.note,
+         event->data.note.velocity);
+  }
+}
+
 int main() {
   attempt(snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0),
           "open seq");
@@ -243,16 +263,30 @@ int main() {
   setup_ports();
 
   printf("listening...\n");
+
+  int n_poll_file_descriptors = snd_seq_poll_descriptors_count(seq, POLLIN);
+  struct pollfd* poll_file_descriptors =
+    malloc(sizeof(struct pollfd) * n_poll_file_descriptors);
+  snd_seq_poll_descriptors(seq, poll_file_descriptors, n_poll_file_descriptors,
+                           POLLIN);
   while (1) {
-    snd_seq_event_t* event;
-    int val = snd_seq_event_input(seq, &event);
-    printf("got something! %d\n", val);
-    snd_seq_free_event(event);
+    if (poll(poll_file_descriptors, n_poll_file_descriptors, TICK_MS) > 0) {
+      do {
+        snd_seq_event_t* event;
+        if (snd_seq_event_input(seq, &event) > 0) {
+          handle_event(event);
+        }
+      } while (snd_seq_event_input_pending(seq, 0) > 0);
+    }
+    tick();
   }
-  for (int i = 0; i < 1 /*128*/; i++) {
+
+  /*
+  for (int i = 0; i < 128; i++) {
     choose_voice(0, i);
     play(SND_SEQ_EVENT_NOTEON, 0, 64, 100);
     sleep(1);
     play(SND_SEQ_EVENT_NOTEOFF, 0, 64, 100);
   }
+  */
 }
