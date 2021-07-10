@@ -16,7 +16,6 @@
 
 snd_seq_t* seq;
 snd_seq_event_t ev;
-
 int fluidsynth_port;
 int axis49_port;
 int keyboard_port;
@@ -47,11 +46,6 @@ int attempt(int result, char* errmsg) {
   return result;
 }
 
-void send_event() {
-  attempt(snd_seq_event_output(seq, &ev), "send event");
-  attempt(snd_seq_drain_output(seq), "drain");
-}
-
 void reset_event() {
   snd_seq_ev_clear(&ev);
   snd_seq_ev_set_source(&ev, 0);
@@ -67,13 +61,13 @@ void play(int type, int channel, int note, int velocity) {
   ev.data.note.channel = channel;
   ev.data.note.note = note;
   ev.data.note.velocity = velocity;
-  send_event();
+  attempt(snd_seq_event_output_direct(seq, &ev), "send event");
 }
 
 void choose_voice(int channel, int voice) {
   reset_event();
   snd_seq_ev_set_pgmchange(&ev, channel, voice);
-  send_event();
+  attempt(snd_seq_event_output_direct(seq, &ev), "send event");
 }
 
 
@@ -159,7 +153,9 @@ void setup_ports() {
   snd_seq_port_info_set_port(port_info, fluidsynth_index);
   snd_seq_port_info_set_port_specified(port_info, 1);
   snd_seq_port_info_set_name(port_info, "jammer-fluidsynth");
-  snd_seq_port_info_set_capability(port_info, SND_SEQ_PORT_CAP_WRITE);
+  snd_seq_port_info_set_capability(port_info,
+                                   SND_SEQ_PORT_CAP_READ |
+                                   SND_SEQ_PORT_CAP_SUBS_READ);
   snd_seq_port_info_set_type(port_info,
                              SND_SEQ_PORT_TYPE_MIDI_GENERIC |
                              SND_SEQ_PORT_TYPE_APPLICATION);
@@ -173,7 +169,9 @@ void setup_ports() {
     snd_seq_port_info_set_port(port_info, axis49_index);
     snd_seq_port_info_set_port_specified(port_info, 1);
     snd_seq_port_info_set_name(port_info, "jammer-axis49");
-    snd_seq_port_info_set_capability(port_info, SND_SEQ_PORT_CAP_READ);
+    snd_seq_port_info_set_capability(port_info,
+                                     SND_SEQ_PORT_CAP_WRITE |
+                                     SND_SEQ_PORT_CAP_SUBS_WRITE);
     snd_seq_port_info_set_type(port_info,
                                SND_SEQ_PORT_TYPE_MIDI_GENERIC |
                                SND_SEQ_PORT_TYPE_APPLICATION);
@@ -181,6 +179,58 @@ void setup_ports() {
     attempt(snd_seq_connect_from(seq, axis49_index,
                                  axis49_client, axis49_port),
             "connect to axis49");
+  }
+
+  if (keyboard_port != -1) {
+    keyboard_index = next_index++;
+    snd_seq_port_info_set_port(port_info, keyboard_index);
+    snd_seq_port_info_set_port_specified(port_info, 1);
+    snd_seq_port_info_set_name(port_info, "jammer-keyboard");
+    snd_seq_port_info_set_capability(port_info,
+                                     SND_SEQ_PORT_CAP_WRITE |
+                                     SND_SEQ_PORT_CAP_SUBS_WRITE);
+    snd_seq_port_info_set_type(port_info,
+                               SND_SEQ_PORT_TYPE_MIDI_GENERIC |
+                               SND_SEQ_PORT_TYPE_APPLICATION);
+    attempt(snd_seq_create_port(seq, port_info), "create port");
+    attempt(snd_seq_connect_from(seq, keyboard_index,
+                                 keyboard_client, keyboard_port),
+            "connect to keyboard");
+  }
+
+  if (breath_controller_port != -1) {
+    breath_controller_index = next_index++;
+    snd_seq_port_info_set_port(port_info, breath_controller_index);
+    snd_seq_port_info_set_port_specified(port_info, 1);
+    snd_seq_port_info_set_name(port_info, "jammer-breath_controller");
+    snd_seq_port_info_set_capability(port_info,
+                                     SND_SEQ_PORT_CAP_WRITE |
+                                     SND_SEQ_PORT_CAP_SUBS_WRITE);
+    snd_seq_port_info_set_type(port_info,
+                               SND_SEQ_PORT_TYPE_MIDI_GENERIC |
+                               SND_SEQ_PORT_TYPE_APPLICATION);
+    attempt(snd_seq_create_port(seq, port_info), "create port");
+    attempt(snd_seq_connect_from(seq, breath_controller_index,
+                                 breath_controller_client,
+                                 breath_controller_port),
+            "connect to breath_controller");
+  }
+
+  if (feet_port != -1) {
+    feet_index = next_index++;
+    snd_seq_port_info_set_port(port_info, feet_index);
+    snd_seq_port_info_set_port_specified(port_info, 1);
+    snd_seq_port_info_set_name(port_info, "jammer-feet");
+    snd_seq_port_info_set_capability(port_info,
+                                     SND_SEQ_PORT_CAP_WRITE |
+                                     SND_SEQ_PORT_CAP_SUBS_WRITE);
+    snd_seq_port_info_set_type(port_info,
+                               SND_SEQ_PORT_TYPE_MIDI_GENERIC |
+                               SND_SEQ_PORT_TYPE_APPLICATION);
+    attempt(snd_seq_create_port(seq, port_info), "create port");
+    attempt(snd_seq_connect_from(seq, feet_index,
+                                 feet_client, feet_port),
+            "connect to feet");
   }
 }
 
@@ -192,6 +242,13 @@ int main() {
 
   setup_ports();
 
+  printf("listening...\n");
+  while (1) {
+    snd_seq_event_t* event;
+    int val = snd_seq_event_input(seq, &event);
+    printf("got something! %d\n", val);
+    snd_seq_free_event(event);
+  }
   for (int i = 0; i < 1 /*128*/; i++) {
     choose_voice(0, i);
     play(SND_SEQ_EVENT_NOTEON, 0, 64, 100);
