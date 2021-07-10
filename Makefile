@@ -9,7 +9,7 @@ jammermidi: jammermidi.m jammermidilib.h
 	  jammermidi.m -o jammermidi -std=c99 -Wall
 
 jammer: jammer.c
-	gcc -lasound jammer.c -o jammer -std=c99 -Wall
+	gcc -lasound -lm jammer.c -o jammer -std=c99 -Wall
 
 run: jammer
 	./jammer

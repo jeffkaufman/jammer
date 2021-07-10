@@ -1,22 +1,9 @@
 #ifndef JAMMER_MIDI_LIB_H
 #define JAMMER_MIDI_LIB_H
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <time.h>
-#include <CoreFoundation/CoreFoundation.h>
-#include <CoreMIDI/MIDIServices.h>
-#include <CoreAudio/HostTime.h>
-#include <IOKit/hid/IOHIDDevice.h>
-#include <IOKit/hid/IOHIDManager.h>
-#import <Foundation/Foundation.h>
 
 // Spec:
 // https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
 // https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
-
-
-// #define PIANO_MIDI_NAME "Roland Digital Piano"
-#define PIANO_MIDI_NAME "USB MIDI Interface"
 
 /*
   Controls:
@@ -171,7 +158,7 @@
 #define KICK_TIMES_LENGTH 12
 #define SNARE_TIMES_LENGTH 12
 
-#define NS_PER_SEC 1000000000L
+#define NS_PER_SEC 1000000000LL
 
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS+1)
@@ -214,20 +201,6 @@
     (byte & 0x01 ? '1' : '0')
 
 
-void die(char *errmsg) {
-  printf("%s\n",errmsg);
-  exit(-1);
-}
-
-void attempt(OSStatus result, char* errmsg) {
-  if (result != noErr) {
-    die(errmsg);
-  }
-}
-
-uint64_t now() {
-  return clock_gettime_nsec_np(CLOCK_MONOTONIC);
-}
 
 int normalize(int val) {
   if (val > MIDI_MAX) {
@@ -246,16 +219,6 @@ struct ScheduledNote {
   int velocity;
   int endpoint;
 };
-
-MIDIClientRef midiclient;
-MIDIEndpointRef endpoints[N_ENDPOINTS];
-
-MIDIPortRef midiport_axis_49;
-MIDIPortRef midiport_breath_controller;
-MIDIPortRef midiport_game_controller;
-MIDIPortRef midiport_feet_controller;
-MIDIPortRef midiport_whistle;
-MIDIPortRef midiport_piano;
 
 bool piano_on = false;  // Initialized based on availablity of piano.
 
@@ -534,37 +497,6 @@ double breath_gain = 0;  // set by calculate_breath_speeds()
 double max_air = 0; // set by calculate_breath_speeds()
 double air = 0;  // maintained by update_air()
 
-#define PACKET_BUF_SIZE (3+64) /* 3 for message, 32 for structure vars */
-void send_midi(char actionType, int noteNo, int v, int endpoint) {
-  /*if (endpoint == ENDPOINT_RHODES) {
-    printf("sending %d %x:%d = %d\n",
-    endpoint,
-    (unsigned char) actionType,
-    noteNo,
-    v);
-    }*/
-
-  Byte buffer[PACKET_BUF_SIZE];
-  Byte msg[3];
-  msg[0] = actionType;
-  msg[1] = noteNo;
-  msg[2] = v;
-
-  MIDIPacketList *packetList = (MIDIPacketList*) buffer;
-  MIDIPacket *curPacket = MIDIPacketListInit(packetList);
-
-  curPacket = MIDIPacketListAdd(packetList,
-                                PACKET_BUF_SIZE,
-                                curPacket,
-                                AudioGetCurrentHostTime(),
-                                3,
-                                msg);
-  if (!curPacket) {
-    die("packet list allocation failed");
-  }
-
-  attempt(MIDIReceived(endpoints[endpoint], packetList), "error sending midi");
-}
 
 // Return the distance between two notes in MIDI space, ignoring
 // octave.  For example, if noteA is A57, then G55, G67, and G79 are
@@ -760,16 +692,16 @@ void vbass_trombone_off() {
   }
 }
 
-bool downbeat(subbeat) {
+bool downbeat(int subbeat) {
   return subbeat % 72 == 0;
 }
-bool preup(subbeat) {
+bool preup(int subbeat) {
   return subbeat == best_subbeat_upbeat_candidate/2;
 }
-bool upbeat(subbeat) {
+bool upbeat(int subbeat) {
   return subbeat == best_subbeat_upbeat_candidate;
 }
-bool predown(subbeat) {
+bool predown(int subbeat) {
   if (best_subbeat_upbeat_candidate > 42) {
     return false; // too swung for a predown
   } else {
@@ -1136,7 +1068,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 
   float best_bpm = -1;
   // something way high, in case we fail to find anything
-  uint64_t best_error = NS_PER_SEC * 100;
+  uint64_t best_error = NS_PER_SEC * 100L;
 
   int n_downbeats_to_consider = 4;
 
@@ -1442,40 +1374,6 @@ char mapping(unsigned char note_in) {
   }
 }
 
-void print_endpoints() {
-  printf("MIDI Endpoints Detected:\n");
-
-  int n_sources = MIDIGetNumberOfSources();
-  for (int i = 0; i < n_sources ; i++) {
-    MIDIEndpointRef src = MIDIGetSource(i);
-    if (!src) continue;
-
-    CFStringRef name;
-    MIDIObjectGetStringProperty (src, kMIDIPropertyName, &name);
-
-    printf("    %s\n", CFStringGetCStringPtr(name, kCFStringEncodingUTF8));
-  }
-  printf("\n");
-}
-
-bool get_endpoint_ref(CFStringRef target_name, MIDIEndpointRef* endpoint_ref) {
-  int n_sources = MIDIGetNumberOfSources();
-  for (int i = 0; i < n_sources ; i++) {
-    MIDIEndpointRef src = MIDIGetSource(i);
-    if (!src) continue;
-
-    CFStringRef name;
-    MIDIObjectGetStringProperty (src, kMIDIPropertyName, &name);
-
-    if (CFStringCompare(name, target_name, 0) == kCFCompareEqualTo) {
-      *endpoint_ref = src;
-      return true;
-    }
-  }
-  return false;  // failed to find one
-}
-
-
 void endpoint_notes_off(int endpoint) {
   for (int note = 0 ; note < 128; note++) {
     send_midi(MIDI_OFF, note, 0, endpoint);
@@ -1490,7 +1388,7 @@ void all_notes_off() {
   }
 }
 
-int to_root(note_out) {
+int to_root(int note_out) {
   return (note_out - 2) % 12 + 26;
 }
 
@@ -1577,55 +1475,6 @@ void change_button_endpoint(int endpoint) {
 void air_lock() {
   air_locked = !air_locked;
   locked_air = air;
-}
-
-
-uint64_t last_foot_button_1_down_ns = 0;
-uint64_t last_foot_button_2_down_ns = 0;
-uint64_t last_foot_button_3_down_ns = 0;
-uint64_t last_foot_button_4_down_ns = 0;
-uint64_t last_foot_button_5_down_ns = 0;
-uint64_t last_foot_button_6_down_ns = 0;
-
-void handle_specific_button(bool* pause_toggle, uint64_t* last_down_ns, CFIndex value) {
-  uint64_t now_ns = now();
-  if (value) { // press
-    *pause_toggle = !*pause_toggle;
-    *last_down_ns = now_ns;
-  } else { // release
-    // if we've been holding it down for a medium amount of time,
-    // bring things back in, but not for momentary presses or very
-    // long presses.  For now, a medium amount is between ~1 beat and
-    // ~32 beats, so ~1/2s and ~16s.
-    uint64_t button_down_ns = now_ns - *last_down_ns;
-    if (button_down_ns > NS_PER_SEC / 2 &&
-        button_down_ns < NS_PER_SEC * 16) {
-      *pause_toggle = !*pause_toggle;
-    }
-  }
-}
-
-void handle_foot_button(uint32_t button, CFIndex value) {
-  switch(button) {
-  case FOOT_BUTTON_1:
-    handle_specific_button(&pause_everything, &last_foot_button_1_down_ns, value);
-    return;
-  case FOOT_BUTTON_2:
-    handle_specific_button(&pause_low, &last_foot_button_2_down_ns, value);
-    return;
-  case FOOT_BUTTON_3:
-    handle_specific_button(&pause_high, &last_foot_button_3_down_ns, value);
-    return;
-  case FOOT_BUTTON_4:
-    handle_specific_button(&pause_arpeggiator, &last_foot_button_4_down_ns, value);
-    return;
-  case FOOT_BUTTON_5:
-    handle_specific_button(&pause_auto_drums, &last_foot_button_5_down_ns, value);
-    return;
-  case FOOT_BUTTON_6:
-    handle_specific_button(&pause_auto_hh, &last_foot_button_6_down_ns, value);
-    return;
-  }
 }
 
 void handle_control_helper(unsigned int note_in) {
@@ -2164,17 +2013,6 @@ void handle_axis_49(int mode, int note_in, int val) {
     state = STATE_ADJUST_3;
   } else if (mode == MIDI_ON && note_in == BUTTON_ADJUST_24) {
     state = STATE_ADJUST_24;
-  } else if (mode == MIDI_ON && state != STATE_DEFAULT) {
-    float adjustment = 0;
-    if (note_in >= 85 && note_in <= 91) {
-      // move beat behind
-      adjustment = (note_in - 84) * 0.015;
-    } else if (note_in >= 78 && note_in <= 84) {
-      // move beat ahead
-      adjustment = -(note_in - 77) * 0.015;
-    }
-
-    // TODO: rip this out
   }
   if (listen_drum_pedal &&
       (note_in == BUTTON_MAJOR ||
@@ -2198,78 +2036,6 @@ void handle_axis_49(int mode, int note_in, int val) {
   } else {
     handle_button(mode, note_in, val);
   }
-}
-
-void read_midi(const MIDIPacketList *pktlist,
-               void *readProcRefCon,
-               void *srcConnRefCon) {
-  const MIDIPacket* packet = pktlist->packet;
-
-  for (int i = 0; i < pktlist->numPackets; i++) {
-    if (packet->length == 1) {
-      // foot controller sends timing sync messages we don't care about
-      continue;
-    } else if (packet->length != 3) {
-      printf("bad packet len: %d\n", packet->length);
-    } else {
-      unsigned int mode = packet->data[0];
-      unsigned int note_in = packet->data[1];
-      unsigned int val = packet->data[2];
-
-      if (val > 0) {
-        printf("got packet %u %u %u\n", mode, note_in, val);
-      }
-
-      //unsigned int channel = mode & 0x0F;
-      mode = mode & 0xF0;
-
-      if (mode == MIDI_ON && val == 0) {
-        mode = MIDI_OFF;
-      }
-
-      if (srcConnRefCon == &midiport_piano) {
-        handle_piano(mode, note_in, val);
-      } else if (srcConnRefCon == &midiport_axis_49) {
-        handle_axis_49(mode, note_in, val);
-      } else if (srcConnRefCon == &midiport_feet_controller) {
-        handle_feet(mode, note_in, val);
-      } else if (srcConnRefCon == &midiport_whistle) {
-        handle_whistle(mode, note_in, val);
-      } else if (mode == MIDI_CC) {
-        handle_cc(note_in, val);
-      } else {
-        printf("ignored\n");
-      }
-    }
-    packet = MIDIPacketNext(packet);
-  }
-}
-
-void connect_source(MIDIEndpointRef endpoint_ref, MIDIPortRef* port_ref) {
-  attempt(
-          MIDIInputPortCreate(
-                              midiclient,
-                              CFSTR("input port"),
-                              &read_midi,
-                              NULL /* refCon */,
-                              port_ref),
-          "creating input port");
-
-  attempt(
-          MIDIPortConnectSource(
-                                *port_ref,
-                                endpoint_ref,
-                                port_ref /* connRefCon */),
-          "connecting to device");
-}
-
-void create_source(MIDIEndpointRef* endpoint_ref, CFStringRef name) {
-  attempt(
-          MIDISourceCreate(
-                           midiclient,
-                           name,
-                           endpoint_ref),
-          "creating OS-X virtual MIDI source." );
 }
 
 void calculate_breath_speeds() {
@@ -2321,113 +2087,13 @@ void calculate_breath_speeds() {
          max_air, fill_time_ms, fill_time_ticks, breath_gain);
 }
 
-void value_entered_callback(void* ignored, IOReturn result, void* sender, IOHIDValueRef value) {
-  IOHIDElementRef element =  IOHIDValueGetElement(value);
-
-  if (IOHIDElementGetType(element) != kIOHIDElementTypeInput_Button ||
-      IOHIDElementGetUsagePage(element) != 9) {
-    return;
-  }
-
-  uint32_t button = IOHIDElementGetUsage(element);
-  CFIndex button_value = IOHIDValueGetIntegerValue(value);
-
-  if (button >= 1 && button <= 6) {
-    handle_foot_button(button, button_value);
-  } else {
-    printf("unknown button %u got %ld\n", button, button_value);
-  }
-}
-
-void device_added_callback(void *ctx, IOReturn res, void *sender, IOHIDDeviceRef device) {
-  IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
-  attempt(IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone), "opening device");
-  IOHIDDeviceRegisterInputValueCallback(device, value_entered_callback, NULL);
-}
-
-void device_removed_callback(void *ctx, IOReturn res, void *sender, IOHIDDeviceRef device) {
-  IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
-}
-
-void gc_setup() {
-  IOHIDManagerRef hidman = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
-
-  attempt(IOHIDManagerOpen(hidman, kIOHIDOptionsTypeNone),
-          "opening iohidmanager");
-  if (!hidman) die("couldn't allocate hidmanager");
-
-  IOHIDManagerSetDeviceMatching(hidman, NULL);
-  IOHIDManagerRegisterDeviceMatchingCallback(hidman, device_added_callback, NULL);
-  IOHIDManagerRegisterDeviceRemovalCallback(hidman, device_removed_callback, NULL);
-  IOHIDManagerScheduleWithRunLoop(hidman, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
-}
-
 void jml_setup() {
-  gc_setup();
   calculate_breath_speeds();
   full_reset();
-
-  attempt(
-          MIDIClientCreate(
-                           CFSTR("jammer"),
-                           NULL, NULL, &midiclient),
-          "creating OS-X MIDI client object." );
-
-  print_endpoints();
-
-  MIDIEndpointRef axis49,
-    breath_controller,
-    game_controller,
-    feet_controller,
-    whistle,
-    piano_controller;
-  if (get_endpoint_ref(CFSTR("AXIS-49 2A"), &axis49)) {
-    connect_source(axis49, &midiport_axis_49);
-  }
-  if (get_endpoint_ref(CFSTR("Breath Controller 5.0-15260BA7"), &breath_controller)) {
-    connect_source(breath_controller, &midiport_breath_controller);
-  }
-  if (get_endpoint_ref(CFSTR("game controller"), &game_controller)) {
-    connect_source(game_controller, &midiport_game_controller);
-  }
-  if (get_endpoint_ref(CFSTR("mio"), &feet_controller)) {
-    connect_source(feet_controller, &midiport_feet_controller);
-  }
-  if (get_endpoint_ref(CFSTR("whistle-pitch"), &whistle)) {
-    connect_source(whistle, &midiport_whistle);
-  }
-  if (get_endpoint_ref(CFSTR(PIANO_MIDI_NAME), &piano_controller)) {
-    connect_source(piano_controller, &midiport_piano);
-    piano_on = true;
-  }
 
   for (int i = 0; i < N_ENDPOINTS; i++) {
     current_note[i] = -1;
   }
-
-  create_source(&endpoints[ENDPOINT_SAX],                CFSTR("jammer-sax"));
-  create_source(&endpoints[ENDPOINT_TROMBONE],           CFSTR("jammer-trombone"));
-  create_source(&endpoints[ENDPOINT_JAWHARP],            CFSTR("jammer-jawharp"));
-  create_source(&endpoints[ENDPOINT_BASS_SAX],           CFSTR("jammer-bass-sax"));
-  create_source(&endpoints[ENDPOINT_BASS_TROMBONE],      CFSTR("jammer-bass-trombone"));
-  create_source(&endpoints[ENDPOINT_HAMMOND],            CFSTR("jammer-hammond"));
-  create_source(&endpoints[ENDPOINT_ORGAN_LOW],          CFSTR("jammer-organ-low"));
-  create_source(&endpoints[ENDPOINT_ORGAN_FLEX],         CFSTR("jammer-organ-flex"));
-  create_source(&endpoints[ENDPOINT_SINE_PAD],           CFSTR("jammer-sine-pad"));
-  create_source(&endpoints[ENDPOINT_SWEEP_PAD],          CFSTR("jammer-sweep-pad"));
-  create_source(&endpoints[ENDPOINT_OVERDRIVEN_RHODES],  CFSTR("jammer-overdriven-rhodes"));
-  create_source(&endpoints[ENDPOINT_RHODES],             CFSTR("jammer-rhodes"));
-  create_source(&endpoints[ENDPOINT_DRUM_A],             CFSTR("jammer-drum-a"));
-  create_source(&endpoints[ENDPOINT_DRUM_B],             CFSTR("jammer-drum-b"));
-  create_source(&endpoints[ENDPOINT_DRUM_C],             CFSTR("jammer-drum-c"));
-  create_source(&endpoints[ENDPOINT_DRUM_D],             CFSTR("jammer-drum-d"));
-  create_source(&endpoints[ENDPOINT_FOOT_1],             CFSTR("jammer-foot-1"));
-  create_source(&endpoints[ENDPOINT_FOOT_3],             CFSTR("jammer-foot-3"));
-  create_source(&endpoints[ENDPOINT_FOOT_4],             CFSTR("jammer-foot-4"));
-  create_source(&endpoints[ENDPOINT_TAMBOURINE_FREE],    CFSTR("jammer-tambourine-free"));
-  create_source(&endpoints[ENDPOINT_TAMBOURINE_STOPPED], CFSTR("jammer-tambourine-stopped"));
-  create_source(&endpoints[ENDPOINT_AUTO_RIGHTHAND],     CFSTR("jammer-auto-righthand"));
-  create_source(&endpoints[ENDPOINT_GROOVE_BASS],        CFSTR("jammer-groove-bass"));
 }
 
 void update_air() {

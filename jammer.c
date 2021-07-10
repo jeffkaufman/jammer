@@ -6,6 +6,8 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <alsa/asoundlib.h>
+#include "linuxapi.h"
+#include "jammermidilib.h"
 
 #define TICK_MS 1  // try to tick every N milliseconds
 
@@ -17,8 +19,6 @@
 
 // sudo fluidsynth --server --audio-driver=alsa -o audio.alsa.device=hw:1,0 /usr/share/sounds/sf2/FluidR3_GM.sf2
 
-snd_seq_t* seq;
-snd_seq_event_t ev;
 int fluidsynth_port;
 int axis49_port;
 int keyboard_port;
@@ -36,44 +36,6 @@ int axis49_index;
 int keyboard_index;
 int breath_controller_index;
 int feet_index;
-
-void die(char *errmsg) {
-  printf("%s\n",errmsg);
-  exit(-1);
-}
-
-int attempt(int result, char* errmsg) {
-  if (result < 0) {
-    die(errmsg);
-  }
-  return result;
-}
-
-void reset_event() {
-  snd_seq_ev_clear(&ev);
-  snd_seq_ev_set_source(&ev, 0);
-  snd_seq_ev_set_subs(&ev);
-  snd_seq_ev_set_direct(&ev);
-  ev.source.port = 0;
-  ev.flags = SND_SEQ_TIME_STAMP_REAL;
-}
-
-void play(int type, int channel, int note, int velocity) {
-  reset_event();
-  ev.type = type;
-  ev.data.note.channel = channel;
-  ev.data.note.note = note;
-  ev.data.note.velocity = velocity;
-  printf("sending %d %d %d %d\n", type, channel, note, velocity);
-  attempt(snd_seq_event_output_direct(seq, &ev), "send event");
-}
-
-void choose_voice(int channel, int voice) {
-  reset_event();
-  snd_seq_ev_set_pgmchange(&ev, channel, voice);
-  attempt(snd_seq_event_output_direct(seq, &ev), "send event");
-}
-
 
 void setup_ports() {
   fluidsynth_port =
@@ -223,7 +185,7 @@ void setup_ports() {
   if (feet_port != -1) {
     feet_index = next_index++;
     snd_seq_port_info_set_port(port_info, feet_index);
-    snd_seq_port_info_set_port_specified(port_info, 1);
+    snd_seq_port_info_set_port_specified(port_info, true);
     snd_seq_port_info_set_name(port_info, "jammer-feet");
     snd_seq_port_info_set_capability(port_info,
                                      SND_SEQ_PORT_CAP_WRITE |
@@ -243,14 +205,27 @@ void tick() {
 }
 
 void handle_event(snd_seq_event_t* event) {
-  if (event->type == SND_SEQ_EVENT_NOTEON) {
-    play(SND_SEQ_EVENT_NOTEON, 0,
-         event->data.note.note,
-         event->data.note.velocity);
-  } else if (event->type == SND_SEQ_EVENT_NOTEOFF) {
-    play(SND_SEQ_EVENT_NOTEOFF, 0,
-         event->data.note.note,
-         event->data.note.velocity);
+  unsigned int mode = event->type;
+  unsigned int note_in = event->data.note.note;
+  unsigned int val = event->data.note.velocity;
+
+  //unsigned int channel = mode & 0x0F;
+  mode = mode & 0xF0;
+
+  if (mode == MIDI_ON && val == 0) {
+    mode = MIDI_OFF;
+  }
+
+  if (event->source.client == keyboard_client) {
+    handle_piano(mode, note_in, val);
+  } else if (event->source.client == axis49_client) {
+    handle_axis_49(mode, note_in, val);
+  } else if (event->source.client == feet_client) {
+    handle_feet(mode, note_in, val);
+  } else if (mode == MIDI_CC) {
+    handle_cc(note_in, val);
+  } else {
+    printf("ignored\n");
   }
 }
 
@@ -269,7 +244,7 @@ int main() {
     malloc(sizeof(struct pollfd) * n_poll_file_descriptors);
   snd_seq_poll_descriptors(seq, poll_file_descriptors, n_poll_file_descriptors,
                            POLLIN);
-  while (1) {
+  while (true) {
     if (poll(poll_file_descriptors, n_poll_file_descriptors, TICK_MS) > 0) {
       do {
         snd_seq_event_t* event;
