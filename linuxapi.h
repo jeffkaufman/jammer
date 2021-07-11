@@ -31,7 +31,7 @@ void reset_event(snd_seq_event_t* ev) {
 }
 
 void send_midi(int action, int note, int velocity, int endpoint) {
-  int channel = endpoint % 16; // TODO
+  int channel = endpoint;
   printf("sending %d %d %d %d\n", action, channel, note, velocity);
 
   snd_seq_event_t ev;
@@ -51,7 +51,8 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   attempt(snd_seq_event_output_direct(seq, &ev), "send event");
 }
 
-void choose_voice(int channel, int voice) {
+void choose_voice(int bank, int channel, int voice) {
+  // bank is ignored :(
   snd_seq_event_t ev;
   reset_event(&ev);
   snd_seq_ev_set_pgmchange(&ev, channel, voice);

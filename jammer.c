@@ -242,8 +242,26 @@ void handle_event(snd_seq_event_t* event) {
 }
 
 void setup_voices() {
-  send_midi(MIDI_CC, CC_07, 127, ENDPOINT_JAWHARP);
-  choose_voice(ENDPOINT_JAWHARP, 4);
+  for (int i = 0 ; i < N_ENDPOINTS; i++) {
+    send_midi(MIDI_CC, CC_07, 127, i);
+    send_midi(MIDI_CC, CC_11, 127, i);
+  }
+
+  choose_voice(ENDPOINT_JAWHARP, 0, 4);  // rhodes ep
+  choose_voice(ENDPOINT_HAMMOND, 0, 17);
+  choose_voice(ENDPOINT_ORGAN_LOW, 0, 38);  // synth bass 4, or 38 / 80 / 81
+  choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);  // saw wave or 38 or 87
+  choose_voice(ENDPOINT_SINE_PAD, 0, 89);
+  choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18);
+  choose_voice(ENDPOINT_RHODES, 0, 4);
+  choose_voice(ENDPOINT_SWEEP_PAD, 0, 97);
+  choose_voice(ENDPOINT_DRUM_A, 128, 0);  // standard kit
+  choose_voice(ENDPOINT_DRUM_B, 128, 0);
+  choose_voice(ENDPOINT_DRUM_C, 128, 0);
+  choose_voice(ENDPOINT_DRUM_D, 128, 0);
+  choose_voice(ENDPOINT_AUTO_RIGHTHAND, 0, 87);
+  choose_voice(ENDPOINT_GROOVE_BASS, 0, 38);
+
 }
 
 int main() {
@@ -255,15 +273,27 @@ int main() {
   setup_ports();
   setup_voices();
 
+  if (false) {
+    int demo_note = 60;
+    int demo_voice = 97;
+    send_midi(MIDI_CC, CC_07, 127, 1);
+    send_midi(MIDI_CC, CC_11, 127, 1);
+    choose_voice(0, 1, demo_voice);
+    send_midi(MIDI_ON, demo_note, 100, 1);
+    sleep(2);
+    send_midi(MIDI_OFF, demo_note, 100, 1);
+    exit(0);
+  }
   if (false) { // demo voices
+    int demo_note = 32;  // 60
     for (int i = 0; i < 128; i++) {
-      choose_voice(1, i);
+      choose_voice(0, 1, i);
       printf("voice %d\n", i);
       send_midi(MIDI_CC, CC_07, 127, 1);
       send_midi(MIDI_CC, CC_11, 127, 1);
-      send_midi(MIDI_ON, 64, 100, 1);
-      sleep(1);
-      send_midi(MIDI_OFF, 64, 100, 1);
+      send_midi(MIDI_ON, demo_note, 100, 1);
+      sleep(2);
+      send_midi(MIDI_OFF, demo_note, 100, 1);
     }
   }
 
