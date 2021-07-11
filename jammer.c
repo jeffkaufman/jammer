@@ -242,6 +242,7 @@ void handle_event(snd_seq_event_t* event) {
 }
 
 void setup_voices() {
+  send_midi(MIDI_CC, CC_07, 127, ENDPOINT_JAWHARP);
   choose_voice(ENDPOINT_JAWHARP, 4);
 }
 
@@ -258,6 +259,7 @@ int main() {
     for (int i = 0; i < 128; i++) {
       choose_voice(1, i);
       printf("voice %d\n", i);
+      send_midi(MIDI_CC, CC_07, 127, 1);
       send_midi(MIDI_CC, CC_11, 127, 1);
       send_midi(MIDI_ON, 64, 100, 1);
       sleep(1);

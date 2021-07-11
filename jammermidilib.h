@@ -25,7 +25,6 @@
 #define TOGGLE_KEEP_GOING            5
 #define TOGGLE_HAMMOND           12
 
-#define TOGGLE_BASS_TROMBONE         4
 #define TOGGLE_ATMOSPHERIC_DRONE 11
 
 #define TOGGLE_SINE_PAD              3
@@ -34,7 +33,6 @@
 #define TOGGLE_JAWHARP               2
 #define TOGGLE_ORGAN_FLEX         9
 
-#define ROTATE_SAX_TROMBONE          1
 #define ROTATE_AUTO_HIHAT         8
 
 #define TOGGLE_ARPEGGIATOR          21
@@ -65,15 +63,10 @@
 #define N_AUTO_HIHAT_MODES 9
 #define N_DRUM_KIT_SOUNDS 5
 
-#define N_SAX_TROMBONE_MODES 4
-
 
 #define STATE_DEFAULT 0
 #define STATE_ADJUST_3 1
 #define STATE_ADJUST_24 2
-
-#define MIN_TROMBONE 30  // need to be blowing this hard to make the trombone make noise
-#define MAX_TROMBONE 100  // cap midi breath to the trombone at this, or it gets blatty
 
 #define FOOTBASS_VOLUME 120
 
@@ -182,8 +175,6 @@ bool piano_on = false;  // Initialized based on availablity of piano.
 
 /* Anything mentioned here should be initialized in voices_reset */
 bool jawharp_on;
-bool bass_trombone_on;
-bool vbass_trombone_on;
 bool hammond_on;
 bool organ_low_on;
 bool organ_flex_on;
@@ -194,7 +185,6 @@ bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
 int auto_hihat_mode;
-int sax_trombone_mode;
 bool listen_drum_pedal;
 int most_recent_drum_pedal;
 bool manual_kick_on;
@@ -204,9 +194,6 @@ bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
 bool breath_chord_notes[MIDI_MAX];
-bool sax_button_notes[MIDI_MAX];
-bool trombone_button_notes[MIDI_MAX];
-int ignored_trombone_button_vals[MIDI_MAX];
 bool arpeggiator_on;
 bool arpeggiator_breath_on;
 bool drum_breath_on;
@@ -251,8 +238,6 @@ bool keep_going;
 
 void voices_reset() {
   jawharp_on = false;
-  bass_trombone_on = false;
-  vbass_trombone_on = false;
   hammond_on = false;
   organ_low_on = false;
   organ_flex_on = false;
@@ -273,9 +258,6 @@ void voices_reset() {
     atmospheric_drone_notes[i] = false;
     piano_notes[i] = false;
     breath_chord_notes[i] = false;
-    sax_button_notes[i] = false;
-    trombone_button_notes[i] = false;
-    ignored_trombone_button_vals[i] = 0;
   }
   arpeggiator_on = false;
   arpeggiator_breath_on = false;
@@ -283,8 +265,6 @@ void voices_reset() {
   current_arpeggiator_pattern = 0;
   current_arpeggiator_note = -1;
 
-  button_endpoint = ENDPOINT_SAX;
-  sax_trombone_mode = 1;
   root_note = 26;  // D @ 37Hz
 
   air_locked = false;
@@ -585,20 +565,6 @@ void atmospheric_drone_note_on(int note) {
 void breath_chord_note_on(int note) {
   send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_HAMMOND);
   breath_chord_notes[note] = true;
-}
-
-void bass_trombone_off() {
-  if (current_note[ENDPOINT_TROMBONE] != -1) {
-    send_midi(MIDI_OFF, current_note[ENDPOINT_TROMBONE], 0, ENDPOINT_TROMBONE);
-    current_note[ENDPOINT_TROMBONE] = -1;
-  }
-}
-
-void vbass_trombone_off() {
-  if (current_note[ENDPOINT_BASS_TROMBONE] != -1) {
-    send_midi(MIDI_OFF, current_note[ENDPOINT_BASS_TROMBONE], 0, ENDPOINT_BASS_TROMBONE);
-    current_note[ENDPOINT_BASS_TROMBONE] = -1;
-  }
 }
 
 bool downbeat(int subbeat) {
@@ -1076,33 +1042,6 @@ void update_bass() {
     send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = note_out;
   }
-
-  if (breath < MIN_TROMBONE) {
-    bass_trombone_off();
-    vbass_trombone_off();
-    return;
-  }
-
-  int trombone_note = note_out + 12;
-  if (trombone_note < 40) {
-    trombone_note += 12;
-  }
-  trombone_note += 12;
-  if (bass_trombone_on && current_note[ENDPOINT_TROMBONE] != trombone_note) {
-    bass_trombone_off();
-    send_midi(MIDI_ON, trombone_note, piano_left_hand_velocity, ENDPOINT_TROMBONE);
-    current_note[ENDPOINT_TROMBONE] = trombone_note;
-  }
-  int bass_trombone_note = trombone_note - 12;
-  if (bass_trombone_note < 32) {
-    bass_trombone_note += 12;
-  }
-  bass_trombone_note += 12;
-  if (vbass_trombone_on && current_note[ENDPOINT_BASS_TROMBONE] != bass_trombone_note) {
-    vbass_trombone_off();
-    send_midi(MIDI_ON, bass_trombone_note, piano_left_hand_velocity, ENDPOINT_BASS_TROMBONE);
-    current_note[ENDPOINT_BASS_TROMBONE] = bass_trombone_note;
-  }
 }
 
 char mapping(unsigned char note_in) {
@@ -1318,7 +1257,6 @@ void change_button_endpoint(int endpoint) {
     jawharp_on = false;
     jawharp_off();
   }
-  sax_trombone_mode = 0;
   button_endpoint = endpoint;
 }
 
@@ -1336,14 +1274,6 @@ void handle_control_helper(unsigned int note_in) {
 
   case AIR_LOCK:
     air_lock();
-    return;
-
-  case ROTATE_SAX_TROMBONE:
-    all_notes_off();
-    sax_trombone_mode = (sax_trombone_mode + 1) % N_SAX_TROMBONE_MODES;
-    if (!piano_on && sax_trombone_mode == 0) {
-      sax_trombone_mode = 1;
-    }
     return;
 
   case TOGGLE_JAWHARP:
@@ -1371,23 +1301,6 @@ void handle_control_helper(unsigned int note_in) {
       update_bass();
     }
     printf("bc %d\n", breath_chord_on);
-    return;
-
-  case TOGGLE_BASS_TROMBONE:
-    endpoint_notes_off(ENDPOINT_TROMBONE);
-    endpoint_notes_off(ENDPOINT_BASS_TROMBONE);
-
-    if (note_in == TOGGLE_BASS_TROMBONE) {
-      bass_trombone_on = !bass_trombone_on;
-      vbass_trombone_on = !vbass_trombone_on;
-    }
-
-    if (bass_trombone_on) {
-      update_bass();
-    } else {
-      bass_trombone_off();
-      vbass_trombone_off();
-    }
     return;
 
   case TOGGLE_HAMMOND:
@@ -1512,92 +1425,12 @@ int remap(int val, int min, int max) {
   return val * range / MIDI_MAX + min;
 }
 
-void play_sax_button(unsigned int mode, unsigned int note_out, unsigned int val) {
-  int chosen_endpoint = ENDPOINT_SAX;
-  note_out += 24;
-  if (note_out < 54) {
-    chosen_endpoint = ENDPOINT_BASS_SAX;
-  }
-
-  sax_button_notes[note_out] = (mode == MIDI_ON);
-
-  send_midi(mode, note_out, val, chosen_endpoint);
-}
-
-void play_trombone_note(unsigned int mode, unsigned int note_out, unsigned int val) {
-  int chosen_endpoint = ENDPOINT_TROMBONE;
-  if (note_out < 40) {
-    chosen_endpoint = ENDPOINT_BASS_TROMBONE;
-  }
-  send_midi(mode, note_out, val, chosen_endpoint);
-}
-
-void play_trombone_button(unsigned int mode, unsigned int note_out, unsigned int val) {
-  // When you hold down one button, and press another, usually we just
-  // let the synth handle it, which it does by playing the newer note.
-  // When the sax and trombone are both on, have the trombone stay and
-  // the sax move.
-  if (sax_trombone_mode == 3 && mode == MIDI_ON && val > 0) {
-    for (int i = 0 ; i < MIDI_MAX; i++) {
-      if (trombone_button_notes[i]) {
-        // A note is already playing, so save this note for later, and
-        // maybe it won't play at all.
-        ignored_trombone_button_vals[note_out] = val;
-        return;
-      }
-    }
-  }
-
-  trombone_button_notes[note_out] = (mode == MIDI_ON);
-  if (mode == MIDI_OFF) {
-    // The ignored note was never sent to the synth, so just remove it
-    // from our records.
-    ignored_trombone_button_vals[note_out] = 0;
-  }
-  play_trombone_note(mode, note_out, val);
-
-  if (sax_trombone_mode == 3 && mode == MIDI_OFF) {
-    // If the last playing note is turned off, but we ignored a note
-    // earlier, then switch to that note.
-    bool any_note_on = false;
-    for (int i = 0; i < MIDI_MAX; i++) {
-      if (trombone_button_notes[i]) {
-        any_note_on = true;
-      }
-    }
-    int ignored_note = -1;
-    if (!any_note_on) {
-      for (int i = 0; i < MIDI_MAX; i++) {
-        if (ignored_trombone_button_vals[i] > 0) {
-          ignored_note = i;
-        }
-      }
-    }
-    if (ignored_note != -1) {
-      play_trombone_note(MIDI_ON, ignored_note, ignored_trombone_button_vals[ignored_note]);
-      ignored_trombone_button_vals[ignored_note] = 0;
-      trombone_button_notes[ignored_note] = true;
-    }
-  }
-}
-
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
 
   if (mode == MIDI_ON) {
     maybe_register_upbeat();
     maybe_register_downbeat();
-  }
-
-  if (sax_trombone_mode == 1 || sax_trombone_mode == 3) {
-    play_sax_button(mode, note_out, val);
-  }
-  if (sax_trombone_mode == 2 || sax_trombone_mode == 3) {
-    play_trombone_button(mode, note_out, val);
-  }
-
-  if (sax_trombone_mode != 0) {
-    return;
   }
 
   if (button_endpoint == ENDPOINT_JAWHARP) {
@@ -1695,13 +1528,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 }
 
 void handle_cc(unsigned int cc, unsigned int val) {
-  if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
-    send_midi(MIDI_CC, cc, val, ENDPOINT_SAX);
-    send_midi(MIDI_CC, cc, val, ENDPOINT_BASS_SAX);
-    send_midi(MIDI_CC, cc, val, ENDPOINT_TROMBONE);
-    return;
-  }
-
   if (cc != CC_BREATH && cc != CC_11) {
     printf("Unknown Control change %d\n", cc);
     return;
@@ -1729,26 +1555,12 @@ void handle_cc(unsigned int cc, unsigned int val) {
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-    if (endpoint != ENDPOINT_SAX &&
-        endpoint != ENDPOINT_TROMBONE &&
-        endpoint != ENDPOINT_JAWHARP &&
-        endpoint != ENDPOINT_ORGAN_FLEX &&
-        endpoint != ENDPOINT_BASS_SAX &&
-        endpoint != ENDPOINT_BASS_TROMBONE) {
+    if (endpoint != ENDPOINT_JAWHARP &&
+        endpoint != ENDPOINT_ORGAN_FLEX) {
       continue;
     }
     int use_val = normalize(val);
 
-    if (endpoint == ENDPOINT_TROMBONE ||
-        endpoint == ENDPOINT_BASS_TROMBONE) {
-      use_val -= MIN_TROMBONE;
-      if (use_val < 0) {
-        use_val = 0;
-      }
-      if (use_val > MAX_TROMBONE) {
-        use_val = MAX_TROMBONE;
-      }
-    }
     if (endpoint == ENDPOINT_JAWHARP) {
       if (breath < 10 &&
           current_note[ENDPOINT_JAWHARP] != -1) {
@@ -1759,34 +1571,13 @@ void handle_cc(unsigned int cc, unsigned int val) {
         update_bass();
       }
     }
-    if ( ((bass_trombone_on && endpoint == ENDPOINT_TROMBONE) ||
-          (vbass_trombone_on && endpoint == ENDPOINT_BASS_TROMBONE))) {
-      if (breath < 2 &&
-          current_note[endpoint] != -1) {
-        send_midi(MIDI_OFF, current_note[endpoint], 0, endpoint);
-        current_note[endpoint] = -1;
-      } else if (breath > 3) {
-        update_bass();
-      }
-    }
+
     if (endpoint == ENDPOINT_ORGAN_FLEX) {
       organ_flex_breath = use_val;
       use_val = organ_flex_val();
       last_organ_flex_val = use_val;
     }
     send_midi(MIDI_CC, CC_11, use_val, endpoint);
-  }
-}
-
-const char* button_endpoint_str() {
-  switch (button_endpoint) {
-  case ENDPOINT_SAX:
-    return "sax";
-    break;
-  case ENDPOINT_TROMBONE:
-    return "trm";
-  default:
-    return "???";
   }
 }
 
