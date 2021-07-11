@@ -238,6 +238,10 @@ void handle_event(snd_seq_event_t* event) {
   }
 }
 
+void setup_voices() {
+  choose_voice(ENDPOINT_JAWHARP, 4);
+}
+
 int main() {
   attempt(snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0),
           "open seq");
@@ -245,6 +249,18 @@ int main() {
           "set client name");
 
   setup_ports();
+  setup_voices();
+
+  if (false) { // demo voices
+    for (int i = 0; i < 128; i++) {
+      choose_voice(1, i);
+      printf("voice %d\n", i);
+      send_midi(MIDI_CC, CC_11, 127, 1);
+      send_midi(MIDI_ON, 64, 100, 1);
+      sleep(1);
+      send_midi(MIDI_OFF, 64, 100, 1);
+    }
+  }
 
   printf("listening...\n");
 
@@ -264,13 +280,4 @@ int main() {
     }
     tick();
   }
-
-  /*
-  for (int i = 0; i < 128; i++) {
-    choose_voice(0, i);
-    play(SND_SEQ_EVENT_NOTEON, 0, 64, 100);
-    sleep(1);
-    play(SND_SEQ_EVENT_NOTEOFF, 0, 64, 100);
-  }
-  */
 }
