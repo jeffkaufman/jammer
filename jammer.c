@@ -11,13 +11,13 @@
 
 #define TICK_MS 1  // try to tick every N milliseconds
 
-#define FLUIDSYNTH_PORT_NAME "Synth input port (2132:0)"
+#define FLUIDSYNTH_PORT_PREFIX "Synth input port"
 #define AXIS49_PORT_NAME "AXIS-49 2A MIDI 1"
 #define KEYBOARD_PORT_NAME "USB MIDI Interface MIDI 1"
 #define BREATH_CONTROLLER_PORT_NAME "Breath Controller 5.0-15260BA7 "
 #define FEET_PORT_NAME "mio MIDI 1"
 
-// sudo fluidsynth --server --audio-driver=alsa -o audio.alsa.device=hw:1,0 /usr/share/sounds/sf2/FluidR3_GM.sf2
+// sudo fluidsynth --server --audio-driver=alsa -o audio.alsa.device=hw:2,0 /usr/share/sounds/sf2/FluidR3_GM.sf2
 
 int fluidsynth_port;
 int axis49_port;
@@ -101,8 +101,9 @@ void setup_ports() {
       if ((snd_seq_port_info_get_capability(port_info)
            & (SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE))
           == (SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE)) {
-        if (strcmp(snd_seq_port_info_get_name(port_info),
-                   FLUIDSYNTH_PORT_NAME) == 0) {
+        if (strncmp(FLUIDSYNTH_PORT_PREFIX,
+                    snd_seq_port_info_get_name(port_info),
+                    strlen(FLUIDSYNTH_PORT_PREFIX)) == 0) {
           fluidsynth_client = snd_seq_port_info_get_client(port_info);
           fluidsynth_port = snd_seq_port_info_get_port(port_info);
         }
@@ -205,25 +206,33 @@ void tick() {
 }
 
 void handle_event(snd_seq_event_t* event) {
-  unsigned int mode = event->type;
+  if (event->source.client == breath_controller_client) {
+    handle_cc(event->data.control.param, event->data.control.value);
+    return;
+  }
+
+  unsigned int action;
+  if (event->type == SND_SEQ_EVENT_NOTEON) {
+    action = MIDI_ON;
+  } else if (event->type == SND_SEQ_EVENT_NOTEOFF) {
+    action = MIDI_OFF;
+  } else {
+    printf("unknown input type %d\n", event->type);
+    return;
+  }
   unsigned int note_in = event->data.note.note;
   unsigned int val = event->data.note.velocity;
 
-  //unsigned int channel = mode & 0x0F;
-  mode = mode & 0xF0;
-
-  if (mode == MIDI_ON && val == 0) {
-    mode = MIDI_OFF;
+  if (action == MIDI_ON && val == 0) {
+    action = MIDI_OFF;
   }
 
   if (event->source.client == keyboard_client) {
-    handle_piano(mode, note_in, val);
+    handle_piano(action, note_in, val);
   } else if (event->source.client == axis49_client) {
-    handle_axis_49(mode, note_in, val);
+    handle_axis_49(action, note_in, val);
   } else if (event->source.client == feet_client) {
-    handle_feet(mode, note_in, val);
-  } else if (mode == MIDI_CC) {
-    handle_cc(note_in, val);
+    handle_feet(action, note_in, val);
   } else {
     printf("ignored\n");
   }

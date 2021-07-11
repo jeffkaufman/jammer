@@ -1,4 +1,4 @@
-jammermidi: jammermidi.m jammermidilib.h
+jammermidi: jammermidi.m jammermidilib.h macapi.h common.h
 	gcc \
     -F/System/Library/PrivateFrameworks \
 	  -framework CoreMIDI \
@@ -8,7 +8,7 @@ jammermidi: jammermidi.m jammermidilib.h
     -framework Foundation \
 	  jammermidi.m -o jammermidi -std=c99 -Wall
 
-jammer: jammer.c
+jammer: jammer.c jammermidilib.h linuxapi.h common.h
 	gcc -lasound -lm jammer.c -o jammer -std=c99 -Wall
 
 run: jammer

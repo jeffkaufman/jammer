@@ -2,11 +2,7 @@
 #define JML_MAC_API_H
 
 #include <time.h>
-
-void die(char *errmsg) {
-  printf("%s\n",errmsg);
-  exit(-1);
-}
+#include "common.h"
 
 void attempt(OSStatus result, char* errmsg) {
   if (result != noErr) {
