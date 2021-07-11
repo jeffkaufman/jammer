@@ -235,12 +235,6 @@ bool breath_chord_on;
 bool breath_chord_playing;
 bool is_minor_chord;  // only used when listen_drum_pedal=true
 int current_drum_vel;
-bool pause_everything;
-bool pause_low;
-bool pause_high;
-bool pause_arpeggiator;
-bool pause_auto_drums;
-bool pause_auto_hh;
 
 // For each lefthand note L, what righthand notes have we had?  See
 // register_righthand_note(), age_righthand_notes(), and
@@ -338,13 +332,6 @@ void voices_reset() {
 
   current_drum_vel = 100;
 
-  pause_everything = false;
-  pause_low = false;
-  pause_high = false;
-  pause_arpeggiator = false;
-  pause_auto_drums = false;
-  pause_auto_hh = false;
-
   for (int i = 0; i < 12*12; i++) {
     righthand_by_lefthand[i] = 0;
   }
@@ -401,26 +388,6 @@ void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int
 
   printf("scheduled %llu %llu %llu  %d %d %d %d %d\n",
          on->ts, off->ts, length,  on->actionType, off->actionType, on->noteNo, on->velocity, on->endpoint);
-}
-
-bool kick_paused() {
-  return pause_everything || pause_low;
-}
-
-bool snare_paused() {
-  return pause_everything || pause_high;
-}
-
-bool auto_hh_paused() {
-  return pause_everything || pause_high || pause_auto_drums || pause_auto_hh;
-}
-
-bool arpeggiator_paused() {
-  return pause_everything || pause_low || pause_arpeggiator;
-}
-
-bool auto_righthand_paused() {
-  return pause_everything || pause_high || pause_arpeggiator;
 }
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
@@ -662,7 +629,7 @@ bool predown(int subbeat) {
 }
 
 void arpeggiate_tambourine(int subbeat) {
-  if (subbeat == 0 || auto_hh_paused()) {
+  if (subbeat == 0) {
     return;
   }
 
@@ -849,11 +816,6 @@ void arpeggiate_bass(int subbeat) {
       }
     }
 
-    if (arpeggiator_paused()) {
-      send_note = false;
-      end_note = true;
-    }
-
     if (end_note && current_arpeggiator_note != -1) {
       send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS);
       current_arpeggiator_note = -1;
@@ -884,9 +846,9 @@ void arpeggiate_drums(int subbeat) {
       }
     }
 
-    if (send_kick && !kick_paused()) {
+    if (send_kick) {
       send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_FOOT_1);
-    } else if (send_tss && !auto_hh_paused()) {
+    } else if (send_tss) {
       send_midi(MIDI_ON,  MIDI_DRUM_KICK, current_drum_vel, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
       last_fc_foot = !last_fc_foot;
     }
@@ -950,7 +912,7 @@ void arpeggiate_drums(int subbeat) {
       }
     }
 
-    if (auto_hihat_vol && !auto_hh_paused()) {
+    if (auto_hihat_vol) {
       send_hh(auto_hihat_vol);
     }
   }
@@ -963,7 +925,7 @@ void arpeggiate_righthand(int subbeat) {
     return;
   }
   if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
-    if (subbeat < 72 && !auto_righthand_paused()) {
+    if (subbeat < 72) {
       last_auto_righthand = select_righthand_note(70);
       printf("sending %d\n", last_auto_righthand);
       send_midi(MIDI_ON, last_auto_righthand, 100, ENDPOINT_AUTO_RIGHTHAND);
@@ -1759,7 +1721,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     current_drum_vel = val;
   }
 
-  if (is_low && !kick_paused()) {
+  if (is_low) {
     if (fc_feet_on) {
       send_midi(mode, MIDI_DRUM_KICK, val, ENDPOINT_FOOT_1);
     } else if (manual_kick_on) {
