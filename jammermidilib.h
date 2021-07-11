@@ -1694,27 +1694,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-void handle_whistle(unsigned int mode, unsigned int note_in, unsigned int val) {
-  if (mode == MIDI_OFF) {
-    return;
-  } else if (mode == MIDI_ON) {
-    whistle_anchor_note = note_in;
-  } else if (mode == MIDI_PITCH_BEND) {
-    unsigned int lsb = note_in;
-    unsigned int msb = val;
-    unsigned int bend = lsb + (msb << 7);
-
-    // bend = (1 + f_bend/2) * 8192 - 0.5
-    // bend + 0.5 = (1 + f_bend/2) * 8192
-    // (bend + 0.5) / 8192 = 1 + f_bend/2
-    // (bend + 0.5) / 8192 - 1 = f_bend/2
-    // ((bend + 0.5) / 8192 - 1)*2 = f_bend
-    double midi_space_bend = ((((double)bend + 0.5) / 8192) - 1)*2;
-    double midi_space_note = whistle_anchor_note + midi_space_bend;
-    printf("whistle: %lf", midi_space_note);
-  }
-}
-
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc >= GCMIDI_MIN && cc <= GCMIDI_MAX) {
     send_midi(MIDI_CC, cc, val, ENDPOINT_SAX);
