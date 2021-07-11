@@ -40,7 +40,6 @@
 #define TOGGLE_ARPEGGIATOR          21
 #define ROTATE_ARPEGGIATOR_PATTERN  20
 #define TOGGLE_LISTEN_DRUM_PEDAL    19
-#define TOGGLE_AUTO_SNARE           18
 #define TOGGLE_MANUAL_TSS           17
 #define TOGGLE_MANUAL_KICK          16
 #define TOGGLE_FC_FEET              15
@@ -201,8 +200,6 @@ bool listen_drum_pedal;
 int most_recent_drum_pedal;
 bool manual_kick_on;
 bool manual_tss_on;
-bool auto_snare_on;
-uint64_t last_auto_snare_ns;
 int drum_kit_sound;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
@@ -280,8 +277,6 @@ void voices_reset() {
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
   manual_kick_on = true;
   manual_tss_on = true;
-  auto_snare_on = false;
-  last_auto_snare_ns = 0;
   drum_kit_sound = 0;
   atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
@@ -414,10 +409,6 @@ bool kick_paused() {
 
 bool snare_paused() {
   return pause_everything || pause_high;
-}
-
-bool auto_snare_paused() {
-  return snare_paused() || pause_auto_drums;
 }
 
 bool auto_hh_paused() {
@@ -772,12 +763,6 @@ void send_snare(int vel) {
   }
 }
 
-void send_auto_snare() {
-  if (auto_snare_on && !auto_snare_paused()) {
-    send_snare(current_drum_vel);
-  }
-}
-
 void arpeggiate_bass(int subbeat) {
   int note_out = active_note();
   int selected_note = note_out;
@@ -1094,20 +1079,6 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 
   if (acceptable_error || keep_going) {
     current_beat_ns = whole_beat;
-
-    if (last_auto_snare_ns < (current_time - whole_beat*4)) {
-      last_auto_snare_ns = current_time - whole_beat;
-    }
-
-    if ((current_time - last_auto_snare_ns < whole_beat * 2.25 &&
-         current_time - last_auto_snare_ns > whole_beat * 1.75) ||
-        (current_time - last_auto_snare_ns < whole_beat * 4.25 &&
-         current_time - last_auto_snare_ns > whole_beat * 4.75)) {
-      // looks like the auto snare last fired about two beats ago, so
-      // it's time to fire it again.
-      send_auto_snare();
-      last_auto_snare_ns = current_time;
-    }
 
     if (keep_going) {
       kick_times[kick_times_index] = current_time;
@@ -1549,10 +1520,6 @@ void handle_control_helper(unsigned int note_in) {
 
   case ROTATE_DRUM_KIT:
     drum_kit_sound = (drum_kit_sound + 1) % N_DRUM_KIT_SOUNDS;
-    return;
-
-  case TOGGLE_AUTO_SNARE:
-    auto_snare_on = !auto_snare_on;
     return;
 
   case TOGGLE_MANUAL_TSS:
