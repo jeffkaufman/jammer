@@ -42,7 +42,6 @@
 #define TOGGLE_LISTEN_DRUM_PEDAL    19
 #define TOGGLE_MANUAL_TSS           17
 #define TOGGLE_MANUAL_KICK          16
-#define TOGGLE_FC_FEET              15
 
 #define TOGGLE_AUTO_RIGHTHAND       28
 // #define TBD                      27
@@ -224,9 +223,6 @@ int kick_times_index;
 uint64_t snare_times[SNARE_TIMES_LENGTH];
 int snare_times_index;
 uint64_t next_ns[N_SUBBEATS];
-uint64_t tambourine_next_ns[N_SUBBEATS];
-bool fc_feet_on;
-bool last_fc_foot;
 int state;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64_t current_beat_ns;
@@ -309,11 +305,7 @@ void voices_reset() {
 
   for (int i = 0; i < N_SUBBEATS; i++) {
     next_ns[i] = 0;
-    tambourine_next_ns[i] = 0;
   }
-
-  fc_feet_on = false;
-  last_fc_foot = false;
 
   state = STATE_DEFAULT;
 
@@ -628,16 +620,6 @@ bool predown(int subbeat) {
   }
 }
 
-void arpeggiate_tambourine(int subbeat) {
-  if (subbeat == 0) {
-    return;
-  }
-
-  if (auto_hihat_mode == 6 && (downbeat(subbeat) || upbeat(subbeat))) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 100, upbeat(subbeat) ? ENDPOINT_TAMBOURINE_STOPPED : ENDPOINT_TAMBOURINE_FREE);
-  }
-}
-
 /* drum kits:
  *   0: acoustic #1
  *   1: acoustic #2
@@ -832,26 +814,6 @@ void arpeggiate_bass(int subbeat) {
 
 void arpeggiate_drums(int subbeat) {
   if (subbeat == 0) {
-  } else if (fc_feet_on) {
-    bool send_kick = false;
-    bool send_tss = false;
-
-    if (upbeat(subbeat) || predown(subbeat)) {
-      send_tss = true;
-    }
-
-    if (drum_breath_on) {
-      if (breath > 60 && preup(subbeat)) {
-        send_tss = true;
-      }
-    }
-
-    if (send_kick) {
-      send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_FOOT_1);
-    } else if (send_tss) {
-      send_midi(MIDI_ON,  MIDI_DRUM_KICK, current_drum_vel, last_fc_foot ? ENDPOINT_FOOT_3 : ENDPOINT_FOOT_4);
-      last_fc_foot = !last_fc_foot;
-    }
   } else {
     int auto_hihat_1_vol = 0;
     int auto_hihat_2_vol = 0;
@@ -1054,10 +1016,6 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
     next_ns[0] = current_time;
     for (int i = 1; i < N_SUBBEATS; i++) {
       next_ns[i] = next_ns[i-1] + (whole_beat)/72;
-    }
-
-    for (int i = 0 ; i < N_SUBBEATS; i++) {
-      tambourine_next_ns[i] = next_ns[i] - (uint64_t)(0.094 * NS_PER_SEC);
     }
   }
 }
@@ -1538,10 +1496,6 @@ void handle_control_helper(unsigned int note_in) {
     auto_hihat_mode = (auto_hihat_mode + 1) % N_AUTO_HIHAT_MODES;
     return;
 
-  case TOGGLE_FC_FEET:
-    fc_feet_on = !fc_feet_on;
-    return;
-
   case TOGGLE_KEEP_GOING:
     keep_going = !keep_going;
     return;
@@ -1717,33 +1671,25 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   count_drum_hit(is_low);
   if (is_low) {
-    val = (val-(fc_feet_on ? 40 : 30))*1.5;
+    val = (val-30)*1.5;
     current_drum_vel = val;
   }
 
-  if (is_low) {
-    if (fc_feet_on) {
-      send_midi(mode, MIDI_DRUM_KICK, val, ENDPOINT_FOOT_1);
-    } else if (manual_kick_on) {
-      send_kick();
-    }
-  } else if (!is_low) {
-    if (fc_feet_on) {
-      send_midi(mode, MIDI_DRUM_KICK, val, ENDPOINT_FOOT_3);
-    } else if (manual_tss_on) {
-      if (note_in == MIDI_DRUM_PEDAL_1) {
-        if (drum_kit_sound == 0) {
-          send_raw_hh((val-10)*1.5);
-        } else {
-          send_kick();
-        }
-      } else if (note_in == MIDI_DRUM_PEDAL_2) {
-        send_rim((val-10)*1.5);
-      } else if (note_in == MIDI_DRUM_PEDAL_4) {
-        send_crash((val-10)*1.5);
+  if (is_low && manual_kick_on) {
+    send_kick();
+  } else if (!is_low && manual_tss_on) {
+    if (note_in == MIDI_DRUM_PEDAL_1) {
+      if (drum_kit_sound == 0) {
+        send_raw_hh((val-10)*1.5);
       } else {
-        send_snare((val-10)*1.5);
+        send_kick();
       }
+    } else if (note_in == MIDI_DRUM_PEDAL_2) {
+      send_rim((val-10)*1.5);
+    } else if (note_in == MIDI_DRUM_PEDAL_4) {
+      send_crash((val-10)*1.5);
+    } else {
+      send_snare((val-10)*1.5);
     }
   }
 }
@@ -2067,10 +2013,6 @@ void trigger_subbeats() {
         estimate_tempo(current_time, /*imaginary=*/true, /*is_low=*/true);
       }
     }
-    if (tambourine_next_ns[i] > 0 && current_time > tambourine_next_ns[i]) {
-      arpeggiate_tambourine(i);
-      tambourine_next_ns[i] = 0;
-    }
   }
 }
 
@@ -2085,12 +2027,6 @@ void jml_tick() {
       debug_subbeat++;
       debug_subbeat = debug_subbeat % 72;
       if (debug_subbeat == 0) {
-        if (fc_feet_on) {
-          send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_FOOT_1);
-          current_drum_vel += 1;
-          current_drum_vel = current_drum_vel % MIDI_MAX;
-          printf("vel = %d\n", current_drum_vel);
-        }
         arpeggiate(72);
       }
       arpeggiate(debug_subbeat);

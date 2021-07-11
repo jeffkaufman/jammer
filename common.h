@@ -23,15 +23,8 @@ void die(char *errmsg) {
 #define ENDPOINT_DRUM_B 17
 #define ENDPOINT_DRUM_C 18
 #define ENDPOINT_DRUM_D 19
-// These three play samples from https://www.jefftk.com/Foot-Percussion--Nightingale--La-Belle-Rose
-#define ENDPOINT_FOOT_1 20 // 1-b
-#define ENDPOINT_FOOT_3 21 // 3-a
-#define ENDPOINT_FOOT_4 22 // 4-a
-// These two are from https://www.jefftk.com/p/what-noise-does-a-tambourine-make
-#define ENDPOINT_TAMBOURINE_FREE 23
-#define ENDPOINT_TAMBOURINE_STOPPED 24
-#define ENDPOINT_AUTO_RIGHTHAND 25
-#define ENDPOINT_GROOVE_BASS 26
+#define ENDPOINT_AUTO_RIGHTHAND 20
+#define ENDPOINT_GROOVE_BASS 21
 #define N_ENDPOINTS (ENDPOINT_GROOVE_BASS+1)
 
 // aliases
