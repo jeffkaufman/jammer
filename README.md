@@ -23,6 +23,43 @@ sudo apt install fluidsynth fluid-soundfont-gm alsa-utils jackd2
 
 (When JACK asks if it can have realtime priority, say yes)
 
+To run on boot, `/etc/systemd/system/fluidsynth.service` should have:
+
+```
+[Unit]
+Description=Fluidsynth Synthesizer
+
+[Service]
+ExecStart=sudo fluidsynth -g 2.0 -i --server --audio-driver=alsa -o audio.alsa.device=hw:2,0 /usr/share/sounds/sf2/FluidR3_GM.sf2
+Restart=always
+KillSignal=SIGQUIT
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
+```
+
+And `/etc/systemd/system/jammer.service` should have:
+
+```
+[Unit]
+Description=Remap MIDI
+After=fluidsynth.service
+
+[Service]
+ExecStart=/home/pi/jammer/jammer
+Restart=always
+KillSignal=SIGQUIT
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then `sudo systemctl enable fluidsynth`,
+`sudo systemctl enable jammer` and
+`sudo systemctl daemon-reload`.
+
 ## Obsolete
 
 ### Reaper Configuration
