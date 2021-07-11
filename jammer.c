@@ -17,7 +17,7 @@
 #define BREATH_CONTROLLER_PORT_NAME "Breath Controller 5.0-15260BA7 "
 #define FEET_PORT_NAME "mio MIDI 1"
 
-// sudo fluidsynth --server --audio-driver=alsa -o audio.alsa.device=hw:2,0 /usr/share/sounds/sf2/FluidR3_GM.sf2
+// sudo fluidsynth -g 2.0 -i --server --audio-driver=alsa -o audio.alsa.device=hw:2,0 /usr/share/sounds/sf2/FluidR3_GM.sf2
 
 int fluidsynth_port;
 int axis49_port;
