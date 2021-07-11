@@ -17,8 +17,6 @@
 #define BREATH_CONTROLLER_PORT_NAME "Breath Controller 5.0-15260BA7 "
 #define FEET_PORT_NAME "mio MIDI 1"
 
-// sudo fluidsynth -g 2.0 -i --server --audio-driver=alsa -o audio.alsa.device=hw:2,0 /usr/share/sounds/sf2/FluidR3_GM.sf2
-
 int fluidsynth_port;
 int axis49_port;
 int keyboard_port;
@@ -61,58 +59,63 @@ void setup_ports() {
   snd_seq_client_info_malloc(&client_info);
   snd_seq_port_info_malloc(&port_info);
 
-  snd_seq_client_info_set_client(client_info, -1);
-  while (snd_seq_query_next_client(seq, client_info) >= 0) {
-    int client = snd_seq_client_info_get_client(client_info);
+  while (true) {
+    snd_seq_client_info_set_client(client_info, -1);
+    while (snd_seq_query_next_client(seq, client_info) >= 0) {
+      int client = snd_seq_client_info_get_client(client_info);
 
-    if (client == SND_SEQ_CLIENT_SYSTEM) {
-      continue;  // ignore system timer
-    }
-
-    snd_seq_port_info_set_client(port_info, client);
-    snd_seq_port_info_set_port(port_info, -1);
-    while (snd_seq_query_next_port(seq, port_info) >= 0) {
-      printf("Device: %s\n", snd_seq_port_info_get_name(port_info));
-
-      // Input ports: we need reading.
-      if ((snd_seq_port_info_get_capability(port_info)
-           & (SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ))
-          == (SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ)) {
-        if (strcmp(snd_seq_port_info_get_name(port_info),
-                   AXIS49_PORT_NAME) == 0) {
-          axis49_client = snd_seq_port_info_get_client(port_info);
-          axis49_port = snd_seq_port_info_get_port(port_info);
-        } else if (strcmp(snd_seq_port_info_get_name(port_info),
-                          KEYBOARD_PORT_NAME) == 0) {
-          keyboard_client = snd_seq_port_info_get_client(port_info);
-          keyboard_port = snd_seq_port_info_get_port(port_info);
-        } else if (strcmp(snd_seq_port_info_get_name(port_info),
-                          BREATH_CONTROLLER_PORT_NAME) == 0) {
-          breath_controller_client = snd_seq_port_info_get_client(port_info);
-          breath_controller_port = snd_seq_port_info_get_port(port_info);
-        } else if (strcmp(snd_seq_port_info_get_name(port_info),
-                          FEET_PORT_NAME) == 0) {
-          feet_client = snd_seq_port_info_get_client(port_info);
-          feet_port = snd_seq_port_info_get_port(port_info);
-        }
+      if (client == SND_SEQ_CLIENT_SYSTEM) {
+        continue;  // ignore system timer
       }
 
-      // Output port: we need writing.
-      if ((snd_seq_port_info_get_capability(port_info)
-           & (SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE))
-          == (SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE)) {
-        if (strncmp(FLUIDSYNTH_PORT_PREFIX,
-                    snd_seq_port_info_get_name(port_info),
-                    strlen(FLUIDSYNTH_PORT_PREFIX)) == 0) {
-          fluidsynth_client = snd_seq_port_info_get_client(port_info);
-          fluidsynth_port = snd_seq_port_info_get_port(port_info);
+      snd_seq_port_info_set_client(port_info, client);
+      snd_seq_port_info_set_port(port_info, -1);
+      while (snd_seq_query_next_port(seq, port_info) >= 0) {
+        printf("Device: %s\n", snd_seq_port_info_get_name(port_info));
+
+        // Input ports: we need reading.
+        if ((snd_seq_port_info_get_capability(port_info)
+             & (SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ))
+            == (SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ)) {
+          if (strcmp(snd_seq_port_info_get_name(port_info),
+                     AXIS49_PORT_NAME) == 0) {
+            axis49_client = snd_seq_port_info_get_client(port_info);
+            axis49_port = snd_seq_port_info_get_port(port_info);
+          } else if (strcmp(snd_seq_port_info_get_name(port_info),
+                            KEYBOARD_PORT_NAME) == 0) {
+            keyboard_client = snd_seq_port_info_get_client(port_info);
+            keyboard_port = snd_seq_port_info_get_port(port_info);
+          } else if (strcmp(snd_seq_port_info_get_name(port_info),
+                            BREATH_CONTROLLER_PORT_NAME) == 0) {
+            breath_controller_client = snd_seq_port_info_get_client(port_info);
+            breath_controller_port = snd_seq_port_info_get_port(port_info);
+          } else if (strcmp(snd_seq_port_info_get_name(port_info),
+                            FEET_PORT_NAME) == 0) {
+            feet_client = snd_seq_port_info_get_client(port_info);
+            feet_port = snd_seq_port_info_get_port(port_info);
+          }
+        }
+
+        // Output port: we need writing.
+        if ((snd_seq_port_info_get_capability(port_info)
+             & (SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE))
+            == (SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE)) {
+          if (strncmp(FLUIDSYNTH_PORT_PREFIX,
+                      snd_seq_port_info_get_name(port_info),
+                      strlen(FLUIDSYNTH_PORT_PREFIX)) == 0) {
+            fluidsynth_client = snd_seq_port_info_get_client(port_info);
+            fluidsynth_port = snd_seq_port_info_get_port(port_info);
+          }
         }
       }
     }
-  }
 
-  if (fluidsynth_port == -1) {
-    die("can't run without output device; need fluidsynth");
+    if (fluidsynth_port == -1) {
+      printf("waiting for fluidsynth...\n");
+      sleep(1);
+    } else {
+      break;
+    }
   }
 
   int next_index = 0;
