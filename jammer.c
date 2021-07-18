@@ -5,6 +5,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <alsa/asoundlib.h>
 #include "linuxapi.h"
 #include "jammermidilib.h"
@@ -206,7 +207,7 @@ void setup_ports() {
 }
 
 void tick() {
-  // do nothing for now
+  jml_tick();
 }
 
 void handle_event(snd_seq_event_t* event) {
@@ -268,7 +269,38 @@ void setup_voices() {
 
 }
 
-int main() {
+char* config_filename = NULL;
+void* update_config(void* ignored) {
+  FILE* config_file = fopen(config_filename, "r");
+  if (!config_file) {
+    perror("can't open config file");
+    exit(-1);
+  }
+
+  char buf[CONFIG_SIZE];
+  while (1) {
+    rewind(config_file);
+    int bytes_read = fread(buf, 1, CONFIG_SIZE, config_file);
+    for (int i = 0 ; i < bytes_read && i < CONFIG_SIZE; i++) {
+      new_config[i] = buf[i];
+    }
+    usleep(50000 /* 50ms in us */);
+  }
+}
+
+pthread_t config_thread;
+void start_config_thread() {
+  pthread_create(&config_thread, NULL, &update_config, NULL);
+}
+
+int main(int argc, char** argv) {
+  if (argc != 2) {
+    printf("usage: %s /path/to/config/file\n", argv[0]);
+    return -1;
+  }
+  config_filename = argv[1];
+  start_config_thread();
+
   attempt(snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0),
           "open seq");
   attempt(snd_seq_set_client_name(seq, "jammer"),
@@ -301,6 +333,9 @@ int main() {
     }
   }
 
+  sleep(1);
+  
+  jml_setup();
   printf("listening...\n");
 
   int n_poll_file_descriptors = snd_seq_poll_descriptors_count(seq, POLLIN);

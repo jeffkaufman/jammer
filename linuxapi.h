@@ -32,7 +32,7 @@ void reset_event(snd_seq_event_t* ev) {
 
 void send_midi(int action, int note, int velocity, int endpoint) {
   int channel = endpoint;
-  printf("sending %d %d %d %d\n", action, channel, note, velocity);
+  //printf("sending %d %d %d %d\n", action, channel, note, velocity);
 
   snd_seq_event_t ev;
   reset_event(&ev);

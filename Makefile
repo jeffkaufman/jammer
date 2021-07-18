@@ -9,10 +9,10 @@ jammermidi: jammermidi.m jammermidilib.h macapi.h common.h
 	  jammermidi.m -o jammermidi -std=c99 -Wall
 
 jammer: jammer.c jammermidilib.h linuxapi.h common.h
-	gcc -lasound -lm jammer.c -o jammer -std=c99 -Wall
+	gcc -lasound -lm -pthread jammer.c -o jammer -std=c99 -Wall
 
 run: jammer
-	./jammer
+	./jammer $(CURDIR)/kbd-config
 
 run-old: jammermidi
 	./jammermidi

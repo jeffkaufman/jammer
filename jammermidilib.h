@@ -51,6 +51,14 @@
 
 #define CONTROL_MAX TOGGLE_AUTO_RIGHTHAND
 
+// keyboard controls, used by update_config
+#define CFG_JAWHARP 0
+#define CFG_FLEX 1
+#define CFG_SINE_PAD 2
+#define CFG_SWEEP_PAD 3
+#define CFG_OVERDRIVEN_RHODES 4
+#define CFG_RHODES 5
+
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
 
@@ -250,8 +258,8 @@ void voices_reset() {
   auto_hihat_mode = 0;
   listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
-  manual_kick_on = true;
-  manual_tss_on = true;
+  manual_kick_on = false;
+  manual_tss_on = false;
   drum_kit_sound = 0;
   atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
@@ -1265,6 +1273,63 @@ void air_lock() {
   locked_air = air;
 }
 
+#define CONFIG_SIZE 10
+char current_config[CONFIG_SIZE];
+char new_config[CONFIG_SIZE];
+
+void handle_config_change(int config_knob, bool value) {
+  switch (config_knob) {
+  case CFG_JAWHARP:
+    endpoint_notes_off(ENDPOINT_JAWHARP);
+    jawharp_on = value;
+    if (jawharp_on) {
+      update_bass();
+    } else {
+      jawharp_off();
+    }
+    return;
+
+  case CFG_FLEX:
+    endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
+    organ_flex_on = value;
+    return;
+
+  case CFG_SINE_PAD:
+    endpoint_notes_off(ENDPOINT_SINE_PAD);
+    sine_pad_on = value;
+    return;
+
+  case CFG_SWEEP_PAD:
+    endpoint_notes_off(ENDPOINT_SWEEP_PAD);
+    sweep_pad_on = value;
+    return;
+
+  case CFG_OVERDRIVEN_RHODES:
+    endpoint_notes_off(ENDPOINT_OVERDRIVEN_RHODES);
+    overdriven_rhodes_on = value;
+    return;
+
+  case CFG_RHODES:
+    endpoint_notes_off(ENDPOINT_RHODES);
+    rhodes_on = value;
+    return;
+
+  }
+}
+
+void check_config_change() {
+  //printf("%.10s vs %.10s\n", new_config, current_config);
+  for (int i = 0; i < CONFIG_SIZE; i++) {
+    if (new_config[i] != current_config[i]) {
+      printf("%d: %c (%d) -> %c (%d) \n", i,
+             current_config[i], current_config[i],
+             new_config[i], new_config[i]);
+      current_config[i] = new_config[i];
+      handle_config_change(i, new_config[i] != ' ');
+    }
+  }
+}
+
 void handle_control_helper(unsigned int note_in) {
   switch (note_in) {
 
@@ -1692,6 +1757,10 @@ void calculate_breath_speeds() {
 }
 
 void jml_setup() {
+  for(int i = 0; i < CONFIG_SIZE; i++) {
+    current_config[i] = ' ';
+    new_config[i] = ' ';
+  }  
   calculate_breath_speeds();
   full_reset();
 
@@ -1804,6 +1873,7 @@ void jml_tick() {
   }
 
   // Called every TICK_MS
+  check_config_change();
   update_air();
   forward_air();
   age_righthand_notes(leakage);
