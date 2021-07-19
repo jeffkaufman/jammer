@@ -369,21 +369,6 @@ double breath_gain = 0;  // set by calculate_breath_speeds()
 double max_air = 0; // set by calculate_breath_speeds()
 double air = 0;  // maintained by update_air()
 
-
-// Return the distance between two notes in MIDI space, ignoring
-// octave.  For example, if noteA is A57, then G55, G67, and G79 are
-// all two notes away.
-double distance(double noteA, double noteB) {
-  double dist = noteA - noteB;
-  while (dist < -6) {
-    dist += 12;
-  }
-  while (dist > 6) {
-    dist -= 12;
-  }
-  return fabs(dist);
-}
-
 char active_note() {
   return root_note;
 }
