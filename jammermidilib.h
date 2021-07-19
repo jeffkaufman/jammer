@@ -22,7 +22,6 @@
 #define TOGGLE_OVERDRIVEN_RHODES     6
 #define TOGGLE_RHODES            13
 
-#define TOGGLE_KEEP_GOING            5
 #define TOGGLE_HAMMOND           12
 
 #define TOGGLE_ATMOSPHERIC_DRONE 11
@@ -85,24 +84,10 @@
 #define CC_ROLL 30
 #define CC_PITCH 31
 
-#define MIDI_DRUM_KICK  35
-#define MIDI_DRUM_KICK_A  106
-#define MIDI_DRUM_KICK_B  36
-#define MIDI_DRUM_RIM 37
-#define MIDI_DRUM_SNARE 38
-#define MIDI_DRUM_CLAP 40
-#define MIDI_DRUM_HIHAT 46
-#define MIDI_DRUM_HIHAT_CLOSED 42
-#define MIDI_DRUM_TAMBOURINE 54
-#define MIDI_DRUM_COWBELL 56
-#define MIDI_DRUM_CRASH 49
-#define MIDI_DRUM_CRASH_2 57
-#define MIDI_DRUM_SPLASH 55
-
-#define MIDI_DRUM_PEDAL_1 46
-#define MIDI_DRUM_PEDAL_2 38
-#define MIDI_DRUM_PEDAL_3 51
-#define MIDI_DRUM_PEDAL_4 59
+#define MIDI_DRUM_IN_SNARE 46
+#define MIDI_DRUM_IN_KICK 38
+#define MIDI_DRUM_IN_CRASH 59
+#define MIDI_DRUM_IN_HIHAT 51
 
 #define MIDI_MAX 127
 
@@ -115,6 +100,8 @@
 
 #define KICK_TIMES_LENGTH 12
 #define SNARE_TIMES_LENGTH 12
+#define CRASH_TIMES_LENGTH 12
+#define HIHAT_TIMES_LENGTH 12
 
 #define NS_PER_SEC 1000000000LL
 
@@ -173,7 +160,6 @@ bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
 int auto_hihat_mode;
-int most_recent_drum_pedal;
 bool manual_kick_on;
 bool manual_tss_on;
 int drum_kit_sound;
@@ -196,6 +182,10 @@ uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
 uint64_t snare_times[SNARE_TIMES_LENGTH];
 int snare_times_index;
+uint64_t crash_times[CRASH_TIMES_LENGTH];
+int crash_times_index;
+uint64_t hihat_times[HIHAT_TIMES_LENGTH];
+int hihat_times_index;
 uint64_t next_ns[N_SUBBEATS];
 int state;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
@@ -203,7 +193,6 @@ uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 bool breath_chord_on;
 bool breath_chord_playing;
-int current_drum_vel;
 
 // For each lefthand note L, what righthand notes have we had?  See
 // register_righthand_note(), age_righthand_notes(), and
@@ -219,9 +208,6 @@ int best_subbeat_upbeat_candidate;
 uint64_t subbeat_downbeat_candidates[N_SUBBEAT_DOWNBEAT_CANDIDATES];
 int subbeat_downbeat_candidates_index;
 
-bool keep_going;
-
-
 void voices_reset() {
   jawharp_on = false;
   hammond_on = false;
@@ -234,7 +220,6 @@ void voices_reset() {
   tbd_a_on = false;
   tbd_b_on = false;
   auto_hihat_mode = 0;
-  most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
   manual_kick_on = false;
   manual_tss_on = false;
   drum_kit_sound = 0;
@@ -268,6 +253,16 @@ void voices_reset() {
   }
   snare_times_index = 0;
 
+  for (int i = 0; i < CRASH_TIMES_LENGTH; i++) {
+    crash_times[i] = 0;
+  }
+  crash_times_index = 0;
+
+  for (int i = 0; i < HIHAT_TIMES_LENGTH; i++) {
+    hihat_times[i] = 0;
+  }
+  hihat_times_index = 0;
+
   for (int i = 0; i < N_SUBBEATS; i++) {
     next_ns[i] = 0;
   }
@@ -285,8 +280,6 @@ void voices_reset() {
   breath_chord_on = false;
   breath_chord_playing = false;
 
-  current_drum_vel = 100;
-
   for (int i = 0; i < 12*12; i++) {
     righthand_by_lefthand[i] = 0;
   }
@@ -302,8 +295,6 @@ void voices_reset() {
     subbeat_downbeat_candidates[i] = 0;
   }
   subbeat_downbeat_candidates_index = 0;
-
-  keep_going = false;
 }
 
 void compute_best_subbeat_upbeat_candidate() {
@@ -504,98 +495,6 @@ bool predown(int subbeat) {
   }
 }
 
-/* drum kits:
- *   0: acoustic #1
- *   1: acoustic #2
- *   2: electronic #1
- *   3: electronic #2
- *   4: electronic #1 and #2
- */
-void send_kick() {
-  if (drum_kit_sound == 0) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, current_drum_vel, ENDPOINT_DRUM_A);
-  } else if (drum_kit_sound == 1) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK_B, current_drum_vel, ENDPOINT_DRUM_A);
-  } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, 120, ENDPOINT_DRUM_B);
-  } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, 120, ENDPOINT_DRUM_C);
-  } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, 110, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_KICK, 110, ENDPOINT_DRUM_C);
-  }
-}
-
-void send_raw_hh(int vel) {
-  vel = normalize(vel);
-
-  if (drum_kit_sound == 0 || drum_kit_sound == 1) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, vel, ENDPOINT_DRUM_A);
-  } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 120, ENDPOINT_DRUM_B);
-  } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 120, ENDPOINT_DRUM_C);
-  } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 110, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_HIHAT_CLOSED, 110, ENDPOINT_DRUM_C);
-  }
-}
-
-void send_hh(int relative_vel) {
-  send_raw_hh(current_drum_vel * relative_vel / 100);
-}
-
-void send_rim(int vel) {
-  vel = normalize(vel);
-
-  if (drum_kit_sound == 0) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_A);
-  } else if (drum_kit_sound == 1) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, vel, ENDPOINT_DRUM_D);
-  } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, 120, ENDPOINT_DRUM_B);
-  } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, 120, ENDPOINT_DRUM_C);
-  } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, 110, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_RIM, 110, ENDPOINT_DRUM_C);
-  }
-}
-
-void send_crash(int vel) {
-  vel = normalize(vel);
-
-  if (drum_kit_sound == 0) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, vel, ENDPOINT_DRUM_A);
-  } else if (drum_kit_sound == 1) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH_2, vel, ENDPOINT_DRUM_A);
-  } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 120, ENDPOINT_DRUM_B);
-  } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 120, ENDPOINT_DRUM_C);
-  } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 110, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_CRASH, 110, ENDPOINT_DRUM_C);
-  }
-}
-
-void send_snare(int vel) {
-  vel = normalize(vel);
-
-  if (drum_kit_sound == 0) {
-    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_D);
-  } else if (drum_kit_sound == 1) {
-    send_midi(MIDI_ON, MIDI_DRUM_CLAP, vel, ENDPOINT_DRUM_D);
-  } else if (drum_kit_sound == 2) {
-    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_B);
-  } else if (drum_kit_sound == 3) {
-    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_C);
-  } else if (drum_kit_sound == 4) {
-    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_B);
-    send_midi(MIDI_ON, MIDI_DRUM_SNARE, vel, ENDPOINT_DRUM_C);
-  }
-}
-
 void arpeggiate_bass(int subbeat) {
   int note_out = active_note();
   int selected_note = note_out;
@@ -698,74 +597,6 @@ void arpeggiate_bass(int subbeat) {
   }
 }
 
-void arpeggiate_drums(int subbeat) {
-  if (subbeat == 0) {
-  } else {
-    int auto_hihat_1_vol = 0;
-    int auto_hihat_2_vol = 0;
-    int auto_hihat_3_vol = 0;
-    int auto_hihat_4_vol = 0;
-    if (auto_hihat_mode == 1) {
-      auto_hihat_3_vol = 100;
-    } else if (auto_hihat_mode == 2) {
-      auto_hihat_1_vol = 100;
-      auto_hihat_3_vol = 100;
-    } else if (auto_hihat_mode == 3) {
-      auto_hihat_3_vol = 100;
-      auto_hihat_4_vol = 90;
-    } else if (auto_hihat_mode == 4) {
-      auto_hihat_3_vol = 100;
-      auto_hihat_4_vol = 90;
-    } else if (auto_hihat_mode == 5) {
-      auto_hihat_1_vol = 70;
-      auto_hihat_2_vol = 60;
-      auto_hihat_3_vol = 100;
-      auto_hihat_4_vol = 60;
-    } else if (auto_hihat_mode == 6) {
-      auto_hihat_1_vol = 70;
-      auto_hihat_2_vol = 60;
-      auto_hihat_3_vol = 100;
-      auto_hihat_4_vol = 100;
-    } else if (auto_hihat_mode == 8) {
-      auto_hihat_1_vol = 70;
-      auto_hihat_2_vol = 60;
-      auto_hihat_3_vol = 100;
-      auto_hihat_4_vol = 100;
-    }
-
-    int auto_hihat_vol = 0;
-    if (downbeat(subbeat)) {
-      auto_hihat_vol = auto_hihat_1_vol;
-    } else if (preup(subbeat)) {
-      auto_hihat_vol = auto_hihat_2_vol;
-    } else if (upbeat(subbeat)) {
-      auto_hihat_vol = auto_hihat_3_vol;
-    } else if (predown(subbeat)) {
-      auto_hihat_vol = auto_hihat_4_vol;
-    }
-
-    if (drum_breath_on) {
-      if (breath > 60 &&
-          ((downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)))) {
-        auto_hihat_vol = 100;
-      }
-      if (breath > 120) {
-        // triplets!
-        auto_hihat_vol = (subbeat % 12 == 0) ? 100 : 0;
-      }
-      if (breath == MIDI_MAX) {
-        if (auto_hihat_vol > 0) {
-          auto_hihat_vol = MIDI_MAX;
-        }
-      }
-    }
-
-    if (auto_hihat_vol) {
-      send_hh(auto_hihat_vol);
-    }
-  }
-}
-
 int last_auto_righthand = 0;
 void arpeggiate_righthand(int subbeat) {
   send_midi(MIDI_OFF, last_auto_righthand, 0, ENDPOINT_AUTO_RIGHTHAND);
@@ -783,7 +614,6 @@ void arpeggiate_righthand(int subbeat) {
 
 void arpeggiate(int subbeat) {
   arpeggiate_bass(subbeat);
-  arpeggiate_drums(subbeat);
   arpeggiate_righthand(subbeat);
 }
 
@@ -806,11 +636,7 @@ uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
   return best_error;
 }
 
-void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
-  if (keep_going && !imaginary) {
-    return;
-  }
-
+void estimate_tempo(uint64_t current_time, bool imaginary, int note_in) {
   current_beat_ns = 0;
 
   // Take a super naive approach: for each candidate tempo, consider
@@ -834,13 +660,15 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
     uint64_t candidate_error = 0;
 
     // Look for a kick or snare on every past downbeat, but allow
-    // kicks preceeding a snare to be half a beat early.
+    // kicks preceeding a snare to be exactly half a beat early.
     for (int i = 0; i < n_downbeats_to_consider; i++) {
       uint64_t target = current_time - (i+1)*whole_note_ns;
       uint64_t error =
         min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
             best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
-      bool early_kick_allowed = i % 2 == (is_low ? 1 : 0);
+
+      bool early_kick_allowed =
+        i % 2 == ((note_in == MIDI_DRUM_IN_KICK) ? 1 : 0);
       if (early_kick_allowed) {
         uint64_t early_kick_target = target - (whole_note_ns/2);
         uint64_t early_kick_error = best_match_hit(early_kick_target, kick_times, KICK_TIMES_LENGTH);
@@ -862,14 +690,14 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
 
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
 
-  if (imaginary && !keep_going) {
+  if (imaginary) {
     // If this is an imaginary beat, require there to have been at
     // kick hit about half a beat ago, since we're trying to handle
     // the case where the kick is played early.
     uint64_t target = current_time - (whole_beat / 2);
     uint64_t error = best_match_hit(target, kick_times, KICK_TIMES_LENGTH);
     if (error > whole_beat / 16) {
-      printf("not firing imaginary beat: looked for %llu, best was %.2f%%",
+      printf("not firing imaginary beat: looked for %llu, best was %.2f%%\n",
              whole_beat / 2,  100*(float)error / (float) (whole_beat / 16));
       return;
     }
@@ -887,13 +715,8 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
          max_allowed_error,
          100 * (float)best_error / (float)max_allowed_error);
 
-  if (acceptable_error || keep_going) {
+  if (acceptable_error) {
     current_beat_ns = whole_beat;
-
-    if (keep_going) {
-      kick_times[kick_times_index] = current_time;
-      kick_times_index = (kick_times_index+1) % KICK_TIMES_LENGTH;
-    }
 
     arpeggiate(0);
     compute_best_subbeat_upbeat_candidate();
@@ -906,17 +729,25 @@ void estimate_tempo(uint64_t current_time, bool imaginary, bool is_low) {
   }
 }
 
-void count_drum_hit(bool is_low) {
-  if (is_low) {
-    kick_times[kick_times_index] = now();
-    estimate_tempo(kick_times[kick_times_index], /*imaginary=*/false, /*is_low=*/true);
+void count_drum_hit(int note_in) {
+  uint64_t now_ts = now();
+  if (note_in == MIDI_DRUM_IN_KICK) {
+    kick_times[kick_times_index] = now_ts;
+    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
     kick_times_index++;
-    kick_times_index = kick_times_index % KICK_TIMES_LENGTH;
-  } else {
-    snare_times[snare_times_index] = now();
-    estimate_tempo(snare_times[snare_times_index], /*imaginary=*/false, /*is_low=*/false);
-    snare_times_index++;
-    snare_times_index = snare_times_index % SNARE_TIMES_LENGTH;
+    kick_times_index = (kick_times_index+1) % KICK_TIMES_LENGTH;
+  } else if (note_in == MIDI_DRUM_IN_SNARE) {
+    snare_times[snare_times_index] = now_ts;
+    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
+    snare_times_index = (snare_times_index+1) % SNARE_TIMES_LENGTH;
+  } else if (note_in == MIDI_DRUM_IN_CRASH) {
+    crash_times[crash_times_index] = now_ts;
+    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
+    crash_times_index = (crash_times_index+1) % CRASH_TIMES_LENGTH;
+  } else if (note_in == MIDI_DRUM_IN_HIHAT) {
+    hihat_times[hihat_times_index] = now_ts;
+    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
+    hihat_times_index = (hihat_times_index+1) % HIHAT_TIMES_LENGTH;
   }
 }
 
@@ -1313,10 +1144,6 @@ void handle_control(unsigned int note_in) {
     auto_hihat_mode = (auto_hihat_mode + 1) % N_AUTO_HIHAT_MODES;
     return;
 
-  case TOGGLE_KEEP_GOING:
-    keep_going = !keep_going;
-    return;
-
   }
 }
 
@@ -1410,47 +1237,10 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   maybe_register_downbeat();
-
   update_bass();
 
-  bool is_low;
-  if (note_in == MIDI_DRUM_KICK_A ||
-      note_in == MIDI_DRUM_KICK_B) {
-    is_low = true;
-  } else if (note_in == MIDI_DRUM_PEDAL_1 ||
-             note_in == MIDI_DRUM_PEDAL_2 ||
-             note_in == MIDI_DRUM_PEDAL_3 ||
-             note_in == MIDI_DRUM_PEDAL_4) {
-    is_low = false;
-  } else {
-    return;
-  }
-
-  printf("foot: %d %d (low=%d)\n", note_in, val, is_low);
-
-  count_drum_hit(is_low);
-  if (is_low) {
-    val = (val-30)*1.5;
-    current_drum_vel = val;
-  }
-
-  if (is_low && manual_kick_on) {
-    send_kick();
-  } else if (!is_low && manual_tss_on) {
-    if (note_in == MIDI_DRUM_PEDAL_1) {
-      if (drum_kit_sound == 0) {
-        send_raw_hh((val-10)*1.5);
-      } else {
-        send_kick();
-      }
-    } else if (note_in == MIDI_DRUM_PEDAL_2) {
-      send_rim((val-10)*1.5);
-    } else if (note_in == MIDI_DRUM_PEDAL_4) {
-      send_crash((val-10)*1.5);
-    } else {
-      send_snare((val-10)*1.5);
-    }
-  }
+  printf("foot: %d %d\n", note_in, val);
+  count_drum_hit(note_in);
 }
 
 void handle_cc(unsigned int cc, unsigned int val) {
@@ -1460,8 +1250,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
   }
 
   breath = val;
-
-
   send_midi(MIDI_CC, CC_MOD, breath_chord_on ? MIDI_MAX : val, ENDPOINT_HAMMOND);
 
   if (breath_chord_on) {
