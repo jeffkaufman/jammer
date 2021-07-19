@@ -60,12 +60,13 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   }
 }
 
-void choose_voice(int bank, int channel, int voice) {
+void choose_voice(int channel, int bank, int voice) {
   // bank is ignored :(
   snd_seq_event_t ev;
   reset_event(&ev);
   snd_seq_ev_set_pgmchange(&ev, channel, voice);
   attempt(snd_seq_event_output_direct(seq, &ev), "send event");
+  printf("set endpoint #%d to voice %d\n", channel, voice);
 }
 
 

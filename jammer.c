@@ -280,6 +280,7 @@ void handle_event(snd_seq_event_t* event) {
 }
 
 void setup_voices() {
+  // Everything defaults to max volume
   for (int i = 0 ; i < N_ENDPOINTS; i++) {
     send_midi(MIDI_CC, CC_07, 127, i);
     send_midi(MIDI_CC, CC_11, 127, i);
@@ -290,9 +291,9 @@ void setup_voices() {
   choose_voice(ENDPOINT_ORGAN_LOW, 0, 38);  // synth bass 4, or 38 / 80 / 81
   choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);  // saw wave or 38 or 87
   choose_voice(ENDPOINT_SINE_PAD, 0, 89);
-  choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18);
+  choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18); // needs better voice
   choose_voice(ENDPOINT_RHODES, 0, 4);
-  choose_voice(ENDPOINT_SWEEP_PAD, 0, 97);
+  choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
   choose_voice(ENDPOINT_DRUM_A, 128, 0);  // standard kit
   choose_voice(ENDPOINT_DRUM_B, 128, 0);
   choose_voice(ENDPOINT_DRUM_C, 128, 0);
@@ -300,6 +301,13 @@ void setup_voices() {
   choose_voice(ENDPOINT_AUTO_RIGHTHAND, 0, 87);
   choose_voice(ENDPOINT_GROOVE_BASS, 0, 38);
 
+  // Turn some volumes down.
+  send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
+  send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SINE_PAD);
+  send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
+  send_midi(MIDI_CC, CC_07, 64, ENDPOINT_ORGAN_LOW);
+
+  
 }
 
 int main(int argc, char** argv) {

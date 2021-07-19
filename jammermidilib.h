@@ -56,9 +56,9 @@
 #define CFG_JAWHARP 1
 #define CFG_FLEX 2
 #define CFG_SINE_PAD 3
-#define CFG_SWEEP_PAD 4
-#define CFG_OVERDRIVEN_RHODES 5
-#define CFG_RHODES 6
+#define CFG_RHODES 4
+#define CFG_ARPEGGIATOR 5
+#define CFG_ROTATE_ARPEGGIATOR 6
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -774,6 +774,7 @@ void arpeggiate_bass(int subbeat) {
     }
 
     if (end_note && current_arpeggiator_note != -1) {
+      printf("footbass end note %d\n", current_arpeggiator_note);
       send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS);
       current_arpeggiator_note = -1;
     }
@@ -782,6 +783,7 @@ void arpeggiate_bass(int subbeat) {
       if (selected_note != -1) {
         send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
         current_arpeggiator_note = selected_note;
+        printf("footbass start note %d\n", current_arpeggiator_note);
       }
     }
   }
@@ -1428,6 +1430,11 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
   int mapped_note = -1;
 
   switch (note_in) {
+
+  case CFG_RESET:
+    mapped_note = FULL_RESET;
+    break;
+
   case CFG_JAWHARP:
     mapped_note = TOGGLE_JAWHARP;
     break;
@@ -1440,21 +1447,18 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
     mapped_note = TOGGLE_SINE_PAD;
     break;
 
-  case CFG_SWEEP_PAD:
-    mapped_note = TOGGLE_SWEEP_PAD;
-    break;
-
-  case CFG_OVERDRIVEN_RHODES:
-    mapped_note = TOGGLE_OVERDRIVEN_RHODES;
-    break;
-
   case CFG_RHODES:
     mapped_note = TOGGLE_RHODES;
     break;
 
-  case CFG_RESET:
-    mapped_note = FULL_RESET;
+  case CFG_ARPEGGIATOR:
+    mapped_note = TOGGLE_ARPEGGIATOR;
     break;
+
+  case CFG_ROTATE_ARPEGGIATOR:
+    mapped_note = ROTATE_ARPEGGIATOR_PATTERN;
+    break;
+
   }
 
   if (mapped_note == -1) return;
