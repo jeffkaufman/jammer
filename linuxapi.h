@@ -8,6 +8,7 @@
 
 int attempt(int result, char* errmsg) {
   if (result < 0) {
+    perror("");
     die(errmsg);
   }
   return result;
@@ -37,18 +38,26 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   snd_seq_event_t ev;
   reset_event(&ev);
 
+  const char* friendly_action;
   if (action == MIDI_CC) {
     snd_seq_ev_set_controller(&ev, channel, note, velocity);
+    friendly_action = "cc";
   } else if (action == MIDI_ON) {
     snd_seq_ev_set_noteon(&ev, channel, note, velocity);
+    friendly_action = "on";
   } else if (action == MIDI_OFF) {
     snd_seq_ev_set_noteoff(&ev, channel, note, velocity);
+    friendly_action = "off";
   } else {
     printf("unknown action %d\n", action);
     return;
   }
 
-  attempt(snd_seq_event_output_direct(seq, &ev), "send event");
+  int result = snd_seq_event_output_direct(seq, &ev);
+  if (result < 0) {
+    printf("dropped %s %d %d %d (err=%d)\n",
+           friendly_action, channel, note, velocity, result);
+  }
 }
 
 void choose_voice(int bank, int channel, int voice) {
