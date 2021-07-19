@@ -107,8 +107,6 @@
 
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS+1)
-#define N_SUBBEAT_UPBEAT_CANDIDATES 8
-#define N_SUBBEAT_DOWNBEAT_CANDIDATES 8
 
 #define MAX_SCHEDULED_NOTES 64
 
@@ -199,6 +197,15 @@ bool breath_chord_playing;
 // select_righthand_note().
 float righthand_by_lefthand[12*12];
 bool auto_righthand_on;
+
+void print_kick_times(uint64_t current_time) {
+  printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
+  for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
+    uint64_t kick_time = kick_times[(KICK_TIMES_LENGTH + kick_times_index - i) %
+                                   KICK_TIMES_LENGTH];
+    printf("  %llu   %llu\n", kick_time, current_time - kick_time);
+  }
+}  
 
 void voices_reset() {
   jawharp_on = false;
@@ -586,7 +593,9 @@ uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
   return best_error;
 }
 
-void estimate_tempo(uint64_t current_time, bool imaginary, int note_in) {
+void estimate_tempo(uint64_t current_time, int note_in) {
+  //print_kick_times(current_time);
+  
   current_beat_ns = 0;
 
   // Take a super naive approach: for each candidate tempo, consider
@@ -617,6 +626,7 @@ void estimate_tempo(uint64_t current_time, bool imaginary, int note_in) {
         min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
             best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
 
+      /*
       bool early_kick_allowed =
         i % 2 == ((note_in == MIDI_DRUM_IN_KICK) ? 1 : 0);
       if (early_kick_allowed) {
@@ -624,6 +634,8 @@ void estimate_tempo(uint64_t current_time, bool imaginary, int note_in) {
         uint64_t early_kick_error = best_match_hit(early_kick_target, kick_times, KICK_TIMES_LENGTH);
         error = min(error, early_kick_error);
       }
+
+      */
       candidate_error += error;
     }
 
@@ -640,27 +652,15 @@ void estimate_tempo(uint64_t current_time, bool imaginary, int note_in) {
 
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
 
-  if (imaginary) {
-    // If this is an imaginary beat, require there to have been at
-    // kick hit about half a beat ago, since we're trying to handle
-    // the case where the kick is played early.
-    uint64_t target = current_time - (whole_beat / 2);
-    uint64_t error = best_match_hit(target, kick_times, KICK_TIMES_LENGTH);
-    if (error > whole_beat / 16) {
-      printf("not firing imaginary beat: looked for %llu, best was %.2f%%\n",
-             whole_beat / 2,  100*(float)error / (float) (whole_beat / 16));
-      return;
-    }
-  }
-
   // Allow error of up to 1/32 note on each of the downbeats.
   uint64_t max_allowed_error = (whole_beat * n_downbeats_to_consider) / 32;
 
   bool acceptable_error = best_error < max_allowed_error;
 
-  printf("%c BPM estimate: %f  (error: %llu, max allowed: %llu, frac: %.2f%%)\n",
+  printf("%c BPM: %.0f (%lld) (err: %llu / %llu, frac: %.2f%%)\n",
          acceptable_error ? ' ' : '!',
          best_bpm,
+         whole_beat,
          best_error,
          max_allowed_error,
          100 * (float)best_error / (float)max_allowed_error);
@@ -679,23 +679,23 @@ void estimate_tempo(uint64_t current_time, bool imaginary, int note_in) {
 }
 
 void count_drum_hit(int note_in) {
-  uint64_t now_ts = now();
+  uint64_t current_time = now();
   if (note_in == MIDI_DRUM_IN_KICK) {
-    kick_times[kick_times_index] = now_ts;
-    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
-    kick_times_index++;
+    //printf("saving kick @ %llu\n", current_time);
+    kick_times[kick_times_index] = current_time;
+    estimate_tempo(current_time, note_in);
     kick_times_index = (kick_times_index+1) % KICK_TIMES_LENGTH;
   } else if (note_in == MIDI_DRUM_IN_SNARE) {
-    snare_times[snare_times_index] = now_ts;
-    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
+    snare_times[snare_times_index] = current_time;
+    estimate_tempo(current_time, note_in);
     snare_times_index = (snare_times_index+1) % SNARE_TIMES_LENGTH;
   } else if (note_in == MIDI_DRUM_IN_CRASH) {
-    crash_times[crash_times_index] = now_ts;
-    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
+    crash_times[crash_times_index] = current_time;
+    estimate_tempo(current_time, note_in);
     crash_times_index = (crash_times_index+1) % CRASH_TIMES_LENGTH;
   } else if (note_in == MIDI_DRUM_IN_HIHAT) {
-    hihat_times[hihat_times_index] = now_ts;
-    estimate_tempo(now_ts, /*imaginary=*/false, note_in);
+    hihat_times[hihat_times_index] = current_time;
+    estimate_tempo(current_time, note_in);
     hihat_times_index = (hihat_times_index+1) % HIHAT_TIMES_LENGTH;
   }
 }
@@ -1178,7 +1178,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   update_bass();
 
-  printf("foot: %d %d\n", note_in, val);
+  //printf("foot: %d %d\n", note_in, val);
   count_drum_hit(note_in);
 }
 
@@ -1416,30 +1416,11 @@ void trigger_subbeats() {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
       arpeggiate(i);
       next_ns[i] = 0;
-      if (i == N_SUBBEATS - 1) {
-        estimate_tempo(current_time, /*imaginary=*/true, /*is_low=*/true);
-      }
     }
   }
 }
 
-int debug_tick_count = 0;
-int debug_subbeat = 0;
-bool debug = false;
-
 void jml_tick() {
-  if (debug) {
-    debug_tick_count++;
-    if (debug_tick_count % 7 == 0) {
-      debug_subbeat++;
-      debug_subbeat = debug_subbeat % 72;
-      if (debug_subbeat == 0) {
-        arpeggiate(72);
-      }
-      arpeggiate(debug_subbeat);
-    }
-  }
-
   // Called every TICK_MS
   update_air();
   forward_air();

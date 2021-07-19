@@ -5,7 +5,6 @@
 #include <string.h>
 #include <getopt.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <alsa/asoundlib.h>
 #include "linuxapi.h"
 #include "jammermidilib.h"
