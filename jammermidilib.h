@@ -52,12 +52,13 @@
 #define CONTROL_MAX TOGGLE_AUTO_RIGHTHAND
 
 // keyboard controls, used by handle_keypad
-#define CFG_JAWHARP 0
-#define CFG_FLEX 1
-#define CFG_SINE_PAD 2
-#define CFG_SWEEP_PAD 3
-#define CFG_OVERDRIVEN_RHODES 4
-#define CFG_RHODES 5
+#define CFG_RESET 0
+#define CFG_JAWHARP 1
+#define CFG_FLEX 2
+#define CFG_SINE_PAD 3
+#define CFG_SWEEP_PAD 4
+#define CFG_OVERDRIVEN_RHODES 5
+#define CFG_RHODES 6
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -1172,10 +1173,7 @@ char mapping(unsigned char note_in) {
 }
 
 void endpoint_notes_off(int endpoint) {
-  for (int note = 0 ; note < 128; note++) {
-    send_midi(MIDI_OFF, note, 0, endpoint);
-  }
-  // send an explicit all notes off as well
+  // send an explicit all notes off command
   send_midi(MIDI_CC, 123, 0, endpoint);
 }
 
@@ -1452,6 +1450,10 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   case CFG_RHODES:
     mapped_note = TOGGLE_RHODES;
+    break;
+
+  case CFG_RESET:
+    mapped_note = FULL_RESET;
     break;
   }
 
