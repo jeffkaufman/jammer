@@ -200,14 +200,6 @@ bool breath_chord_playing;
 float righthand_by_lefthand[12*12];
 bool auto_righthand_on;
 
-// For each time slice, how often has a note fallen here?
-float subbeat_upbeat_candidates[N_SUBBEAT_UPBEAT_CANDIDATES];
-int subbeat_upbeat_candidates_index;
-int best_subbeat_upbeat_candidate;
-
-uint64_t subbeat_downbeat_candidates[N_SUBBEAT_DOWNBEAT_CANDIDATES];
-int subbeat_downbeat_candidates_index;
-
 void voices_reset() {
   jawharp_on = false;
   hammond_on = false;
@@ -284,28 +276,9 @@ void voices_reset() {
     righthand_by_lefthand[i] = 0;
   }
   auto_righthand_on = false;
-
-  for (int i = 0 ; i < N_SUBBEAT_UPBEAT_CANDIDATES; i++) {
-    subbeat_upbeat_candidates[i] = 0.5;
-  }
-  subbeat_upbeat_candidates_index = 0;
-  best_subbeat_upbeat_candidate = N_NOTE_DIVISIONS/2;
-
-  for (int i = 0 ; i < N_SUBBEAT_DOWNBEAT_CANDIDATES; i++) {
-    subbeat_downbeat_candidates[i] = 0;
-  }
-  subbeat_downbeat_candidates_index = 0;
 }
 
-void compute_best_subbeat_upbeat_candidate() {
-  float sum = 0;
-  for (int i = 0; i < N_SUBBEAT_UPBEAT_CANDIDATES; i++) {
-    sum += subbeat_upbeat_candidates[i];
-  }
-  best_subbeat_upbeat_candidate =
-    (sum / N_SUBBEAT_UPBEAT_CANDIDATES +
-     0.5/N_NOTE_DIVISIONS)*N_NOTE_DIVISIONS;
-}
+
 
 struct ScheduledNote* allocate_scheduled_note() {
   for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
@@ -419,25 +392,6 @@ float subbeat_location() {
   return -1;
 }
 
-void maybe_register_upbeat() {
-  float loc = subbeat_location();
-  if (loc >= 3.0/8 && loc <= 3.0/4) {
-    subbeat_upbeat_candidates[subbeat_upbeat_candidates_index] = loc;
-    subbeat_upbeat_candidates_index =
-      (subbeat_upbeat_candidates_index+1)%N_SUBBEAT_UPBEAT_CANDIDATES;
-  }
-}
-
-void maybe_register_downbeat() {
-  float loc = subbeat_location();
-  if ((loc > -0.9 && loc < 0.1) ||
-      (loc > 0.9 && loc < 1.1)) {
-    subbeat_downbeat_candidates[subbeat_downbeat_candidates_index] = now();
-    subbeat_downbeat_candidates_index =
-      (subbeat_downbeat_candidates_index+1)%N_SUBBEAT_DOWNBEAT_CANDIDATES;
-  }
-}
-
 void jawharp_off() {
   if (current_note[ENDPOINT_JAWHARP] != -1) {
     send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
@@ -476,23 +430,19 @@ void breath_chord_note_on(int note) {
   breath_chord_notes[note] = true;
 }
 
+bool jig_time = false;  // TODO
 bool downbeat(int subbeat) {
   return subbeat % 72 == 0;
 }
 bool preup(int subbeat) {
-  return subbeat == best_subbeat_upbeat_candidate/2;
+  return subbeat == (jig_time ? (72/3-1) : (72/4-1));
 }
 bool upbeat(int subbeat) {
-  return subbeat == best_subbeat_upbeat_candidate;
+  return subbeat == (jig_time ? (2*72/3-1) : (72/2-1));
 }
 bool predown(int subbeat) {
-  if (best_subbeat_upbeat_candidate > 42) {
-    return false; // too swung for a predown
-  } else {
-    // split the difference
-    return subbeat ==
-      best_subbeat_upbeat_candidate + (72 - best_subbeat_upbeat_candidate)/2;
-  }
+  if (jig_time) return false;  // This beat doesn't happen in jig time.
+  return subbeat == (3*72/4-1);
 }
 
 void arpeggiate_bass(int subbeat) {
@@ -582,7 +532,7 @@ void arpeggiate_bass(int subbeat) {
     }
 
     if (end_note && current_arpeggiator_note != -1) {
-      printf("footbass end note %d\n", current_arpeggiator_note);
+      //printf("footbass end note %d\n", current_arpeggiator_note);
       send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS);
       current_arpeggiator_note = -1;
     }
@@ -719,7 +669,6 @@ void estimate_tempo(uint64_t current_time, bool imaginary, int note_in) {
     current_beat_ns = whole_beat;
 
     arpeggiate(0);
-    compute_best_subbeat_upbeat_candidate();
     last_downbeat_ns = current_time;
 
     next_ns[0] = current_time;
@@ -928,10 +877,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  if (mode == MIDI_ON) {
-    maybe_register_upbeat();
-    maybe_register_downbeat();
-  }
   piano_notes[note_in] = (mode == MIDI_ON);
 
   unsigned int max_bass = 50;
@@ -1197,11 +1142,6 @@ int remap(int val, int min, int max) {
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
 
-  if (mode == MIDI_ON) {
-    maybe_register_upbeat();
-    maybe_register_downbeat();
-  }
-
   if (button_endpoint == ENDPOINT_JAWHARP) {
     root_note = note_out;
     update_bass();
@@ -1236,7 +1176,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  maybe_register_downbeat();
   update_bass();
 
   printf("foot: %d %d\n", note_in, val);
