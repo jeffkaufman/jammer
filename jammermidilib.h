@@ -37,7 +37,6 @@
 
 #define TOGGLE_ARPEGGIATOR          21
 #define ROTATE_ARPEGGIATOR_PATTERN  20
-#define TOGGLE_LISTEN_DRUM_PEDAL    19
 #define TOGGLE_MANUAL_TSS           17
 #define TOGGLE_MANUAL_KICK          16
 
@@ -128,26 +127,6 @@
 
 #define MAX_HAMMOND_NOTE 96  // the hammond can't play higher than this note
 
-#define FOOT_BUTTON_1 5
-#define FOOT_BUTTON_2 4
-#define FOOT_BUTTON_3 1
-#define FOOT_BUTTON_4 3
-#define FOOT_BUTTON_5 6
-#define FOOT_BUTTON_6 2
-
-/**
- * Drum settings
- *  - regular: left is kick, right are tss, computer interprets left for kick, sound is from drumkit brain
- *  - chordal: right is kick and chord, left is snare or bass, computer interprets right for kick, sound is from computer
- *  - hybrid: left is kick, right are tss, computer interprets left for kick, left sound is from computer right sound is from drumkit brain
- *
- * These are implemented as:
- *
- * - kit 62 or 64: regular
- * - kit 63 + listen_drum_pedal: chordal
- * - kit 61: hybrid
- */
-
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte)                    \
   (byte & 0x80 ? '1' : '0'),                    \
@@ -194,7 +173,6 @@ bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
 int auto_hihat_mode;
-bool listen_drum_pedal;
 int most_recent_drum_pedal;
 bool manual_kick_on;
 bool manual_tss_on;
@@ -225,7 +203,6 @@ uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 bool breath_chord_on;
 bool breath_chord_playing;
-bool is_minor_chord;  // only used when listen_drum_pedal=true
 int current_drum_vel;
 
 // For each lefthand note L, what righthand notes have we had?  See
@@ -257,7 +234,6 @@ void voices_reset() {
   tbd_a_on = false;
   tbd_b_on = false;
   auto_hihat_mode = 0;
-  listen_drum_pedal = false;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
   manual_kick_on = false;
   manual_tss_on = false;
@@ -308,8 +284,6 @@ void voices_reset() {
 
   breath_chord_on = false;
   breath_chord_playing = false;
-
-  is_minor_chord = false;
 
   current_drum_vel = 100;
 
@@ -410,57 +384,7 @@ double distance(double noteA, double noteB) {
   return fabs(dist);
 }
 
-int current_drum_pedal_note() {
-  int note = root_note;
-
-  is_minor_chord = false;
-  if (musical_mode == MODE_MAJOR) {
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 3;  // vi
-      is_minor_chord = true;
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note + 5;  // IV
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-      note = root_note + 7;  // V
-    }
-  } else if (musical_mode == MODE_MIXO) {
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 2; // VII
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note + 5;  // IV
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-      note = root_note + 7;  // V
-    }
-  } else if (musical_mode == MODE_MINOR) {
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note - 2;  // VII
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_2) {
-      note = root_note - 4;  // VI
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 5;  // V
-    } else {
-      is_minor_chord = true;  // i
-    }
-    note += 12;
-  } else if (musical_mode == MODE_RACOON) {
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 2; // VII
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note + 3;  // III
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-      note = root_note + 5;  // IV
-    } else {
-      is_minor_chord = true;  // i
-    }
-  }
-
-  return note;
-}
-
 char active_note() {
-  if (listen_drum_pedal) {
-    return current_drum_pedal_note();
-  }
   return root_note;
 }
 
@@ -1022,12 +946,6 @@ void trigger_breath_chord(int note_out) {
   int fifth = note_out + 7;
   while (fifth + 12 <= MAX_HAMMOND_NOTE) fifth += 12;
   breath_chord_note_on(fifth);
-
-  if (listen_drum_pedal) {
-    int third = note_out + (is_minor_chord ? 3 : 4);
-    while (third + 12 <= MAX_HAMMOND_NOTE) third += 12;
-    breath_chord_note_on(third);
-  }
 }
 
 void update_bass() {
@@ -1371,13 +1289,6 @@ void handle_control(unsigned int note_in) {
     manual_kick_on = !manual_kick_on;
     return;
 
-  case TOGGLE_LISTEN_DRUM_PEDAL:
-    listen_drum_pedal = !listen_drum_pedal;
-    if (listen_drum_pedal) {
-      manual_kick_on = manual_tss_on = true;
-    }
-    return;
-
   case TOGGLE_ATMOSPHERIC_DRONE:
     atmospheric_drone = !atmospheric_drone;
     if (atmospheric_drone) {
@@ -1515,17 +1426,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   maybe_register_downbeat();
 
-  // Handle pedals after determining the active note, so that only
-  // future notes are affected.
-  if (listen_drum_pedal) {
-    if (note_in == MIDI_DRUM_PEDAL_1 ||
-        note_in == MIDI_DRUM_PEDAL_2 ||
-        note_in == MIDI_DRUM_PEDAL_3 ||
-        note_in == MIDI_DRUM_PEDAL_4) {
-      most_recent_drum_pedal = note_in;
-    }
-  }
-
   update_bass();
 
   bool is_low;
@@ -1541,12 +1441,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  if (listen_drum_pedal) {
-    // When using the drum pedals for note selection, left and right
-    // are reversed.  It's terrible, but it's much easier than having
-    // to switch the feet ahead of the beat.
-    is_low = !is_low;
-  }
+  printf("foot: %d %d (low=%d)\n", note_in, val, is_low);
 
   count_drum_hit(is_low);
   if (is_low) {
@@ -1663,22 +1558,6 @@ void handle_axis_49(int mode, int note_in, int val) {
     state = STATE_ADJUST_3;
   } else if (mode == MIDI_ON && note_in == BUTTON_ADJUST_24) {
     state = STATE_ADJUST_24;
-  }
-  if (listen_drum_pedal &&
-      (note_in == BUTTON_MAJOR ||
-       note_in == BUTTON_MIXO ||
-       note_in == BUTTON_RACOON ||
-       note_in == BUTTON_MINOR)) {
-    if (note_in == BUTTON_MAJOR) {
-      musical_mode = MODE_MAJOR;
-    } else if (note_in == BUTTON_MIXO) {
-      musical_mode = MODE_MIXO;
-    } else if (note_in == BUTTON_MINOR) {
-      musical_mode = MODE_MINOR;
-    } else if (note_in == BUTTON_RACOON) {
-      musical_mode = MODE_RACOON;
-    }
-    printf("Chose mode %d\n", musical_mode);
   } else if (note_in <= CONTROL_MAX) {
     if (mode == MIDI_ON) {
       handle_control(note_in);
