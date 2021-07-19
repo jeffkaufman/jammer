@@ -17,24 +17,28 @@
 #define KEYBOARD_PORT_NAME "USB MIDI Interface MIDI 1"
 #define BREATH_CONTROLLER_PORT_NAME "Breath Controller 5.0-15260BA7 "
 #define FEET_PORT_NAME "mio MIDI 1"
+#define KEYPAD_PORT_NAME "mido-keypad"  // pitch-detect:kbd.py
 
 int fluidsynth_port;
 int axis49_port;
 int keyboard_port;
 int breath_controller_port;
 int feet_port;
+int keypad_port;
 
 int fluidsynth_client;
 int axis49_client;
 int keyboard_client;
 int breath_controller_client;
 int feet_client;
+int keypad_client;
 
 int fluidsynth_index;
 int axis49_index;
 int keyboard_index;
 int breath_controller_index;
 int feet_index;
+int keypad_index;
 
 void setup_ports() {
   fluidsynth_port =
@@ -42,16 +46,19 @@ void setup_ports() {
     keyboard_port =
     breath_controller_port =
     feet_port =
+    keypad_port =
     fluidsynth_client =
     axis49_client =
     keyboard_client =
     breath_controller_client =
     feet_client =
+    keypad_client =
     fluidsynth_index =
     axis49_index =
     keyboard_index =
     breath_controller_index =
     feet_index =
+    keypad_index =
     -1;
 
   snd_seq_client_info_t *client_info;
@@ -95,6 +102,10 @@ void setup_ports() {
                             FEET_PORT_NAME) == 0) {
             feet_client = snd_seq_port_info_get_client(port_info);
             feet_port = snd_seq_port_info_get_port(port_info);
+          } else if (strcmp(snd_seq_port_info_get_name(port_info),
+                            KEYPAD_PORT_NAME) == 0) {
+            keypad_client = snd_seq_port_info_get_client(port_info);
+            keypad_port = snd_seq_port_info_get_port(port_info);
           }
         }
 
@@ -112,8 +123,11 @@ void setup_ports() {
       }
     }
 
-    if (fluidsynth_port == -1) {
-      printf("waiting for fluidsynth...\n");
+    if (fluidsynth_port == -1 || keypad_port == -1) {
+      printf("waiting for %s%s%s...\n",
+             fluidsynth_port == -1 ? "fluidsynth" : "",
+             fluidsynth_port == -1 && keypad_port == -1 ? " and " : "",
+             keypad_port == -1 ? "keypad" : "");
       sleep(1);
     } else {
       break;
@@ -204,6 +218,23 @@ void setup_ports() {
                                  feet_client, feet_port),
             "connect to feet");
   }
+
+  if (keypad_port != -1) {
+    keypad_index = next_index++;
+    snd_seq_port_info_set_port(port_info, keypad_index);
+    snd_seq_port_info_set_port_specified(port_info, true);
+    snd_seq_port_info_set_name(port_info, "jammer-keypad");
+    snd_seq_port_info_set_capability(port_info,
+                                     SND_SEQ_PORT_CAP_WRITE |
+                                     SND_SEQ_PORT_CAP_SUBS_WRITE);
+    snd_seq_port_info_set_type(port_info,
+                               SND_SEQ_PORT_TYPE_MIDI_GENERIC |
+                               SND_SEQ_PORT_TYPE_APPLICATION);
+    attempt(snd_seq_create_port(seq, port_info), "create port");
+    attempt(snd_seq_connect_from(seq, keypad_index,
+                                 keypad_client, keypad_port),
+            "connect to keypad");
+  }
 }
 
 void tick() {
@@ -241,6 +272,8 @@ void handle_event(snd_seq_event_t* event) {
     handle_axis_49(action, note_in, val);
   } else if (event->source.client == feet_client) {
     handle_feet(action, note_in, val);
+  } else if (event->source.client == keypad_client) {
+    handle_keypad(action, note_in, val);
   } else {
     printf("ignored\n");
   }
@@ -269,38 +302,7 @@ void setup_voices() {
 
 }
 
-char* config_filename = NULL;
-void* update_config(void* ignored) {
-  FILE* config_file = fopen(config_filename, "r");
-  if (!config_file) {
-    perror("can't open config file");
-    exit(-1);
-  }
-
-  char buf[CONFIG_SIZE];
-  while (1) {
-    rewind(config_file);
-    int bytes_read = fread(buf, 1, CONFIG_SIZE, config_file);
-    for (int i = 0 ; i < bytes_read && i < CONFIG_SIZE; i++) {
-      new_config[i] = buf[i];
-    }
-    usleep(50000 /* 50ms in us */);
-  }
-}
-
-pthread_t config_thread;
-void start_config_thread() {
-  pthread_create(&config_thread, NULL, &update_config, NULL);
-}
-
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    printf("usage: %s /path/to/config/file\n", argv[0]);
-    return -1;
-  }
-  config_filename = argv[1];
-  start_config_thread();
-
   attempt(snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0),
           "open seq");
   attempt(snd_seq_set_client_name(seq, "jammer"),

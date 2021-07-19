@@ -51,7 +51,7 @@
 
 #define CONTROL_MAX TOGGLE_AUTO_RIGHTHAND
 
-// keyboard controls, used by update_config
+// keyboard controls, used by handle_keypad
 #define CFG_JAWHARP 0
 #define CFG_FLEX 1
 #define CFG_SINE_PAD 2
@@ -1273,64 +1273,7 @@ void air_lock() {
   locked_air = air;
 }
 
-#define CONFIG_SIZE 10
-char current_config[CONFIG_SIZE];
-char new_config[CONFIG_SIZE];
-
-void handle_config_change(int config_knob, bool value) {
-  switch (config_knob) {
-  case CFG_JAWHARP:
-    endpoint_notes_off(ENDPOINT_JAWHARP);
-    jawharp_on = value;
-    if (jawharp_on) {
-      update_bass();
-    } else {
-      jawharp_off();
-    }
-    return;
-
-  case CFG_FLEX:
-    endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
-    organ_flex_on = value;
-    return;
-
-  case CFG_SINE_PAD:
-    endpoint_notes_off(ENDPOINT_SINE_PAD);
-    sine_pad_on = value;
-    return;
-
-  case CFG_SWEEP_PAD:
-    endpoint_notes_off(ENDPOINT_SWEEP_PAD);
-    sweep_pad_on = value;
-    return;
-
-  case CFG_OVERDRIVEN_RHODES:
-    endpoint_notes_off(ENDPOINT_OVERDRIVEN_RHODES);
-    overdriven_rhodes_on = value;
-    return;
-
-  case CFG_RHODES:
-    endpoint_notes_off(ENDPOINT_RHODES);
-    rhodes_on = value;
-    return;
-
-  }
-}
-
-void check_config_change() {
-  //printf("%.10s vs %.10s\n", new_config, current_config);
-  for (int i = 0; i < CONFIG_SIZE; i++) {
-    if (new_config[i] != current_config[i]) {
-      printf("%d: %c (%d) -> %c (%d) \n", i,
-             current_config[i], current_config[i],
-             new_config[i], new_config[i]);
-      current_config[i] = new_config[i];
-      handle_config_change(i, new_config[i] != ' ');
-    }
-  }
-}
-
-void handle_control_helper(unsigned int note_in) {
+void handle_control(unsigned int note_in) {
   switch (note_in) {
 
   case FULL_RESET:
@@ -1481,8 +1424,40 @@ void handle_control_helper(unsigned int note_in) {
   }
 }
 
-void handle_control(unsigned int note_in) {
-  handle_control_helper(note_in);
+void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (mode != MIDI_ON) return;
+
+  int mapped_note = -1;
+
+  switch (note_in) {
+  case CFG_JAWHARP:
+    mapped_note = TOGGLE_JAWHARP;
+    break;
+
+  case CFG_FLEX:
+    mapped_note = TOGGLE_ORGAN_FLEX;
+    break;
+
+  case CFG_SINE_PAD:
+    mapped_note = TOGGLE_SINE_PAD;
+    break;
+
+  case CFG_SWEEP_PAD:
+    mapped_note = TOGGLE_SWEEP_PAD;
+    break;
+
+  case CFG_OVERDRIVEN_RHODES:
+    mapped_note = TOGGLE_OVERDRIVEN_RHODES;
+    break;
+
+  case CFG_RHODES:
+    mapped_note = TOGGLE_RHODES;
+    break;
+  }
+
+  if (mapped_note == -1) return;
+
+  handle_control(mapped_note);
 }
 
 int remap(int val, int min, int max) {
@@ -1757,10 +1732,6 @@ void calculate_breath_speeds() {
 }
 
 void jml_setup() {
-  for(int i = 0; i < CONFIG_SIZE; i++) {
-    current_config[i] = ' ';
-    new_config[i] = ' ';
-  }  
   calculate_breath_speeds();
   full_reset();
 
@@ -1873,7 +1844,6 @@ void jml_tick() {
   }
 
   // Called every TICK_MS
-  check_config_change();
   update_air();
   forward_air();
   age_righthand_notes(leakage);

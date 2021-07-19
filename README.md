@@ -47,7 +47,7 @@ Description=Remap MIDI
 After=fluidsynth.service
 
 [Service]
-ExecStart=/home/pi/jammer/jammer /home/pi/jammer/kbd-config
+ExecStart=/home/pi/jammer/jammer
 Restart=always
 KillSignal=SIGQUIT
 Type=simple
