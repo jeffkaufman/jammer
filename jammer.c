@@ -66,7 +66,7 @@ void setup_ports() {
   snd_seq_client_info_malloc(&client_info);
   snd_seq_port_info_malloc(&port_info);
 
-  while (true) {
+  for (int iterations = 0; true; iterations++) {
     snd_seq_client_info_set_client(client_info, -1);
     while (snd_seq_query_next_client(seq, client_info) >= 0) {
       int client = snd_seq_client_info_get_client(client_info);
@@ -78,7 +78,9 @@ void setup_ports() {
       snd_seq_port_info_set_client(port_info, client);
       snd_seq_port_info_set_port(port_info, -1);
       while (snd_seq_query_next_port(seq, port_info) >= 0) {
-        printf("Device: %s\n", snd_seq_port_info_get_name(port_info));
+        if (iterations == 0) {
+          printf("Device: %s\n", snd_seq_port_info_get_name(port_info));
+        }
 
         // Input ports: we need reading.
         if ((snd_seq_port_info_get_capability(port_info)
@@ -122,12 +124,18 @@ void setup_ports() {
       }
     }
 
-    if (fluidsynth_port == -1 || keypad_port == -1) {
+    if (fluidsynth_port == -1 || (keypad_port == -1 && axis49_port == -1)) {
       printf("waiting for %s%s%s...\n",
              fluidsynth_port == -1 ? "fluidsynth" : "",
-             fluidsynth_port == -1 && keypad_port == -1 ? " and " : "",
-             keypad_port == -1 ? "keypad" : "");
-      sleep(1);
+             fluidsynth_port == -1 && (
+                 keypad_port == -1 && axis49_port == -1)? " and " : "",
+             (keypad_port == -1 && axis49_port == -1) ?
+                 "keypad or axis49" : "");
+      if (iterations < 50) {
+        usleep(100000 /* 100ms */);
+      } else {
+        sleep(5 /* 5s */);
+      }
     } else {
       break;
     }
