@@ -30,7 +30,7 @@ To run on boot, `/etc/systemd/system/fluidsynth.service` should have:
 Description=Fluidsynth Synthesizer
 
 [Service]
-ExecStart=sudo fluidsynth -g 2.0 -i --server --audio-driver=alsa -o audio.alsa.device=hw:2,0 /usr/share/sounds/sf2/FluidR3_GM.sf2 -c=2 -z=16
+ExecStart=sudo fluidsynth -g 2.0 -i --server --audio-driver=alsa -o audio.alsa.device=hw:2,0 /usr/share/sounds/sf2/FluidR3_GM.sf2 -c=2 -z=8
 Restart=always
 KillSignal=SIGQUIT
 Type=simple
