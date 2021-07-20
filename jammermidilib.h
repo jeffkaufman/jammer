@@ -1141,34 +1141,7 @@ int remap(int val, int min, int max) {
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
-
-  if (button_endpoint == ENDPOINT_JAWHARP) {
-    root_note = note_out;
-    update_bass();
-    return;
-  }
-
-  note_out += 12;
-
-  if (button_endpoint == ENDPOINT_OVERDRIVEN_RHODES) {
-    // This one is special: we fade from rhodes to overdriven rhodes based on
-    // current breath.  That's handled as breath, so just send all note
-    // triggers to both instruments.
-    send_midi(mode, note_out, MIDI_MAX, ENDPOINT_OVERDRIVEN_RHODES);
-
-    // only use 50-110 on the regular rhodes
-    send_midi(mode, note_out, remap(val, 50, 110), ENDPOINT_RHODES);
-    return;
-  }
-
-  if (button_endpoint == ENDPOINT_HAMMOND ||
-      button_endpoint == ENDPOINT_ORGAN_FLEX ||
-      button_endpoint == ENDPOINT_SINE_PAD ||
-      button_endpoint == ENDPOINT_SWEEP_PAD) {
-    val = MIDI_MAX;
-  }
-
-  send_midi(mode, note_out, val, button_endpoint);
+  send_midi(mode, note_out, val, ENDPOINT_FOOTBASS);
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
