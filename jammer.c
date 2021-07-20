@@ -312,9 +312,7 @@ void setup_voices() {
   send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SINE_PAD);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
-  send_midi(MIDI_CC, CC_07, 64, ENDPOINT_ORGAN_LOW);
-
-  
+  send_midi(MIDI_CC, CC_07, 96, ENDPOINT_ORGAN_LOW);
 }
 
 int main(int argc, char** argv) {
