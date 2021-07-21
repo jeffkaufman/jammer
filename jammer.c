@@ -301,12 +301,6 @@ void setup_voices() {
   choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18); // needs better voice
   choose_voice(ENDPOINT_RHODES, 0, 4);
   choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
-  choose_voice(ENDPOINT_DRUM_A, 128, 0);  // standard kit
-  choose_voice(ENDPOINT_DRUM_B, 128, 0);
-  choose_voice(ENDPOINT_DRUM_C, 128, 0);
-  choose_voice(ENDPOINT_DRUM_D, 128, 0);
-  choose_voice(ENDPOINT_AUTO_RIGHTHAND, 0, 87);
-  choose_voice(ENDPOINT_GROOVE_BASS, 0, 38);
 
   // Turn some volumes down.
   send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
