@@ -39,7 +39,6 @@
 #define TOGGLE_MANUAL_TSS           17
 #define TOGGLE_MANUAL_KICK          16
 
-#define TOGGLE_AUTO_RIGHTHAND       28
 // #define TBD                      27
 #define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
@@ -47,7 +46,7 @@
 // #define TBD                      23
 #define TOGGLE_BREATH_CHORD         22
 
-#define CONTROL_MAX TOGGLE_AUTO_RIGHTHAND
+#define CONTROL_MAX TOGGLE_DRUM_BREATH
 
 // keyboard controls, used by handle_keypad
 #define CFG_RESET 0
@@ -192,12 +191,6 @@ uint64_t last_downbeat_ns;
 bool breath_chord_on;
 bool breath_chord_playing;
 
-// For each lefthand note L, what righthand notes have we had?  See
-// register_righthand_note(), age_righthand_notes(), and
-// select_righthand_note().
-float righthand_by_lefthand[12*12];
-bool auto_righthand_on;
-
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
@@ -278,11 +271,6 @@ void voices_reset() {
 
   breath_chord_on = false;
   breath_chord_playing = false;
-
-  for (int i = 0; i < 12*12; i++) {
-    righthand_by_lefthand[i] = 0;
-  }
-  auto_righthand_on = false;
 }
 
 
@@ -344,52 +332,8 @@ char active_note() {
   return root_note;
 }
 
-void register_righthand_note(int righthand_note) {
-  righthand_by_lefthand[(active_note() % 12) * 12 +
-                        (righthand_note % 12)]++;
-}
-
-void age_righthand_notes(float age_amount) {
-  for (int i = 0 ; i < 12*12; i++) {
-    righthand_by_lefthand[i] *= age_amount;
-  }
-}
-
 float random_float() {
   return (float)rand()/(float)(RAND_MAX);
-}
-
-int random_righthand_note() {
-  int lefthand_note = active_note() % 12;
-  float righthand_sum = 0;
-  printf("RH for %d\n", lefthand_note);
-  for (int righthand_note = 0; righthand_note < 12; righthand_note++) {
-    righthand_sum += righthand_by_lefthand[lefthand_note*12 + righthand_note];
-    printf("  %d: %.5f\n", righthand_note, righthand_by_lefthand[lefthand_note*12 + righthand_note]);
-  }
-  if (righthand_sum < 0.01) {
-    printf("too low, kept LH\n");
-    return lefthand_note;
-  }
-  float weighted_random = random_float() * righthand_sum;
-  righthand_sum = 0;
-  for (int righthand_note = 0; righthand_note < 12; righthand_note++) {
-    righthand_sum += righthand_by_lefthand[lefthand_note*12 + righthand_note];
-    if (righthand_sum >= weighted_random) {
-      printf("picked %d\n", righthand_note);
-      return righthand_note;
-    }
-  }
-  printf("this should never happen: %f %f\n", weighted_random, righthand_sum);
-  return lefthand_note;
-}
-
-int select_righthand_note(int min_note) {
-  int righthand_note = random_righthand_note();
-  while (righthand_note < min_note) {
-    righthand_note += 12;
-  }
-  return righthand_note;
 }
 
 float subbeat_location() {
@@ -554,24 +498,8 @@ void arpeggiate_bass(int subbeat) {
   }
 }
 
-int last_auto_righthand = 0;
-void arpeggiate_righthand(int subbeat) {
-  send_midi(MIDI_OFF, last_auto_righthand, 0, ENDPOINT_AUTO_RIGHTHAND);
-  if (!auto_righthand_on) {
-    return;
-  }
-  if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
-    if (subbeat < 72) {
-      last_auto_righthand = select_righthand_note(70);
-      printf("sending %d\n", last_auto_righthand);
-      send_midi(MIDI_ON, last_auto_righthand, 100, ENDPOINT_AUTO_RIGHTHAND);
-    }
-  }
-}
-
 void arpeggiate(int subbeat) {
   arpeggiate_bass(subbeat);
-  arpeggiate_righthand(subbeat);
 }
 
 uint64_t delta(uint64_t a, uint64_t b) {
@@ -903,8 +831,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
         update_bass();
       }
     }
-  } else {
-    register_righthand_note(note_in);
   }
 
   //if (current_beat_ns != 0 && mode == MIDI_ON) {
@@ -1074,11 +1000,6 @@ void handle_control(unsigned int note_in) {
 
   case TOGGLE_DRUM_BREATH:
     drum_breath_on = !drum_breath_on;
-    return;
-
-  case TOGGLE_AUTO_RIGHTHAND:
-    auto_righthand_on = !auto_righthand_on;
-    endpoint_notes_off(ENDPOINT_AUTO_RIGHTHAND);
     return;
 
   case ROTATE_ARPEGGIATOR_PATTERN:
@@ -1397,7 +1318,6 @@ void jml_tick() {
   // Called every TICK_MS
   update_air();
   forward_air();
-  age_righthand_notes(leakage);
   trigger_subbeats();
   //trigger_scheduled_notes();
 }
