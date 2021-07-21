@@ -303,10 +303,12 @@ void setup_voices() {
   choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
 
   // Turn some volumes down.
+  send_midi(MIDI_CC, CC_07, 96, ENDPOINT_ORGAN_LOW);
   send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SINE_PAD);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
-  send_midi(MIDI_CC, CC_07, 96, ENDPOINT_ORGAN_LOW);
+  send_midi(MIDI_CC, CC_07, 72, ENDPOINT_OVERDRIVEN_RHODES);
+  send_midi(MIDI_CC, CC_07, 96, ENDPOINT_RHODES);
 }
 
 int main(int argc, char** argv) {

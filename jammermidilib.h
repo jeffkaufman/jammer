@@ -1062,7 +1062,9 @@ int remap(int val, int min, int max) {
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   unsigned char note_out = mapping(note_in);
-  send_midi(mode, note_out, val, ENDPOINT_FOOTBASS);
+  int endpoint = note_in % N_ENDPOINTS;
+  printf("endpoint: %d\n", endpoint);
+  send_midi(mode, note_out, val, endpoint);
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
