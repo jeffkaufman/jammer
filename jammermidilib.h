@@ -43,12 +43,12 @@
 #define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
 #define ROTATE_DRUM_KIT             24
-// #define TBD                      23
+#define TOGGLE_JIG_REEL             23
 #define TOGGLE_BREATH_CHORD         22
 
 #define CONTROL_MAX TOGGLE_DRUM_BREATH
 
-// keyboard controls, used by handle_keypad
+// keyboard controls (0-13), used by handle_keypad
 #define CFG_RESET 0
 #define CFG_JAWHARP 1
 #define CFG_FLEX 2
@@ -56,6 +56,7 @@
 #define CFG_RHODES 4
 #define CFG_ARPEGGIATOR 5
 #define CFG_ROTATE_ARPEGGIATOR 6
+#define CFG_JIG_REEL 7
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -190,6 +191,7 @@ uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 bool breath_chord_on;
 bool breath_chord_playing;
+bool jig_time;
 
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
@@ -271,6 +273,8 @@ void voices_reset() {
 
   breath_chord_on = false;
   breath_chord_playing = false;
+
+  jig_time = false;
 }
 
 
@@ -381,7 +385,6 @@ void breath_chord_note_on(int note) {
   breath_chord_notes[note] = true;
 }
 
-bool jig_time = false;  // TODO
 bool downbeat(int subbeat) {
   return subbeat % 72 == 0;
 }
@@ -1010,6 +1013,10 @@ void handle_control(unsigned int note_in) {
     auto_hihat_mode = (auto_hihat_mode + 1) % N_AUTO_HIHAT_MODES;
     return;
 
+  case TOGGLE_JIG_REEL:
+    jig_time = !jig_time;
+    return;
+
   }
 }
 
@@ -1046,6 +1053,10 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   case CFG_ROTATE_ARPEGGIATOR:
     mapped_note = ROTATE_ARPEGGIATOR_PATTERN;
+    break;
+
+  case CFG_JIG_REEL:
+    mapped_note = TOGGLE_JIG_REEL;
     break;
 
   }
