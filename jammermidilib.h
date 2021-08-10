@@ -35,14 +35,13 @@
 #define TOGGLE_ARP_DOWNBEAT         8
 #define TOGGLE_ARP_UPBEAT_HIGH      27
 #define TOGGLE_ARP_DOUBLED          24
+#define ROTATE_ARP_VOICE            25
 
 #define TOGGLE_ARPEGGIATOR          21
 #define TOGGLE_MANUAL_TSS           17
 #define TOGGLE_MANUAL_KICK          16
 
-
 #define TOGGLE_DRUM_BREATH          26
-#define TOGGLE_ARPEGGIATOR_BREATH   25
 #define TOGGLE_JIG_REEL             23
 #define TOGGLE_BREATH_CHORD         22
 
@@ -53,7 +52,7 @@
 #define CFG_JAWHARP 1
 #define CFG_FLEX 2
 #define CFG_SINE_PAD 3
-#define CFG_RHODES 4
+#define CFG_ARP_VOICE 4
 #define CFG_ARPEGGIATOR 5
 #define CFG_JIG_REEL 6
 #define CFG_DOWNBEAT 7
@@ -171,7 +170,7 @@ bool arpeggiator_on;
 bool arp_downbeat;
 bool arp_upbeat_high;
 bool arp_doubled;
-bool arpeggiator_breath_on;
+int current_arp_voice;
 bool drum_breath_on;
 int current_arpeggiator_note;
 int button_endpoint;
@@ -231,7 +230,7 @@ void voices_reset() {
   arp_downbeat = true;
   arp_upbeat_high = false;
   arp_doubled = false;
-  arpeggiator_breath_on = false;
+  current_arp_voice = 0;
   drum_breath_on = false;
 
   current_arpeggiator_note = -1;
@@ -440,7 +439,7 @@ void arpeggiate_bass(int subbeat) {
     if (selected_note != -1) {
       send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
       current_arpeggiator_note = selected_note;
-      printf("footbass start note %d\n", current_arpeggiator_note);
+      //printf("footbass start note %d\n", current_arpeggiator_note);
     }
   }
 }
@@ -532,13 +531,15 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 
   bool acceptable_error = best_error < max_allowed_error;
 
-  printf("%c BPM: %.0f (%lld) (err: %llu / %llu, frac: %.2f%%)\n",
-         acceptable_error ? ' ' : '!',
-         best_bpm,
-         whole_beat,
-         best_error,
-         max_allowed_error,
-         100 * (float)best_error / (float)max_allowed_error);
+  if (false) {
+    printf("%c BPM: %.0f (%lld) (err: %llu / %llu, frac: %.2f%%)\n",
+           acceptable_error ? ' ' : '!',
+           best_bpm,
+           whole_beat,
+           best_error,
+           max_allowed_error,
+           100 * (float)best_error / (float)max_allowed_error);
+  }
 
   if (acceptable_error) {
     current_beat_ns = whole_beat;
@@ -744,7 +745,8 @@ void all_notes_off() {
 }
 
 int to_root(int note_out) {
-  return (note_out - 2) % 12 + 26;
+  int offset = 4;
+  return (note_out - offset) % 12 + 24 + offset;
 }
 
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -937,8 +939,8 @@ void handle_control(unsigned int note_in) {
     }
     return;
 
-  case TOGGLE_ARPEGGIATOR_BREATH:
-    arpeggiator_breath_on = !arpeggiator_breath_on;
+  case ROTATE_ARP_VOICE:
+    rotate_arp_voice(&current_arp_voice);
     return;
 
   case TOGGLE_DRUM_BREATH:
@@ -987,8 +989,8 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
     mapped_note = TOGGLE_SINE_PAD;
     break;
 
-  case CFG_RHODES:
-    mapped_note = TOGGLE_RHODES;
+  case CFG_ARP_VOICE:
+    mapped_note = ROTATE_ARP_VOICE;
     break;
 
   case CFG_ARPEGGIATOR:
@@ -1030,7 +1032,9 @@ void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
   printf("endpoint: %d\n", endpoint);
   send_midi(mode, note_out, val, endpoint);
   */
-  handle_feet(mode, MIDI_DRUM_IN_KICK, 100);
+  //handle_feet(mode, MIDI_DRUM_IN_KICK, 100);
+
+
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -1282,12 +1286,25 @@ void trigger_subbeats() {
   }
 }
 
+uint64_t tick_n = 0;
+uint64_t subtick_n = 0;
 void jml_tick() {
   // Called every TICK_MS
   update_air();
   forward_air();
   trigger_subbeats();
   //trigger_scheduled_notes();
+
+  if (false) {
+    if (++tick_n % 450 == 0) {
+      handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+
+      if (++subtick_n % 2 == 0) {
+        root_note = to_root(root_note + 1);
+        update_bass();
+      }
+    }
+  }
 }
 
 #endif

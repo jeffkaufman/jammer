@@ -286,6 +286,42 @@ void handle_event(snd_seq_event_t* event) {
   }
 }
 
+#define N_ARP_VOICES 6
+static int arp_voices[N_ARP_VOICES] = {
+   38,  // Synth Bass 1
+   39,  // Synth Bass 2
+   84,  // Lead 3 (calliope)
+   35,  // Electric Bass (finger)
+   26,  // Acoustic Guitar (nylon)
+   28,  // Electric Guitar (jazz)
+};
+
+void select_arp_voice(int voice_index) {
+  int voice = arp_voices[voice_index];
+  choose_voice(ENDPOINT_ORGAN_LOW, 0, voice);
+  int volume = 0;
+  switch(voice) {
+  case 38:
+  case 39:
+    volume = 96;
+    break;
+  case 26:
+  case 28:
+  case 35:
+    volume = 112;
+    break;
+  case 84:
+    volume = 78;
+    break;
+  }
+
+  send_midi(MIDI_CC, CC_07, volume, ENDPOINT_ORGAN_LOW);
+}
+void rotate_arp_voice(int* current_voice) {
+  *current_voice = (*current_voice+1)%N_ARP_VOICES;
+  select_arp_voice(*current_voice);
+}
+
 void setup_voices() {
   // Everything defaults to max volume
   for (int i = 0 ; i < N_ENDPOINTS; i++) {
@@ -295,7 +331,7 @@ void setup_voices() {
 
   choose_voice(ENDPOINT_JAWHARP, 0, 4);  // rhodes ep
   choose_voice(ENDPOINT_HAMMOND, 0, 17);
-  choose_voice(ENDPOINT_ORGAN_LOW, 0, 38);  // synth bass 4, or 38 / 80 / 81
+
   choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);  // saw wave or 38 or 87
   choose_voice(ENDPOINT_SINE_PAD, 0, 89);
   choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18); // needs better voice
@@ -303,12 +339,13 @@ void setup_voices() {
   choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
 
   // Turn some volumes down.
-  send_midi(MIDI_CC, CC_07, 96, ENDPOINT_ORGAN_LOW);
   send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SINE_PAD);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
   send_midi(MIDI_CC, CC_07, 72, ENDPOINT_OVERDRIVEN_RHODES);
   send_midi(MIDI_CC, CC_07, 96, ENDPOINT_RHODES);
+
+  select_arp_voice(0);
 }
 
 int main(int argc, char** argv) {
@@ -345,7 +382,7 @@ int main(int argc, char** argv) {
   }
 
   sleep(1);
-  
+
   jml_setup();
   printf("listening...\n");
 
