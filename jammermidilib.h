@@ -32,17 +32,17 @@
 #define TOGGLE_JAWHARP               2
 #define TOGGLE_ORGAN_FLEX         9
 
-#define ROTATE_AUTO_HIHAT         8
+#define TOGGLE_ARP_DOWNBEAT         8
+#define TOGGLE_ARP_UPBEAT_HIGH      27
+#define TOGGLE_ARP_DOUBLED          24
 
 #define TOGGLE_ARPEGGIATOR          21
-#define ROTATE_ARPEGGIATOR_PATTERN  20
 #define TOGGLE_MANUAL_TSS           17
 #define TOGGLE_MANUAL_KICK          16
 
-// #define TBD                      27
+
 #define TOGGLE_DRUM_BREATH          26
 #define TOGGLE_ARPEGGIATOR_BREATH   25
-#define ROTATE_DRUM_KIT             24
 #define TOGGLE_JIG_REEL             23
 #define TOGGLE_BREATH_CHORD         22
 
@@ -55,8 +55,10 @@
 #define CFG_SINE_PAD 3
 #define CFG_RHODES 4
 #define CFG_ARPEGGIATOR 5
-#define CFG_ROTATE_ARPEGGIATOR 6
-#define CFG_JIG_REEL 7
+#define CFG_JIG_REEL 6
+#define CFG_DOWNBEAT 7
+#define CFG_UPBEAT_HIGH 8
+#define CFG_DOUBLED 9
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -166,9 +168,11 @@ bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
 bool breath_chord_notes[MIDI_MAX];
 bool arpeggiator_on;
+bool arp_downbeat;
+bool arp_upbeat_high;
+bool arp_doubled;
 bool arpeggiator_breath_on;
 bool drum_breath_on;
-int current_arpeggiator_pattern;
 int current_arpeggiator_note;
 int button_endpoint;
 int root_note;
@@ -200,7 +204,7 @@ void print_kick_times(uint64_t current_time) {
                                    KICK_TIMES_LENGTH];
     printf("  %llu   %llu\n", kick_time, current_time - kick_time);
   }
-}  
+}
 
 void voices_reset() {
   jawharp_on = false;
@@ -224,9 +228,12 @@ void voices_reset() {
     breath_chord_notes[i] = false;
   }
   arpeggiator_on = false;
+  arp_downbeat = true;
+  arp_upbeat_high = false;
+  arp_doubled = false;
   arpeggiator_breath_on = false;
   drum_breath_on = false;
-  current_arpeggiator_pattern = 0;
+
   current_arpeggiator_note = -1;
 
   root_note = 26;  // D @ 37Hz
@@ -389,10 +396,10 @@ bool downbeat(int subbeat) {
   return subbeat % 72 == 0;
 }
 bool preup(int subbeat) {
-  return subbeat == (jig_time ? (72/3-1) : (72/4-1));
+  return subbeat == (jig_time ? (72/3-3) : (72/4-1));
 }
 bool upbeat(int subbeat) {
-  return subbeat == (jig_time ? (2*72/3-1) : (72/2-1));
+  return subbeat == (jig_time ? (2*72/3-3) : (72/2-2));
 }
 bool predown(int subbeat) {
   if (jig_time) return false;  // This beat doesn't happen in jig time.
@@ -400,103 +407,40 @@ bool predown(int subbeat) {
 }
 
 void arpeggiate_bass(int subbeat) {
+  if (!arpeggiator_on) return;
+
   int note_out = active_note();
   int selected_note = note_out;
+  bool send_note = false;
 
-  bool send_note = downbeat(subbeat) || upbeat(subbeat);
+  if (downbeat(subbeat)) {
+    send_note = arp_downbeat;
+  } else if (upbeat(subbeat)) {
+    send_note = true;
+    if (arp_upbeat_high) {
+      selected_note += 12;
+    }
+  } else if (preup(subbeat) && !jig_time) {
+    send_note = arp_downbeat && arp_doubled;
+  } else if (predown(subbeat) || preup(subbeat)) {
+    send_note = arp_doubled;
+    if (arp_upbeat_high) {
+      selected_note += 12;
+    }
+  }
+
   bool end_note = send_note;
-  if (arpeggiator_on) {
-    if (current_arpeggiator_pattern == 1) {
-      if (upbeat(subbeat)) {
-        selected_note = note_out + 12;
-      }
-    } else if (current_arpeggiator_pattern == 2) {
-      if (downbeat(subbeat)) {
-        send_note = false;
-      }
-    } else if (current_arpeggiator_pattern == 3) {
-      if (downbeat(subbeat) || preup(subbeat) || upbeat(subbeat) || predown(subbeat)) {
-        end_note = send_note = true;
-      }
-    } else if (current_arpeggiator_pattern == 4) {
-      if (downbeat(subbeat) || preup(subbeat)) {
-        end_note = send_note = true;
-      } else if (upbeat(subbeat) || predown(subbeat)) {
-        selected_note = note_out + 12;
-        end_note = send_note = true;
-      }
-    } else if (current_arpeggiator_pattern == 5) {
-      if (downbeat(subbeat)) {
-      } else if (preup(subbeat)) {
-        selected_note = note_out + 7;
-        end_note = send_note = true;
-      } else if (upbeat(subbeat)) {
-        selected_note = note_out + 12;
-      } else if (predown(subbeat)) {
-        selected_note = note_out + 12 + 7;
-        end_note = send_note = true;
-      }
-    } else if (current_arpeggiator_pattern == 6) {
-      if (downbeat(subbeat)) {
-      } else if (preup(subbeat)) {
-        selected_note = note_out + 12;
-        end_note = send_note = true;
-      } else if (upbeat(subbeat)) {
-        selected_note = note_out + 12 + 7;
-      } else if (predown(subbeat)) {
-        selected_note = note_out + 12 + 12;
-        end_note = send_note = true;
-      }
-    } else if (current_arpeggiator_pattern == 7) {
-      if (downbeat(subbeat)) {
-      } else if (preup(subbeat)) {
-        selected_note = note_out + 12;
-        end_note = send_note = true;
-      } else if (upbeat(subbeat)) {
-        selected_note = note_out + 12 + 12;
-      } else if (predown(subbeat)) {
-        selected_note = note_out + 12 + 12 + 12;
-        end_note = send_note = true;
-      }
-    }
+  if (end_note && current_arpeggiator_note != -1) {
+    //printf("footbass end note %d\n", current_arpeggiator_note);
+    send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS);
+    current_arpeggiator_note = -1;
+  }
 
-    if (arpeggiator_breath_on) {
-      // Get more and more intense the more blowing happens.
-
-      if (breath > 80 && (downbeat(subbeat) || upbeat(subbeat))) {
-        send_note = true;
-        end_note = true;
-        selected_note = note_out + 12;
-      }
-
-      if (breath > 100 && (preup(subbeat) || predown(subbeat))) {
-        send_note = true;
-        end_note = true;
-        selected_note = note_out + 12;
-      }
-
-      if (breath > 120) {
-        // triplets!
-        end_note = send_note = subbeat % 12 == 0;
-      }
-
-      if (breath == MIDI_MAX) {
-        selected_note += 12;
-      }
-    }
-
-    if (end_note && current_arpeggiator_note != -1) {
-      //printf("footbass end note %d\n", current_arpeggiator_note);
-      send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS);
-      current_arpeggiator_note = -1;
-    }
-
-    if (send_note) {
-      if (selected_note != -1) {
-        send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
-        current_arpeggiator_note = selected_note;
-        printf("footbass start note %d\n", current_arpeggiator_note);
-      }
+  if (send_note) {
+    if (selected_note != -1) {
+      send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
+      current_arpeggiator_note = selected_note;
+      printf("footbass start note %d\n", current_arpeggiator_note);
     }
   }
 }
@@ -526,7 +470,7 @@ uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
 
 void estimate_tempo(uint64_t current_time, int note_in) {
   //print_kick_times(current_time);
-  
+
   current_beat_ns = 0;
 
   // Take a super naive approach: for each candidate tempo, consider
@@ -967,10 +911,6 @@ void handle_control(unsigned int note_in) {
     }
     return;
 
-  case ROTATE_DRUM_KIT:
-    drum_kit_sound = (drum_kit_sound + 1) % N_DRUM_KIT_SOUNDS;
-    return;
-
   case TOGGLE_MANUAL_TSS:
     manual_tss_on = !manual_tss_on;
     return;
@@ -1005,12 +945,16 @@ void handle_control(unsigned int note_in) {
     drum_breath_on = !drum_breath_on;
     return;
 
-  case ROTATE_ARPEGGIATOR_PATTERN:
-    current_arpeggiator_pattern = (current_arpeggiator_pattern + 1) % N_ARPEGGIATOR_PATTERNS;
+  case TOGGLE_ARP_DOWNBEAT:
+    arp_downbeat = !arp_downbeat;
     return;
 
-  case ROTATE_AUTO_HIHAT:
-    auto_hihat_mode = (auto_hihat_mode + 1) % N_AUTO_HIHAT_MODES;
+  case TOGGLE_ARP_UPBEAT_HIGH:
+    arp_upbeat_high = !arp_upbeat_high;
+    return;
+
+  case TOGGLE_ARP_DOUBLED:
+    arp_doubled = !arp_doubled;
     return;
 
   case TOGGLE_JIG_REEL:
@@ -1051,8 +995,16 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
     mapped_note = TOGGLE_ARPEGGIATOR;
     break;
 
-  case CFG_ROTATE_ARPEGGIATOR:
-    mapped_note = ROTATE_ARPEGGIATOR_PATTERN;
+  case CFG_DOWNBEAT:
+    mapped_note = TOGGLE_ARP_DOWNBEAT;
+    break;
+
+  case CFG_UPBEAT_HIGH:
+    mapped_note = TOGGLE_ARP_UPBEAT_HIGH;
+    break;
+
+  case CFG_DOUBLED:
+    mapped_note = TOGGLE_ARP_DOUBLED;
     break;
 
   case CFG_JIG_REEL:
@@ -1072,10 +1024,13 @@ int remap(int val, int min, int max) {
 }
 
 void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
+  /*
   unsigned char note_out = mapping(note_in);
   int endpoint = note_in % N_ENDPOINTS;
   printf("endpoint: %d\n", endpoint);
   send_midi(mode, note_out, val, endpoint);
+  */
+  handle_feet(mode, MIDI_DRUM_IN_KICK, 100);
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
