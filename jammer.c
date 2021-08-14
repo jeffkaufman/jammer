@@ -248,6 +248,8 @@ void tick() {
   jml_tick();
 }
 
+int tmp_jawharp_voice = 1;
+
 void handle_event(snd_seq_event_t* event) {
   if (event->source.client == breath_controller_client) {
     handle_cc(event->data.control.param, event->data.control.value);
@@ -276,6 +278,16 @@ void handle_event(snd_seq_event_t* event) {
   if (event->source.client == keyboard_client) {
     handle_piano(action, note_in, val);
   } else if (event->source.client == axis49_client) {
+    if (action == MIDI_ON) {
+      if (note_in % 2 == 0) {
+        tmp_jawharp_voice++;
+      } else {
+        tmp_jawharp_voice--;
+      }
+      printf("JTK jawharp to %d\n", tmp_jawharp_voice);
+      choose_voice(ENDPOINT_JAWHARP, 0, tmp_jawharp_voice);
+    }
+
     handle_axis_49(action, note_in, val);
   } else if (event->source.client == feet_client) {
     handle_feet(action, note_in, val);
@@ -322,6 +334,49 @@ void rotate_arp_voice(int* current_voice) {
   select_arp_voice(*current_voice);
 }
 
+#define N_JAWHARP_VOICES 7
+static int jawharp_voices[N_JAWHARP_VOICES] = {
+   4,  // Electric Piano 1
+   24,
+   26,
+   64,
+   66,
+   67,
+   81,  // Lead 2 (sawtooth)
+
+};
+
+void select_jawharp_voice(int voice_index) {
+  int voice = jawharp_voices[voice_index];
+  choose_voice(ENDPOINT_JAWHARP, 0, voice);
+  int volume = 0;
+  switch(voice) {
+  case 4:
+    volume = 127;
+    break;
+  case 7:
+    volume = 98;
+    break;
+  case 24:
+  case 26:
+  case 64:
+  case 66:
+  case 67:
+    volume = 112;
+    break;
+  case 81:
+    volume = 64;
+    break;
+  }
+
+  send_midi(MIDI_CC, CC_07, volume, ENDPOINT_JAWHARP);
+}
+void rotate_jawharp_voice(int* current_voice) {
+  *current_voice = (*current_voice+1)%N_JAWHARP_VOICES;
+  select_jawharp_voice(*current_voice);
+}
+
+
 void setup_voices() {
   // Everything defaults to max volume
   for (int i = 0 ; i < N_ENDPOINTS; i++) {
@@ -346,6 +401,7 @@ void setup_voices() {
   send_midi(MIDI_CC, CC_07, 96, ENDPOINT_RHODES);
 
   select_arp_voice(0);
+  select_jawharp_voice(0);
 }
 
 int main(int argc, char** argv) {

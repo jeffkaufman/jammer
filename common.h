@@ -7,6 +7,7 @@ void die(char *errmsg) {
 }
 
 void rotate_arp_voice(int* current_voice);
+void rotate_jawharp_voice(int* current_voice);
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0

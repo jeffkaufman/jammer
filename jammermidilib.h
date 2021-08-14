@@ -36,6 +36,7 @@
 #define TOGGLE_ARP_UPBEAT_HIGH      27
 #define TOGGLE_ARP_DOUBLED          24
 #define ROTATE_ARP_VOICE            25
+#define ROTATE_JAWHARP_VOICE        28
 
 #define TOGGLE_ARPEGGIATOR          21
 #define TOGGLE_MANUAL_TSS           17
@@ -47,7 +48,7 @@
 
 #define CONTROL_MAX TOGGLE_DRUM_BREATH
 
-// keyboard controls (0-13), used by handle_keypad
+// keyboard controls (0-12), used by handle_keypad
 #define CFG_RESET 0
 #define CFG_JAWHARP 1
 #define CFG_FLEX 2
@@ -58,6 +59,9 @@
 #define CFG_DOWNBEAT 7
 #define CFG_UPBEAT_HIGH 8
 #define CFG_DOUBLED 9
+// available: 10 backspace
+// available: 11 enter
+#define CFG_JAWHARP_VOICE 12 // dot
 
 #define BUTTON_ADJUST_3 93
 #define BUTTON_ADJUST_24 92
@@ -171,6 +175,7 @@ bool arp_downbeat;
 bool arp_upbeat_high;
 bool arp_doubled;
 int current_arp_voice;
+int current_jawharp_voice;
 bool drum_breath_on;
 int current_arpeggiator_note;
 int button_endpoint;
@@ -231,6 +236,7 @@ void voices_reset() {
   arp_upbeat_high = false;
   arp_doubled = false;
   current_arp_voice = 0;
+  current_jawharp_voice = 0;
   drum_breath_on = false;
 
   current_arpeggiator_note = -1;
@@ -943,6 +949,10 @@ void handle_control(unsigned int note_in) {
     rotate_arp_voice(&current_arp_voice);
     return;
 
+  case ROTATE_JAWHARP_VOICE:
+    rotate_jawharp_voice(&current_jawharp_voice);
+    return;
+
   case TOGGLE_DRUM_BREATH:
     drum_breath_on = !drum_breath_on;
     return;
@@ -991,6 +1001,10 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   case CFG_ARP_VOICE:
     mapped_note = ROTATE_ARP_VOICE;
+    break;
+
+  case CFG_JAWHARP_VOICE:
+    mapped_note = ROTATE_JAWHARP_VOICE;
     break;
 
   case CFG_ARPEGGIATOR:
