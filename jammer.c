@@ -94,7 +94,6 @@ void setup_ports() {
                             KEYBOARD_PORT_NAME) == 0) {
             keyboard_client = snd_seq_port_info_get_client(port_info);
             keyboard_port = snd_seq_port_info_get_port(port_info);
-            piano_on = true;
           } else if (strcmp(snd_seq_port_info_get_name(port_info),
                             BREATH_CONTROLLER_PORT_NAME) == 0) {
             breath_controller_client = snd_seq_port_info_get_client(port_info);

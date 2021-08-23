@@ -62,9 +62,6 @@ struct ScheduledNote {
   int endpoint;
 };
 
-bool piano_on = false;  // Initialized based on availablity of piano.
-
-
 /* Anything mentioned here should be initialized in voices_reset */
 bool jawharp_on;
 bool hammond_on;
@@ -92,7 +89,6 @@ int current_arp_voice;
 int current_jawharp_voice;
 bool drum_breath_on;
 int current_arpeggiator_note;
-int button_endpoint;
 int root_note;
 bool air_locked;
 double locked_air;
@@ -729,14 +725,6 @@ void full_reset() {
   all_notes_off();
 }
 
-void change_button_endpoint(int endpoint) {
-  if (!piano_on && endpoint != ENDPOINT_JAWHARP) {
-    jawharp_on = false;
-    jawharp_off();
-  }
-  button_endpoint = endpoint;
-}
-
 void air_lock() {
   air_locked = !air_locked;
   locked_air = air;
@@ -752,12 +740,7 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
   case 'W':
     // toggle jawharp
     endpoint_notes_off(ENDPOINT_JAWHARP);
-    if (piano_on) {
-      jawharp_on = !jawharp_on;
-    } else {
-      jawharp_on = true;
-      change_button_endpoint(ENDPOINT_JAWHARP);
-    }
+    jawharp_on = !jawharp_on;
 
     if (jawharp_on) {
       update_bass();
@@ -832,10 +815,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
       breath_chord_off();
       current_note[ENDPOINT_HAMMOND] = -1;
     }
-  }
-
-  if (!piano_on && button_endpoint == ENDPOINT_OVERDRIVEN_RHODES) {
-    send_midi(MIDI_CC, CC_07, MIDI_MAX, ENDPOINT_RHODES);
   }
 
   // pass other control change to all synths that care about it:
@@ -976,12 +955,8 @@ void forward_air() {
   organ_flex_base = val;
   int organ_flex_value = organ_flex_val();
 
-  if (piano_on) {
-    if (air_locked) {
-      val = locked_air;
-    }
-  } else {
-    val = organ_flex_value;
+  if (air_locked) {
+    val = locked_air;
   }
 
   if (val > MIDI_MAX) {
@@ -998,11 +973,7 @@ void forward_air() {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
-    if (piano_on) {
-      send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
-    } else {
-      // handled in handle_cc
-    }
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
     last_air_val = val;
   }
   if (organ_flex_value != last_organ_flex_val) {
