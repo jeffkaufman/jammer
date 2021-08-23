@@ -73,10 +73,6 @@ bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
-int auto_hihat_mode;
-bool manual_kick_on;
-bool manual_tss_on;
-int drum_kit_sound;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
@@ -92,7 +88,6 @@ int current_arpeggiator_note;
 int root_note;
 bool air_locked;
 double locked_air;
-unsigned int whistle_anchor_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
 uint64_t snare_times[SNARE_TIMES_LENGTH];
@@ -129,10 +124,6 @@ void voices_reset() {
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
-  auto_hihat_mode = 0;
-  manual_kick_on = false;
-  manual_tss_on = false;
-  drum_kit_sound = 0;
   atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
     atmospheric_drone_notes[i] = false;
@@ -153,8 +144,6 @@ void voices_reset() {
 
   air_locked = false;
   locked_air = 0;
-
-  whistle_anchor_note = 60; // this is arbitrary
 
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
     kick_times[i] = 0;
