@@ -5,89 +5,6 @@
 // https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
 // https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
 
-/*
-  Controls:
-
-  rst  odr  TBD   bt1  pd1  jaw  s/t
-  arl  rho  ham  atd  pd2  flx   HH
-  arp  app  ldp  rdh  rds  rdk  fcf
-  rht  TBD  tdb  api  pls  TBD  brc
-  ...
-
-  maj min mix               b3  b24
-*/
-#define FULL_RESET                  7
-#define AIR_LOCK                 14
-
-#define TOGGLE_OVERDRIVEN_RHODES     6
-#define TOGGLE_RHODES            13
-
-#define TOGGLE_HAMMOND           12
-
-#define TOGGLE_ATMOSPHERIC_DRONE 11
-
-#define TOGGLE_SINE_PAD              3
-#define TOGGLE_SWEEP_PAD         10
-
-#define TOGGLE_JAWHARP               2
-#define TOGGLE_ORGAN_FLEX         9
-
-#define TOGGLE_ARP_DOWNBEAT         8
-#define TOGGLE_ARP_UPBEAT_HIGH      27
-#define TOGGLE_ARP_DOUBLED          24
-#define ROTATE_ARP_VOICE            25
-#define ROTATE_JAWHARP_VOICE        28
-
-#define TOGGLE_ARPEGGIATOR          21
-#define TOGGLE_MANUAL_TSS           17
-#define TOGGLE_MANUAL_KICK          16
-
-#define TOGGLE_DRUM_BREATH          26
-#define TOGGLE_JIG_REEL             23
-#define TOGGLE_BREATH_CHORD         22
-
-#define CONTROL_MAX TOGGLE_DRUM_BREATH
-
-// keyboard controls (0-12), used by handle_keypad
-#define CFG_RESET 0
-#define CFG_JAWHARP 1
-#define CFG_FLEX 2
-#define CFG_SINE_PAD 3
-#define CFG_ARP_VOICE 4
-#define CFG_ARPEGGIATOR 5
-#define CFG_JIG_REEL 6
-#define CFG_DOWNBEAT 7
-#define CFG_UPBEAT_HIGH 8
-#define CFG_DOUBLED 9
-// available: 10 backspace
-// available: 11 enter
-#define CFG_JAWHARP_VOICE 12 // dot
-
-#define BUTTON_ADJUST_3 93
-#define BUTTON_ADJUST_24 92
-
-#define BUTTON_MAJOR 98
-#define BUTTON_MIXO 97
-#define BUTTON_MINOR 96
-#define BUTTON_RACOON 95
-
-#define N_ARPEGGIATOR_PATTERNS 8
-#define N_AUTO_HIHAT_MODES 9
-#define N_DRUM_KIT_SOUNDS 5
-
-
-#define STATE_DEFAULT 0
-#define STATE_ADJUST_3 1
-#define STATE_ADJUST_24 2
-
-#define FOOTBASS_VOLUME 120
-
-// gcmidi sends on CC 20 through 29
-#define GCMIDI_MIN 20
-#define GCMIDI_MAX 29
-
-#define CC_ROLL 30
-#define CC_PITCH 31
 
 #define MIDI_DRUM_IN_SNARE 46
 #define MIDI_DRUM_IN_KICK 38
@@ -97,11 +14,6 @@
 #define MIDI_MAX 127
 
 #define TICK_MS 1  // try to tick every N milliseconds
-
-#define MODE_MAJOR 0
-#define MODE_MIXO 1
-#define MODE_MINOR 2
-#define MODE_RACOON 3
 
 #define KICK_TIMES_LENGTH 12
 #define SNARE_TIMES_LENGTH 12
@@ -116,6 +28,8 @@
 #define MAX_SCHEDULED_NOTES 64
 
 #define MAX_HAMMOND_NOTE 96  // the hammond can't play higher than this note
+
+#define FOOTBASS_VOLUME 120
 
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte)                    \
@@ -182,7 +96,6 @@ int button_endpoint;
 int root_note;
 bool air_locked;
 double locked_air;
-int musical_mode;
 unsigned int whistle_anchor_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
@@ -193,7 +106,6 @@ int crash_times_index;
 uint64_t hihat_times[HIHAT_TIMES_LENGTH];
 int hihat_times_index;
 uint64_t next_ns[N_SUBBEATS];
-int state;
 struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
@@ -246,7 +158,6 @@ void voices_reset() {
   air_locked = false;
   locked_air = 0;
 
-  musical_mode = MODE_MAJOR;
   whistle_anchor_note = 60; // this is arbitrary
 
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
@@ -272,8 +183,6 @@ void voices_reset() {
   for (int i = 0; i < N_SUBBEATS; i++) {
     next_ns[i] = 0;
   }
-
-  state = STATE_DEFAULT;
 
   for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
     scheduled_notes[i].ts = 0;
@@ -833,18 +742,15 @@ void air_lock() {
   locked_air = air;
 }
 
-void handle_control(unsigned int note_in) {
-  switch (note_in) {
+void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
+  if (mode != MIDI_ON) return;
 
-  case FULL_RESET:
+  switch (note_in) {
+  case 'Q':
     full_reset();
     return;
-
-  case AIR_LOCK:
-    air_lock();
-    return;
-
-  case TOGGLE_JAWHARP:
+  case 'W':
+    // toggle jawharp
     endpoint_notes_off(ENDPOINT_JAWHARP);
     if (piano_on) {
       jawharp_on = !jawharp_on;
@@ -859,196 +765,42 @@ void handle_control(unsigned int note_in) {
       jawharp_off();
     }
     return;
-
-  case TOGGLE_BREATH_CHORD:
-    if (breath_chord_on) {
-      breath_chord_on = false;
-      breath_chord_off();
-    } else {
-      breath_chord_on = true;
-      update_bass();
-    }
-    printf("bc %d\n", breath_chord_on);
-    return;
-
-  case TOGGLE_HAMMOND:
-    endpoint_notes_off(ENDPOINT_HAMMOND);
-    hammond_on = !hammond_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_HAMMOND);
-    }
-    return;
-
-  case TOGGLE_ORGAN_FLEX:
+  case 'E':
     endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
     organ_flex_on = !organ_flex_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_ORGAN_FLEX);
-    }
     return;
-
-  case TOGGLE_SINE_PAD:
+  case 'R':
     endpoint_notes_off(ENDPOINT_SINE_PAD);
     sine_pad_on = !sine_pad_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_SINE_PAD);
-    }
     return;
-
-  case TOGGLE_SWEEP_PAD:
-    endpoint_notes_off(ENDPOINT_SWEEP_PAD);
-    sweep_pad_on = !sweep_pad_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_SWEEP_PAD);
-    }
-    return;
-
-  case TOGGLE_OVERDRIVEN_RHODES:
-    endpoint_notes_off(ENDPOINT_OVERDRIVEN_RHODES);
-    overdriven_rhodes_on = !overdriven_rhodes_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_OVERDRIVEN_RHODES);
-    }
-    return;
-
-  case TOGGLE_RHODES:
-    endpoint_notes_off(ENDPOINT_RHODES);
-    rhodes_on = !rhodes_on;
-    if (!piano_on) {
-      change_button_endpoint(ENDPOINT_RHODES);
-    }
-    return;
-
-  case TOGGLE_MANUAL_TSS:
-    manual_tss_on = !manual_tss_on;
-    return;
-
-  case TOGGLE_MANUAL_KICK:
-    manual_kick_on = !manual_kick_on;
-    return;
-
-  case TOGGLE_ATMOSPHERIC_DRONE:
-    atmospheric_drone = !atmospheric_drone;
-    if (atmospheric_drone) {
-      send_midi(MIDI_CC, CC_11, 80, ENDPOINT_SWEEP_PAD);
-      send_midi(MIDI_CC, CC_11, 80, ENDPOINT_SINE_PAD);
-    } else {
-      atmospheric_drone_off();
-    }
-    return;
-
-  case TOGGLE_ARPEGGIATOR:
+  // todo: allow setting arp voice directly
+  // todo: allow setting jawharp voice directly
+  case 'T':
+    // toggle arp
     arpeggiator_on = !arpeggiator_on;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
     if (arpeggiator_on) {
       send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
     }
     return;
-
-  case ROTATE_ARP_VOICE:
-    rotate_arp_voice(&current_arp_voice);
-    return;
-
-  case ROTATE_JAWHARP_VOICE:
-    rotate_jawharp_voice(&current_jawharp_voice);
-    return;
-
-  case TOGGLE_DRUM_BREATH:
-    drum_breath_on = !drum_breath_on;
-    return;
-
-  case TOGGLE_ARP_DOWNBEAT:
+  case 'Y':
     arp_downbeat = !arp_downbeat;
     return;
-
-  case TOGGLE_ARP_UPBEAT_HIGH:
+  case 'U':
     arp_upbeat_high = !arp_upbeat_high;
     return;
-
-  case TOGGLE_ARP_DOUBLED:
+  case 'I':
     arp_doubled = !arp_doubled;
     return;
-
-  case TOGGLE_JIG_REEL:
+  case 'O':
     jig_time = !jig_time;
     return;
-
   }
-}
-
-void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
-  if (mode != MIDI_ON) return;
-
-  int mapped_note = -1;
-
-  switch (note_in) {
-
-  case CFG_RESET:
-    mapped_note = FULL_RESET;
-    break;
-
-  case CFG_JAWHARP:
-    mapped_note = TOGGLE_JAWHARP;
-    break;
-
-  case CFG_FLEX:
-    mapped_note = TOGGLE_ORGAN_FLEX;
-    break;
-
-  case CFG_SINE_PAD:
-    mapped_note = TOGGLE_SINE_PAD;
-    break;
-
-  case CFG_ARP_VOICE:
-    mapped_note = ROTATE_ARP_VOICE;
-    break;
-
-  case CFG_JAWHARP_VOICE:
-    mapped_note = ROTATE_JAWHARP_VOICE;
-    break;
-
-  case CFG_ARPEGGIATOR:
-    mapped_note = TOGGLE_ARPEGGIATOR;
-    break;
-
-  case CFG_DOWNBEAT:
-    mapped_note = TOGGLE_ARP_DOWNBEAT;
-    break;
-
-  case CFG_UPBEAT_HIGH:
-    mapped_note = TOGGLE_ARP_UPBEAT_HIGH;
-    break;
-
-  case CFG_DOUBLED:
-    mapped_note = TOGGLE_ARP_DOUBLED;
-    break;
-
-  case CFG_JIG_REEL:
-    mapped_note = TOGGLE_JIG_REEL;
-    break;
-
-  }
-
-  if (mapped_note == -1) return;
-
-  handle_control(mapped_note);
 }
 
 int remap(int val, int min, int max) {
   int range = max - min;
   return val * range / MIDI_MAX + min;
-}
-
-void handle_button(unsigned int mode, unsigned int note_in, unsigned int val) {
-  /*
-  unsigned char note_out = mapping(note_in);
-  int endpoint = note_in % N_ENDPOINTS;
-  printf("endpoint: %d\n", endpoint);
-  send_midi(mode, note_out, val, endpoint);
-  */
-  //handle_feet(mode, MIDI_DRUM_IN_KICK, 100);
-
-
 }
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -1146,17 +898,6 @@ const char* note_str(int note) {
 }
 
 void handle_axis_49(int mode, int note_in, int val) {
-  if (mode == MIDI_ON && note_in == BUTTON_ADJUST_3) {
-    state = STATE_ADJUST_3;
-  } else if (mode == MIDI_ON && note_in == BUTTON_ADJUST_24) {
-    state = STATE_ADJUST_24;
-  } else if (note_in <= CONTROL_MAX) {
-    if (mode == MIDI_ON) {
-      handle_control(note_in);
-    }
-  } else {
-    handle_button(mode, note_in, val);
-  }
 }
 
 void calculate_breath_speeds() {
