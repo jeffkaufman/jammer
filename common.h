@@ -6,8 +6,8 @@ void die(char *errmsg) {
   exit(-1);
 }
 
-void rotate_arp_voice(int* current_voice);
-void rotate_jawharp_voice(int* current_voice);
+void select_arp_voice(int voice_index);
+void select_jawharp_voice(int voice_index);
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
@@ -35,5 +35,25 @@ void rotate_jawharp_voice(int* current_voice);
 #define CC_07 0x07
 #define CC_11 0x0b
 
+#define N_ARP_VOICES 6
+static int arp_voices[N_ARP_VOICES] = {
+   38,  // Synth Bass 1
+   39,  // Synth Bass 2
+   84,  // Lead 3 (calliope)
+   35,  // Electric Bass (finger)
+   26,  // Acoustic Guitar (nylon)
+   28,  // Electric Guitar (jazz)
+};
+
+#define N_JAWHARP_VOICES 7
+static int jawharp_voices[N_JAWHARP_VOICES] = {
+   4,  // Electric Piano 1
+   24,
+   26,
+   64,
+   66,
+   67,
+   81,  // Lead 2 (sawtooth)
+};
 
 #endif

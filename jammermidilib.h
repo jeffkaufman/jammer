@@ -81,8 +81,6 @@ bool arpeggiator_on;
 bool arp_downbeat;
 bool arp_upbeat_high;
 bool arp_doubled;
-int current_arp_voice;
-int current_jawharp_voice;
 bool drum_breath_on;
 int current_arpeggiator_note;
 int root_note;
@@ -134,10 +132,9 @@ void voices_reset() {
   arp_downbeat = true;
   arp_upbeat_high = false;
   arp_doubled = false;
-  current_arp_voice = 0;
-  current_jawharp_voice = 0;
   drum_breath_on = false;
-
+  select_arp_voice(0);
+  select_jawharp_voice(0);
   current_arpeggiator_note = -1;
 
   root_note = 26;  // D @ 37Hz
@@ -719,8 +716,10 @@ void air_lock() {
   locked_air = air;
 }
 
-void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
+void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   if (mode != MIDI_ON) return;
+
+  printf("recv: %c\n", note_in);
 
   switch (note_in) {
   case 'Q':
@@ -745,8 +744,6 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
     endpoint_notes_off(ENDPOINT_SINE_PAD);
     sine_pad_on = !sine_pad_on;
     return;
-  // todo: allow setting arp voice directly
-  // todo: allow setting jawharp voice directly
   case 'T':
     // toggle arp
     arpeggiator_on = !arpeggiator_on;
@@ -766,6 +763,45 @@ void handle_keypad(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   case 'O':
     jig_time = !jig_time;
+    return;
+  case 'A':
+    select_arp_voice(0);
+    return;
+  case 'S':
+    select_arp_voice(1);
+    return;
+  case 'D':
+    select_arp_voice(2);
+    return;
+  case 'F':
+    select_arp_voice(3);
+    return;
+  case 'G':
+    select_arp_voice(4);
+    return;
+  case 'H':
+    select_arp_voice(5);
+    return;
+  case 'J':
+    select_arp_voice(6);
+    return;
+  case 'Z':
+    select_jawharp_voice(0);
+    return;
+  case 'X':
+    select_jawharp_voice(1);
+    return;
+  case 'C':
+    select_jawharp_voice(2);
+    return;
+  case 'V':
+    select_jawharp_voice(3);
+    return;
+  case 'B':
+    select_jawharp_voice(4);
+    return;
+  case 'N':
+    select_jawharp_voice(5);
     return;
   }
 }
@@ -866,6 +902,7 @@ const char* note_str(int note) {
 }
 
 void handle_axis_49(int mode, int note_in, int val) {
+
 }
 
 void calculate_breath_speeds() {

@@ -297,17 +297,13 @@ void handle_event(snd_seq_event_t* event) {
   }
 }
 
-#define N_ARP_VOICES 6
-static int arp_voices[N_ARP_VOICES] = {
-   38,  // Synth Bass 1
-   39,  // Synth Bass 2
-   84,  // Lead 3 (calliope)
-   35,  // Electric Bass (finger)
-   26,  // Acoustic Guitar (nylon)
-   28,  // Electric Guitar (jazz)
-};
 
 void select_arp_voice(int voice_index) {
+  if (voice_index < 0 || voice_index >= N_ARP_VOICES) {
+    printf("bad voice %d\n", voice_index);
+    return;
+  }
+
   int voice = arp_voices[voice_index];
   choose_voice(ENDPOINT_ORGAN_LOW, 0, voice);
   int volume = 0;
@@ -328,24 +324,13 @@ void select_arp_voice(int voice_index) {
 
   send_midi(MIDI_CC, CC_07, volume, ENDPOINT_ORGAN_LOW);
 }
-void rotate_arp_voice(int* current_voice) {
-  *current_voice = (*current_voice+1)%N_ARP_VOICES;
-  select_arp_voice(*current_voice);
-}
-
-#define N_JAWHARP_VOICES 7
-static int jawharp_voices[N_JAWHARP_VOICES] = {
-   4,  // Electric Piano 1
-   24,
-   26,
-   64,
-   66,
-   67,
-   81,  // Lead 2 (sawtooth)
-
-};
 
 void select_jawharp_voice(int voice_index) {
+  if (voice_index < 0 || voice_index >= N_JAWHARP_VOICES) {
+    printf("bad voice %d\n", voice_index);
+    return;
+  }
+
   int voice = jawharp_voices[voice_index];
   choose_voice(ENDPOINT_JAWHARP, 0, voice);
   int volume = 0;
@@ -370,11 +355,6 @@ void select_jawharp_voice(int voice_index) {
 
   send_midi(MIDI_CC, CC_07, volume, ENDPOINT_JAWHARP);
 }
-void rotate_jawharp_voice(int* current_voice) {
-  *current_voice = (*current_voice+1)%N_JAWHARP_VOICES;
-  select_jawharp_voice(*current_voice);
-}
-
 
 void setup_voices() {
   // Everything defaults to max volume
