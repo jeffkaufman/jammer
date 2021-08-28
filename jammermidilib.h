@@ -101,6 +101,9 @@ uint64_t last_downbeat_ns;
 bool breath_chord_on;
 bool breath_chord_playing;
 bool jig_time;
+double arp_air;
+bool arp_follows_air;
+
 
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
@@ -136,6 +139,9 @@ void voices_reset() {
   select_arp_voice(0);
   select_jawharp_voice(0);
   current_arpeggiator_note = -1;
+
+  arp_follows_air = false;
+  arp_air = 0;
 
   root_note = 26;  // D @ 37Hz
 
@@ -334,7 +340,15 @@ void arpeggiate_bass(int subbeat) {
 
   if (send_note) {
     if (selected_note != -1) {
-      send_midi(MIDI_ON, selected_note, 90, ENDPOINT_FOOTBASS);
+      if (arp_follows_air) {
+        arp_air = air;
+      }
+      int vol = arp_air > MIDI_MAX ? MIDI_MAX : arp_air;
+
+      send_midi(MIDI_ON,
+                selected_note,
+                vol,  // 90,
+                ENDPOINT_FOOTBASS);
       current_arpeggiator_note = selected_note;
       //printf("footbass start note %d\n", current_arpeggiator_note);
     }
@@ -803,6 +817,14 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'N':
     select_jawharp_voice(5);
     return;
+  case 'L':
+    if (arp_follows_air) {
+      arp_air = air;
+      arp_follows_air = false;
+    } else {
+      air = arp_air;
+      arp_follows_air = true;
+    }
   }
 }
 
