@@ -825,6 +825,12 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       air = arp_air;
       arp_follows_air = true;
     }
+    return;
+  case 'P':
+    // Manual arp air entry
+    arp_follows_air = false;
+    arp_air = val;
+    return;
   }
 }
 
