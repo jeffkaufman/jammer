@@ -1075,15 +1075,17 @@ void jml_tick() {
   trigger_subbeats();
   //trigger_scheduled_notes();
 
-  if (false) {
-    if (++tick_n % 450 == 0) {
-      handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+  if (++tick_n % 450 == 0) {
+#ifdef FAKE_FEET
+    handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+#endif
 
-      if (++subtick_n % 2 == 0) {
-        root_note = to_root(root_note + 1);
-        update_bass();
-      }
+#ifdef FAKE_CHANGE_PITCH
+    if (++subtick_n % 2 == 0) {
+      root_note = to_root(root_note + 1);
+      update_bass();
     }
+#endif
   }
 }
 
