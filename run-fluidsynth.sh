@@ -1,6 +1,11 @@
 #!/bin/bash
 
-CARD_LINE=$(aplay -l | grep "USB Audio Device" | tail -n 1)
+if [[ "$(cat /home/pi/pitch-detect/device-index)" -eq "0" ]]; then
+    CARD_LINE=$(aplay -l | grep "USB Audio Device" | tail -n 1)
+else
+    CARD_LINE=$(aplay -l | grep "USB Audio Device" | tail -n 2 | head -n 1)
+fi
+
 if [[ "$CARD_LINE" =~ \
       ^card[[:space:]]([0-9]*):.*device[[:space:]]([0-9]*):.*$ ]]; then
     CARD=${BASH_REMATCH[1]}
