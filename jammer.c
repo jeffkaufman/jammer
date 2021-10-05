@@ -305,10 +305,13 @@ void select_arp_voice(int voice_index) {
   }
 
   int voice = arp_voices[voice_index];
+  send_midi(MIDI_CC, CC_07, 0, ENDPOINT_ORGAN_LOW);
   choose_voice(ENDPOINT_ORGAN_LOW, 0, voice);
   int volume = 0;
   switch(voice) {
   case 38:
+    volume = 82;
+    break;
   case 39:
     volume = 96;
     break;
@@ -318,7 +321,7 @@ void select_arp_voice(int voice_index) {
     volume = 112;
     break;
   case 84:
-    volume = 78;
+    volume = 64;
     break;
   }
 

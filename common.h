@@ -37,8 +37,8 @@ void select_jawharp_voice(int voice_index);
 
 #define N_ARP_VOICES 6
 static int arp_voices[N_ARP_VOICES] = {
-   38,  // Synth Bass 1
    39,  // Synth Bass 2
+   38,  // Synth Bass 1
    84,  // Lead 3 (calliope)
    35,  // Electric Bass (finger)
    26,  // Acoustic Guitar (nylon)
