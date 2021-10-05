@@ -221,7 +221,7 @@ void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int
 //  organ_flex_min follows air, organ_flex_breath follows breath.
 int organ_flex_base = 0;
 int organ_flex_breath = 0;
-int last_organ_flex_val = 0;
+int last_organ_flex_val = 1;
 int organ_flex_val() {
   return (organ_flex_base * 0.5) + (organ_flex_breath * 0.5);
 }
