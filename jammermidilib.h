@@ -141,7 +141,7 @@ void voices_reset() {
   current_arpeggiator_note = -1;
 
   arp_follows_air = false;
-  arp_air = 90;
+  arp_air = 80;
 
   root_note = 26;  // D @ 37Hz
 
