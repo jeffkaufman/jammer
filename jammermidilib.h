@@ -930,7 +930,7 @@ const char* note_str(int note) {
 }
 
 void handle_axis_49(int mode, int note_in, int val) {
-
+  handle_piano(mode, note_in, val);
 }
 
 void calculate_breath_speeds() {

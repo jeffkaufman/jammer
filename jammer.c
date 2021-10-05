@@ -277,16 +277,6 @@ void handle_event(snd_seq_event_t* event) {
   if (event->source.client == keyboard_client) {
     handle_piano(action, note_in, val);
   } else if (event->source.client == axis49_client) {
-    if (action == MIDI_ON) {
-      if (note_in % 2 == 0) {
-        tmp_jawharp_voice++;
-      } else {
-        tmp_jawharp_voice--;
-      }
-      printf("JTK jawharp to %d\n", tmp_jawharp_voice);
-      choose_voice(ENDPOINT_JAWHARP, 0, tmp_jawharp_voice);
-    }
-
     handle_axis_49(action, note_in, val);
   } else if (event->source.client == feet_client) {
     handle_feet(action, note_in, val);
