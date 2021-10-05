@@ -248,7 +248,7 @@ void tick() {
 }
 
 int tmp_jawharp_voice = 1;
-
+int flex_voice = 1;
 void handle_event(snd_seq_event_t* event) {
   if (event->source.client == breath_controller_client) {
     handle_cc(event->data.control.param, event->data.control.value);
@@ -277,7 +277,17 @@ void handle_event(snd_seq_event_t* event) {
   if (event->source.client == keyboard_client) {
     handle_piano(action, note_in, val);
   } else if (event->source.client == axis49_client) {
-    handle_axis_49(action, note_in, val);
+    if (note_in == 1 && action == MIDI_ON) {
+      flex_voice++;
+      choose_voice(ENDPOINT_ORGAN_FLEX, 0, flex_voice);
+      printf("Flex voice: %d\n", flex_voice);
+    } else if (note_in == 2 && action == MIDI_ON) {
+      flex_voice--;
+      choose_voice(ENDPOINT_ORGAN_FLEX, 0, flex_voice);
+      printf("Flex voice: %d\n", flex_voice);
+    } else {
+      handle_axis_49(action, note_in, val);
+    }
   } else if (event->source.client == feet_client) {
     handle_feet(action, note_in, val);
   } else if (event->source.client == keypad_client) {
@@ -359,6 +369,37 @@ void setup_voices() {
   choose_voice(ENDPOINT_JAWHARP, 0, 4);  // rhodes ep
   choose_voice(ENDPOINT_HAMMOND, 0, 17);
 
+  /*
+flex candidates
+
+4
+5
+20
+22
+39
+51
+61
+62
+71
+75
+76
+80*
+81*
+82*
+84*
+85*
+86
+87
+88
+90
+91
+109
+   */
+
+
+
+
+
   choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);  // saw wave or 38 or 87
   choose_voice(ENDPOINT_SINE_PAD, 0, 89);
   choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18); // needs better voice
@@ -428,6 +469,7 @@ int main(int argc, char** argv) {
         }
       } while (snd_seq_event_input_pending(seq, 0) > 0);
     }
+
     tick();
   }
 }
