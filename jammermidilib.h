@@ -137,7 +137,7 @@ void voices_reset() {
   arp_doubled = false;
   drum_breath_on = false;
   select_arp_voice(0);
-  select_jawharp_voice(0);
+  select_jawharp_voice(5);
   current_arpeggiator_note = -1;
 
   arp_follows_air = false;
