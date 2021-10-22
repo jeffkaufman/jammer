@@ -369,35 +369,22 @@ void setup_voices() {
   choose_voice(ENDPOINT_JAWHARP, 0, 4);  // rhodes ep
   choose_voice(ENDPOINT_HAMMOND, 0, 17);
 
-  /*
-flex candidates
-
-4
-5
-20
-22
-39
-51
-61
-62
-71
-75
-76
-80*
-81*
-82*
-84*
-85*
-86
-87
-88
-90
-91
-109
-   */
+  // consider adding 82 or 87
 
 
-  choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);  // saw wave or 38 or 87
+  // accepted flex:
+  //   81 / 36   saws
+  //   80 / 48   breathy
+  //   84 / 48   ok
+  //   85 / 56   breathy
+  //   39 / 52   epiano
+  //   75 / 48   breathy
+  // maybe flex:
+  //  109 / 46   shrill
+  //   20 / 56   reedy
+  //
+
+  choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);
   send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
 
   choose_voice(ENDPOINT_SINE_PAD, 0, 89);
