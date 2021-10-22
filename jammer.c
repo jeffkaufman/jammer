@@ -397,21 +397,20 @@ flex candidates
    */
 
 
-
-
-
   choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);  // saw wave or 38 or 87
-  choose_voice(ENDPOINT_SINE_PAD, 0, 89);
-  choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18); // needs better voice
-  choose_voice(ENDPOINT_RHODES, 0, 4);
-  choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
-
-  // Turn some volumes down.
   send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
+
+  choose_voice(ENDPOINT_SINE_PAD, 0, 89);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SINE_PAD);
-  send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
+
+  choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18); // needs better voice
   send_midi(MIDI_CC, CC_07, 72, ENDPOINT_OVERDRIVEN_RHODES);
+
+  choose_voice(ENDPOINT_RHODES, 0, 4);
   send_midi(MIDI_CC, CC_07, 96, ENDPOINT_RHODES);
+
+  choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
+  send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
 
   select_arp_voice(0);
   select_jawharp_voice(0);
