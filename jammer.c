@@ -359,6 +359,46 @@ void select_jawharp_voice(int voice_index) {
   send_midi(MIDI_CC, CC_07, volume, ENDPOINT_JAWHARP);
 }
 
+void select_flex_voice(int voice_index) {
+  // maybe flex:
+  //  109 / 46   shrill
+  //   20 / 56   reedy
+  //
+
+  if (voice_index < 0 || voice_index >= N_FLEX_VOICES) {
+    printf("bad voice %d\n", voice_index);
+    return;
+  }
+
+  int voice = flex_voices[voice_index];
+  send_midi(MIDI_CC, CC_07, 0, ENDPOINT_ORGAN_FLEX);
+  choose_voice(ENDPOINT_ORGAN_FLEX, 0, voice);
+  int volume = 0;
+  switch(voice) {
+  case 85:
+    volume = 56;
+    break;
+  case 75:
+    volume = 58;
+    break;
+  case 80:
+    volume = 38;
+    break;
+  case 39:
+    volume = 52;
+    break;
+  case 84:
+    volume = 48;
+    break;
+  case 81:
+    volume = 36;
+    break;
+  }
+
+  send_midi(MIDI_CC, CC_07, volume, ENDPOINT_ORGAN_FLEX);
+}
+
+
 void setup_voices() {
   // Everything defaults to max volume
   for (int i = 0 ; i < N_ENDPOINTS; i++) {
@@ -370,22 +410,6 @@ void setup_voices() {
   choose_voice(ENDPOINT_HAMMOND, 0, 17);
 
   // consider adding 82 or 87
-
-
-  // accepted flex:
-  //   81 / 36   saws
-  //   80 / 48   breathy
-  //   84 / 48   ok
-  //   85 / 56   breathy
-  //   39 / 52   epiano
-  //   75 / 48   breathy
-  // maybe flex:
-  //  109 / 46   shrill
-  //   20 / 56   reedy
-  //
-
-  choose_voice(ENDPOINT_ORGAN_FLEX, 0, 81);
-  send_midi(MIDI_CC, CC_07, 36, ENDPOINT_ORGAN_FLEX);
 
   choose_voice(ENDPOINT_SINE_PAD, 0, 89);
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SINE_PAD);
@@ -401,6 +425,7 @@ void setup_voices() {
 
   select_arp_voice(0);
   select_jawharp_voice(0);
+  select_flex_voice(0);
 }
 
 int main(int argc, char** argv) {

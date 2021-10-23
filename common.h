@@ -8,6 +8,7 @@ void die(char *errmsg) {
 
 void select_arp_voice(int voice_index);
 void select_jawharp_voice(int voice_index);
+void select_flex_voice(int voice_index);
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
@@ -55,5 +56,16 @@ static int jawharp_voices[N_JAWHARP_VOICES] = {
    67,
    81,  // Lead 2 (sawtooth)
 };
+
+#define N_FLEX_VOICES 6
+static int flex_voices[N_FLEX_VOICES] = {
+   85,  // Lead 6 (voice)
+   75,  // Pan Flute
+   80,  // Lead 1 (square)
+   39,  // Synth Bass 2
+   84,  // Lead 3 (calliope)
+   81,  // Lead 2 (sawtooth)
+};
+
 
 #endif

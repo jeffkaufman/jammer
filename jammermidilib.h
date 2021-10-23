@@ -42,7 +42,17 @@
     (byte & 0x02 ? '1' : '0'),                  \
     (byte & 0x01 ? '1' : '0')
 
-
+// kbd.py sends these as 'Z' (90) + N
+#define F1 (91)
+#define F2 (92)
+#define F3 (93)
+#define F4 (94)
+#define F5 (95)
+#define F6 (96)
+#define F7 (97)
+#define F8 (98)
+#define F9 (99)
+#define F10 (100)
 
 int normalize(int val) {
   if (val > MIDI_MAX) {
@@ -138,6 +148,7 @@ void voices_reset() {
   drum_breath_on = false;
   select_arp_voice(0);
   select_jawharp_voice(5);
+  select_flex_voice(5);
   current_arpeggiator_note = -1;
 
   arp_follows_air = false;
@@ -816,6 +827,24 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'N':
     select_jawharp_voice(5);
+    return;
+  case F1:
+    select_flex_voice(0);
+    return;
+  case F2:
+    select_flex_voice(1);
+    return;
+  case F3:
+    select_flex_voice(2);
+    return;
+  case F4:
+    select_flex_voice(3);
+    return;
+  case F5:
+    select_flex_voice(4);
+    return;
+  case F6:
+    select_flex_voice(5);
     return;
   case 'L':
     if (arp_follows_air) {
