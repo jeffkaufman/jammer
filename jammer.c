@@ -385,7 +385,7 @@ void select_flex_voice(int voice_index) {
     volume = 38;
     break;
   case 39:
-    volume = 52;
+    volume = 68;
     break;
   case 84:
     volume = 48;
