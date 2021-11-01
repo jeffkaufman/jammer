@@ -527,6 +527,10 @@ void update_bass() {
     trigger_breath_chord(note_out);
   }
 
+  if (arpeggiator_on && now() - last_downbeat_ns > NS_PER_SEC) {
+    arpeggiate(0);
+  }
+
   if (breath < 3) return;
 
   if (jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
