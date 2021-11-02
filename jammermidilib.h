@@ -877,8 +877,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  update_bass();
-
   //printf("foot: %d %d\n", note_in, val);
   count_drum_hit(note_in);
 }
