@@ -89,6 +89,7 @@ bool piano_notes[MIDI_MAX];
 bool breath_chord_notes[MIDI_MAX];
 bool arpeggiator_on;
 bool arp_downbeat;
+bool arp_upbeat;
 bool arp_upbeat_high;
 bool arp_doubled;
 bool drum_breath_on;
@@ -143,6 +144,7 @@ void voices_reset() {
   }
   arpeggiator_on = false;
   arp_downbeat = true;
+  arp_upbeat = true;
   arp_upbeat_high = false;
   arp_doubled = false;
   drum_breath_on = false;
@@ -329,14 +331,14 @@ void arpeggiate_bass(int subbeat) {
   if (downbeat(subbeat)) {
     send_note = arp_downbeat;
   } else if (upbeat(subbeat)) {
-    send_note = true;
+    send_note = arp_upbeat;
     if (arp_upbeat_high) {
       selected_note += 12;
     }
   } else if (preup(subbeat) && !jig_time) {
     send_note = arp_downbeat && arp_doubled;
   } else if (predown(subbeat) || preup(subbeat)) {
-    send_note = arp_doubled;
+    send_note = arp_upbeat && arp_doubled;
     if (arp_upbeat_high) {
       selected_note += 12;
     }
@@ -783,6 +785,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'Y':
     arp_downbeat = !arp_downbeat;
+    return;
+  case 'K':
+    arp_upbeat = !arp_upbeat;
     return;
   case 'U':
     arp_upbeat_high = !arp_upbeat_high;
