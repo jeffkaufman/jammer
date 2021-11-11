@@ -88,13 +88,13 @@ bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
 bool breath_chord_notes[MIDI_MAX];
-bool arpeggiator_on;
-bool arp_downbeat;
-bool arp_upbeat;
-bool arp_upbeat_high;
-bool arp_doubled;
+bool fb_on;
+bool fb_downbeat;
+bool fb_upbeat;
+bool fb_upbeat_high;
+bool fb_doubled;
 bool drum_breath_on;
-int current_arpeggiator_note;
+int current_fb_note;
 int root_note;
 bool air_locked;
 double locked_air;
@@ -113,8 +113,8 @@ uint64_t last_downbeat_ns;
 bool breath_chord_on;
 bool breath_chord_playing;
 bool jig_time;
-double arp_air;
-bool arp_follows_air;
+double fb_air;
+bool fb_follows_air;
 
 
 void print_kick_times(uint64_t current_time) {
@@ -144,19 +144,19 @@ void voices_reset() {
     piano_notes[i] = false;
     breath_chord_notes[i] = false;
   }
-  arpeggiator_on = false;
-  arp_downbeat = true;
-  arp_upbeat = true;
-  arp_upbeat_high = false;
-  arp_doubled = false;
+  fb_on = false;
+  fb_downbeat = true;
+  fb_upbeat = true;
+  fb_upbeat_high = false;
+  fb_doubled = false;
   drum_breath_on = false;
-  select_arp_voice(0);
+  select_fb_voice(0);
   select_jawharp_voice(5);
   select_flex_voice(5);
-  current_arpeggiator_note = -1;
+  current_fb_note = -1;
 
-  arp_follows_air = false;
-  arp_air = 40;
+  fb_follows_air = false;
+  fb_air = 40;
 
   root_note = 26;  // D @ 37Hz
 
@@ -328,48 +328,48 @@ bool predown(int subbeat) {
 }
 
 void arpeggiate_bass(int subbeat) {
-  if (!arpeggiator_on) return;
+  if (!fb_on) return;
 
   int note_out = active_note();
   int selected_note = note_out;
   bool send_note = false;
 
   if (downbeat(subbeat)) {
-    send_note = arp_downbeat;
+    send_note = fb_downbeat;
   } else if (upbeat(subbeat)) {
-    send_note = arp_upbeat;
-    if (arp_upbeat_high) {
+    send_note = fb_upbeat;
+    if (fb_upbeat_high) {
       selected_note += 12;
     }
   } else if (preup(subbeat) && !jig_time) {
-    send_note = arp_downbeat && arp_doubled;
+    send_note = fb_downbeat && fb_doubled;
   } else if (predown(subbeat) || preup(subbeat)) {
-    send_note = arp_upbeat && arp_doubled;
-    if (arp_upbeat_high) {
+    send_note = fb_upbeat && fb_doubled;
+    if (fb_upbeat_high) {
       selected_note += 12;
     }
   }
 
   bool end_note = send_note;
-  if (end_note && current_arpeggiator_note != -1) {
-    //printf("footbass end note %d\n", current_arpeggiator_note);
-    send_midi(MIDI_OFF, current_arpeggiator_note, 0, ENDPOINT_FOOTBASS);
-    current_arpeggiator_note = -1;
+  if (end_note && current_fb_note != -1) {
+    //printf("footbass end note %d\n", current_fb_note);
+    send_midi(MIDI_OFF, current_fb_note, 0, ENDPOINT_FOOTBASS);
+    current_fb_note = -1;
   }
 
   if (send_note) {
     if (selected_note != -1) {
-      if (arp_follows_air) {
-        arp_air = air;
+      if (fb_follows_air) {
+        fb_air = air;
       }
-      int vol = arp_air > MIDI_MAX ? MIDI_MAX : arp_air;
+      int vol = fb_air > MIDI_MAX ? MIDI_MAX : fb_air;
 
       send_midi(MIDI_ON,
                 selected_note,
                 vol,  // 90,
                 ENDPOINT_FOOTBASS);
-      current_arpeggiator_note = selected_note;
-      //printf("footbass start note %d\n", current_arpeggiator_note);
+      current_fb_note = selected_note;
+      //printf("footbass start note %d\n", current_fb_note);
     }
   }
 }
@@ -535,7 +535,7 @@ void update_bass() {
     trigger_breath_chord(note_out);
   }
 
-  if (arpeggiator_on && now() - last_downbeat_ns > NS_PER_SEC) {
+  if (fb_on && now() - last_downbeat_ns > NS_PER_SEC) {
     arpeggiate(0);
   }
 
@@ -783,44 +783,44 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'T':
     // toggle arp
-    arpeggiator_on = !arpeggiator_on;
+    fb_on = !fb_on;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
-    if (arpeggiator_on) {
+    if (fb_on) {
       send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
     }
     return;
   case 'Y':
-    arp_downbeat = !arp_downbeat;
+    fb_downbeat = !fb_downbeat;
     return;
   case 'K':
-    arp_upbeat = !arp_upbeat;
+    fb_upbeat = !fb_upbeat;
     return;
   case 'U':
-    arp_upbeat_high = !arp_upbeat_high;
+    fb_upbeat_high = !fb_upbeat_high;
     return;
   case 'I':
-    arp_doubled = !arp_doubled;
+    fb_doubled = !fb_doubled;
     return;
   case 'O':
     jig_time = !jig_time;
     return;
   case 'A':
-    select_arp_voice(0);
+    select_fb_voice(0);
     return;
   case 'S':
-    select_arp_voice(1);
+    select_fb_voice(1);
     return;
   case 'D':
-    select_arp_voice(2);
+    select_fb_voice(2);
     return;
   case 'F':
-    select_arp_voice(3);
+    select_fb_voice(3);
     return;
   case 'G':
-    select_arp_voice(4);
+    select_fb_voice(4);
     return;
   case 'H':
-    select_arp_voice(5);
+    select_fb_voice(5);
     return;
   case 'J':
     organ_flex_min = !organ_flex_min;
@@ -862,18 +862,18 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     select_flex_voice(5);
     return;
   case 'L':
-    if (arp_follows_air) {
-      arp_air = air;
-      arp_follows_air = false;
+    if (fb_follows_air) {
+      fb_air = air;
+      fb_follows_air = false;
     } else {
-      air = arp_air;
-      arp_follows_air = true;
+      air = fb_air;
+      fb_follows_air = true;
     }
     return;
   case 'P':
     // Manual arp air entry
-    arp_follows_air = false;
-    arp_air = val;
+    fb_follows_air = false;
+    fb_air = val;
     return;
   }
 }
@@ -1036,7 +1036,7 @@ void jml_setup() {
 void update_air() {
   // see calculate_breath_speeds()
   air *= leakage;
-  air += (breath * breath_gain * (arp_follows_air ? 0.25 : 1));
+  air += (breath * breath_gain * (fb_follows_air ? 0.25 : 1));
   if (air > max_air) {
     air = max_air;
   }
@@ -1060,7 +1060,7 @@ void forward_air() {
   }
 
   if (val != last_air_val) {
-    if (!arpeggiator_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
+    if (!fb_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
     send_midi(MIDI_CC, CC_07, breath_chord_on ? MIDI_MAX : val, ENDPOINT_HAMMOND);

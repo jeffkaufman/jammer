@@ -6,7 +6,7 @@ void die(char *errmsg) {
   exit(-1);
 }
 
-void select_arp_voice(int voice_index);
+void select_fb_voice(int voice_index);
 void select_jawharp_voice(int voice_index);
 void select_flex_voice(int voice_index);
 
@@ -36,8 +36,8 @@ void select_flex_voice(int voice_index);
 #define CC_07 0x07
 #define CC_11 0x0b
 
-#define N_ARP_VOICES 6
-static int arp_voices[N_ARP_VOICES] = {
+#define N_FB_VOICES 6
+static int fb_voices[N_FB_VOICES] = {
    39,  // Synth Bass 2
    38,  // Synth Bass 1
    84,  // Lead 3 (calliope)

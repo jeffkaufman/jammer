@@ -298,13 +298,13 @@ void handle_event(snd_seq_event_t* event) {
 }
 
 
-void select_arp_voice(int voice_index) {
-  if (voice_index < 0 || voice_index >= N_ARP_VOICES) {
+void select_fb_voice(int voice_index) {
+  if (voice_index < 0 || voice_index >= N_FB_VOICES) {
     printf("bad voice %d\n", voice_index);
     return;
   }
 
-  int voice = arp_voices[voice_index];
+  int voice = fb_voices[voice_index];
   send_midi(MIDI_CC, CC_07, 0, ENDPOINT_ORGAN_LOW);
   choose_voice(ENDPOINT_ORGAN_LOW, 0, voice);
   int volume = 0;
@@ -423,7 +423,7 @@ void setup_voices() {
   choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
   send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
 
-  select_arp_voice(0);
+  select_fb_voice(0);
   select_jawharp_voice(0);
   select_flex_voice(0);
 }
