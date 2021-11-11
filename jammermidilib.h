@@ -1036,7 +1036,7 @@ void jml_setup() {
 void update_air() {
   // see calculate_breath_speeds()
   air *= leakage;
-  air += (breath * breath_gain);
+  air += (breath * breath_gain * (arp_follows_air ? 0.25 : 1));
   if (air > max_air) {
     air = max_air;
   }
