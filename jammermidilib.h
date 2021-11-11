@@ -77,6 +77,7 @@ bool jawharp_on;
 bool hammond_on;
 bool organ_low_on;
 bool organ_flex_on;
+bool organ_flex_min;
 bool sine_pad_on;
 bool sweep_pad_on;
 bool overdriven_rhodes_on;
@@ -130,6 +131,7 @@ void voices_reset() {
   hammond_on = false;
   organ_low_on = false;
   organ_flex_on = false;
+  organ_flex_min = true;
   sine_pad_on = false;
   sweep_pad_on = false;
   overdriven_rhodes_on = false;
@@ -236,7 +238,11 @@ int organ_flex_base = 0;
 int organ_flex_breath = 0;
 int last_organ_flex_val = 1;
 int organ_flex_val() {
-  return (organ_flex_base * 0.5) + (organ_flex_breath * 0.5);
+  if (organ_flex_min) {
+    return (organ_flex_base * 0.5) + (organ_flex_breath * 0.5);
+  } else {
+    return organ_flex_breath;
+  }
 }
 
 // Only some endpoints use this, and some only use it some of the time:
@@ -817,7 +823,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     select_arp_voice(5);
     return;
   case 'J':
-    select_arp_voice(6);
+    organ_flex_min = !organ_flex_min;
     return;
   case 'Z':
     select_jawharp_voice(0);
