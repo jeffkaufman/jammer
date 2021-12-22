@@ -371,7 +371,7 @@ void arpeggiate_bass(int subbeat) {
     }
   }
 
-  bool end_note = send_note;
+  bool end_note = send_note || fb_short;
   if (end_note && current_fb_note != -1) {
     //printf("footbass end note %d\n", current_fb_note);
     send_midi(MIDI_OFF, current_fb_note, 0, ENDPOINT_FOOTBASS);
