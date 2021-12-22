@@ -42,17 +42,17 @@
     (byte & 0x02 ? '1' : '0'),                  \
     (byte & 0x01 ? '1' : '0')
 
-// kbd.py sends these as 'Z' (90) + N
-#define F1 (91)
-#define F2 (92)
-#define F3 (93)
-#define F4 (94)
-#define F5 (95)
-#define F6 (96)
-#define F7 (97)
-#define F8 (98)
-#define F9 (99)
-#define F10 (100)
+// kbd.py sends these as 'a' (97) + N
+#define F1 (98)
+#define F2 (99)
+#define F3 (100)
+#define F4 (101)
+#define F5 (102)
+#define F6 (103)
+#define F7 (104)
+#define F8 (105)
+#define F9 (106)
+#define F10 (107)
 
 int normalize(int val) {
   if (val > MIDI_MAX) {
@@ -816,9 +816,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'H':
     select_fb_voice(5);
     return;
-  case 'J':
-    // AVAILABLE
-    return;
   case 'Z':
     select_jawharp_voice(0);
     return;
@@ -868,6 +865,26 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     // Manual arp air entry
     fb_follows_air = false;
     fb_air = val;
+    return;
+  case 'J':
+    return;
+  case '[':
+    return;
+  case ']':
+    return;
+  case ';':
+    return;
+  case '\'':
+    return;
+  case ',':
+    return;
+  case '.':
+    return;
+  case '/':
+    return;
+  case '\\':
+    return;
+  case '`':
     return;
   }
 }
