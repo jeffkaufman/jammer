@@ -375,6 +375,10 @@ void arpeggiate_bass(int subbeat) {
   if (end_note && current_fb_note != -1) {
     //printf("footbass end note %d\n", current_fb_note);
     send_midi(MIDI_OFF, current_fb_note, 0, ENDPOINT_FOOTBASS);
+    if (fb_chord) {
+      send_midi(MIDI_OFF, current_fb_note + 7, 0, ENDPOINT_FOOTBASS);
+    }
+
     current_fb_note = -1;
   }
 
@@ -389,6 +393,14 @@ void arpeggiate_bass(int subbeat) {
                 selected_note,
                 vol,  // 90,
                 ENDPOINT_FOOTBASS);
+
+      if (fb_chord) {
+        send_midi(MIDI_ON,
+                  selected_note + 7,
+                  vol,  // 90,
+                  ENDPOINT_FOOTBASS);
+      }
+
       current_fb_note = selected_note;
       //printf("footbass start note %d\n", current_fb_note);
     }
@@ -904,6 +916,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case ';':
     fb_chord = !fb_chord;
+    endpoint_notes_off(ENDPOINT_FOOTBASS);
     return;
   case '\'':
     return;
