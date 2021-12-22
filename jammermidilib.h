@@ -337,6 +337,10 @@ void arpeggiate_bass(int subbeat) {
   int selected_note = note_out;
   bool send_note = false;
 
+  if (fb_octave_up) {
+    selected_note += 12;
+  }
+
   if (downbeat(subbeat)) {
     send_note = fb_downbeat;
   } else if (upbeat(subbeat)) {
