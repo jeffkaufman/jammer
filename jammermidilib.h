@@ -114,6 +114,10 @@ bool breath_chord_playing;
 bool jig_time;
 double fb_air;
 bool fb_follows_air;
+bool fb_short;
+bool fb_octave_up;
+bool fb_pre_unique;
+bool fb_chord;
 
 
 void print_kick_times(uint64_t current_time) {
@@ -155,6 +159,11 @@ void voices_reset() {
 
   fb_follows_air = false;
   fb_air = 40;
+
+  fb_short = false;
+  fb_octave_up = false;
+  fb_pre_unique = false;
+  fb_chord = false;
 
   root_note = 26;  // D @ 37Hz
 
@@ -332,14 +341,28 @@ void arpeggiate_bass(int subbeat) {
     send_note = fb_downbeat;
   } else if (upbeat(subbeat)) {
     send_note = fb_upbeat;
-    if (fb_upbeat_high) {
+    if (fb_upbeat_high && fb_pre_unique) {
+      selected_note += 24;
+    } else if (fb_upbeat_high || fb_pre_unique) {
       selected_note += 12;
     }
   } else if (preup(subbeat) && !jig_time) {
     send_note = fb_downbeat && fb_doubled;
+    if (fb_pre_unique) {
+      if (fb_upbeat_high) {
+        selected_note += 12;
+      } else {
+        selected_note += 7;
+      }
+    }
   } else if (predown(subbeat) || preup(subbeat)) {
     send_note = fb_upbeat && fb_doubled;
-    if (fb_upbeat_high) {
+
+    if (fb_upbeat_high && fb_pre_unique) {
+      selected_note += 36;
+    } else if (fb_pre_unique) {
+      selected_note += 12 + 7;
+    } else if (fb_upbeat_high) {
       selected_note += 12;
     }
   }
@@ -867,12 +890,16 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     fb_air = val;
     return;
   case 'J':
+    fb_pre_unique = !fb_pre_unique;
     return;
   case '[':
+    fb_octave_up = !fb_octave_up;
     return;
   case ']':
+    fb_short = !fb_short;
     return;
   case ';':
+    fb_chord = !fb_chord;
     return;
   case '\'':
     return;
