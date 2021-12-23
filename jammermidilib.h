@@ -94,6 +94,7 @@ bool fb_upbeat_high;
 bool fb_doubled;
 bool drum_breath_on;
 int current_fb_note;
+int current_fb_fifth;
 int current_fb_len;
 int root_note;
 int fifth_note;
@@ -169,6 +170,7 @@ void voices_reset() {
   select_jawharp_voice(5);
   select_flex_voice(5);
   current_fb_note = -1;
+  current_fb_fifth = -1;
   current_fb_len = -1;
 
   fb_follows_air = false;
@@ -410,10 +412,11 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
     //printf("footbass end note %d\n", current_fb_note);
     send_midi(MIDI_OFF, current_fb_note, 0, ENDPOINT_FOOTBASS);
     if (fb_chord) {
-      send_midi(MIDI_OFF, to_fifth(current_fb_note), 0, ENDPOINT_FOOTBASS);
+      send_midi(MIDI_OFF, current_fb_fifth, 0, ENDPOINT_FOOTBASS);
     }
 
     current_fb_note = -1;
+    current_fb_fifth = -1;
     current_fb_len = -1;
   }
 
@@ -424,20 +427,22 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
       }
       int vol = fb_air > MIDI_MAX ? MIDI_MAX : fb_air;
 
+      current_fb_note = selected_note;
+      current_fb_fifth = to_fifth(selected_note);
+      current_fb_len = 0;
+
       send_midi(MIDI_ON,
-                selected_note,
+                current_fb_note,
                 vol,  // 90,
                 ENDPOINT_FOOTBASS);
 
       if (fb_chord) {
         send_midi(MIDI_ON,
-                  to_fifth(selected_note),
+                  current_fb_fifth,
                   vol,  // 90,
                   ENDPOINT_FOOTBASS);
       }
 
-      current_fb_note = selected_note;
-      current_fb_len = 0;
       //printf("footbass start note %d\n", current_fb_note);
     }
   }
