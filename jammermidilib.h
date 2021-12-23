@@ -94,6 +94,7 @@ bool fb_upbeat_high;
 bool fb_doubled;
 bool drum_breath_on;
 int current_fb_note;
+uint64_t current_fb_start;
 int root_note;
 bool air_locked;
 double locked_air;
@@ -115,6 +116,7 @@ bool jig_time;
 double fb_air;
 bool fb_follows_air;
 bool fb_short;
+bool fb_shorter;
 bool fb_octave_up;
 bool fb_pre_unique;
 bool fb_chord;
@@ -156,11 +158,13 @@ void voices_reset() {
   select_jawharp_voice(5);
   select_flex_voice(5);
   current_fb_note = -1;
+  current_fb_start = 0;
 
   fb_follows_air = false;
   fb_air = 40;
 
   fb_short = false;
+  fb_shorter = false;
   fb_octave_up = false;
   fb_pre_unique = false;
   fb_chord = false;
@@ -330,7 +334,7 @@ bool predown(int subbeat) {
   return subbeat == (3*72/4-1);
 }
 
-void arpeggiate_bass(int subbeat) {
+void arpeggiate_bass(int subbeat, uint64_t current_time) {
   if (!fb_on) return;
 
   int note_out = active_note();
@@ -371,7 +375,23 @@ void arpeggiate_bass(int subbeat) {
     }
   }
 
-  bool end_note = send_note || fb_short;
+  bool end_note = send_note;
+
+  if (current_fb_start > 0 && (fb_short || fb_shorter)) {
+    uint64_t current_fb_len = current_time - current_fb_start;
+    uint64_t threshold;
+    if (fb_short && fb_shorter) {
+      threshold = 8;
+    } else if (fb_shorter) {
+      threshold = 24;
+    } else if (fb_short) {
+      threshold = 64;
+    }
+    if (current_fb_len >= threshold) {
+      end_note = true;
+    }
+  }
+
   if (end_note && current_fb_note != -1) {
     //printf("footbass end note %d\n", current_fb_note);
     send_midi(MIDI_OFF, current_fb_note, 0, ENDPOINT_FOOTBASS);
@@ -380,6 +400,7 @@ void arpeggiate_bass(int subbeat) {
     }
 
     current_fb_note = -1;
+    current_fb_start = 0;
   }
 
   if (send_note) {
@@ -402,13 +423,14 @@ void arpeggiate_bass(int subbeat) {
       }
 
       current_fb_note = selected_note;
+      current_fb_start = current_time;
       //printf("footbass start note %d\n", current_fb_note);
     }
   }
 }
 
-void arpeggiate(int subbeat) {
-  arpeggiate_bass(subbeat);
+void arpeggiate(int subbeat, uint64_t current_time) {
+  arpeggiate_bass(subbeat, current_time);
 }
 
 uint64_t delta(uint64_t a, uint64_t b) {
@@ -507,7 +529,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
   if (acceptable_error) {
     current_beat_ns = whole_beat;
 
-    arpeggiate(0);
+    arpeggiate(0, current_time);
     last_downbeat_ns = current_time;
 
     next_ns[0] = current_time;
@@ -568,8 +590,9 @@ void update_bass() {
     trigger_breath_chord(note_out);
   }
 
-  if (fb_on && now() - last_downbeat_ns > NS_PER_SEC) {
-    arpeggiate(0);
+  uint64_t current_time = now();
+  if (fb_on && current_time - last_downbeat_ns > NS_PER_SEC) {
+    arpeggiate(0, current_time);
   }
 
   if (breath < 3) return;
@@ -914,19 +937,20 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case ']':
     fb_short = !fb_short;
     return;
-  case ';':
+  case '\\':
     fb_chord = !fb_chord;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
     return;
   case '\'':
     return;
   case ',':
+    fb_shorter = !fb_shorter;
     return;
   case '.':
     return;
   case '/':
     return;
-  case '\\':
+  case ';':
     return;
   case '`':
     return;
@@ -1157,7 +1181,7 @@ void trigger_subbeats() {
 
   for (int i = 1 /* 0 is triggered by kick directly */; i < N_SUBBEATS; i++) {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
-      arpeggiate(i);
+      arpeggiate(i, current_time);
       next_ns[i] = 0;
     }
   }
