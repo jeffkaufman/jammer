@@ -957,9 +957,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     endpoint_notes_off(ENDPOINT_FOOTBASS);
     return;
   case '\'':
+    fb_shorter = !fb_shorter;
     return;
   case ';':
-    fb_shorter = !fb_shorter;
     return;
   case '.':
     return;
