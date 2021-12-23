@@ -94,7 +94,7 @@ bool fb_upbeat_high;
 bool fb_doubled;
 bool drum_breath_on;
 int current_fb_note;
-uint64_t current_fb_start;
+int current_fb_len;
 int root_note;
 int fifth_note;
 bool air_locked;
@@ -169,7 +169,7 @@ void voices_reset() {
   select_jawharp_voice(5);
   select_flex_voice(5);
   current_fb_note = -1;
-  current_fb_start = 0;
+  current_fb_len = -1;
 
   fb_follows_air = false;
   fb_air = 40;
@@ -348,6 +348,10 @@ bool predown(int subbeat) {
 void arpeggiate_bass(int subbeat, uint64_t current_time) {
   if (!fb_on) return;
 
+  if (current_fb_note != -1) {
+    current_fb_len++;
+  }
+
   int note_out = active_note();
   int selected_note = note_out;
   bool send_note = false;
@@ -388,15 +392,14 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
 
   bool end_note = send_note;
 
-  if (current_fb_start > 0 && (fb_short || fb_shorter)) {
-    uint64_t current_fb_len = current_time - current_fb_start;
-    uint64_t threshold;
+  if (current_fb_len != -1 && (fb_short || fb_shorter)) {
+    int threshold;
     if (fb_short && fb_shorter) {
-      threshold = 8;
+      threshold = 1;
     } else if (fb_shorter) {
-      threshold = 24;
+      threshold = 3;
     } else if (fb_short) {
-      threshold = 64;
+      threshold = 9;
     }
     if (current_fb_len >= threshold) {
       end_note = true;
@@ -411,7 +414,7 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
     }
 
     current_fb_note = -1;
-    current_fb_start = 0;
+    current_fb_len = -1;
   }
 
   if (send_note) {
@@ -434,7 +437,7 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
       }
 
       current_fb_note = selected_note;
-      current_fb_start = current_time;
+      current_fb_len = 0;
       //printf("footbass start note %d\n", current_fb_note);
     }
   }
