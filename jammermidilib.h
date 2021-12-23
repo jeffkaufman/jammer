@@ -399,13 +399,11 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
   bool end_note = send_note;
 
   if (current_fb_len != -1 && (fb_short || fb_shorter)) {
-    int threshold;
+    int threshold = jig_time ? 24 : 18;  // kept if fb_short only
     if (fb_short && fb_shorter) {
-      threshold = 1;
+      threshold /= 3;
     } else if (fb_shorter) {
-      threshold = 3;
-    } else if (fb_short) {
-      threshold = 9;
+      threshold /= 2;
     }
     if (current_fb_len >= threshold) {
       end_note = true;
