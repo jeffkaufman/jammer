@@ -96,6 +96,7 @@ bool drum_breath_on;
 int current_fb_note;
 uint64_t current_fb_start;
 int root_note;
+int fifth_note;
 bool air_locked;
 double locked_air;
 uint64_t kick_times[KICK_TIMES_LENGTH];
@@ -129,6 +130,16 @@ void print_kick_times(uint64_t current_time) {
                                    KICK_TIMES_LENGTH];
     printf("  %llu   %llu\n", kick_time, current_time - kick_time);
   }
+}
+
+int to_root(int note_out) {
+  int offset = 4;
+  return (note_out - offset) % 12 + 24 + offset;
+}
+
+// Given a note relative to root, convert it into a note relative to fifth.
+int to_fifth(int note_out) {
+  return fifth_note + (note_out - root_note);
 }
 
 void voices_reset() {
@@ -169,7 +180,7 @@ void voices_reset() {
   fb_pre_unique = false;
   fb_chord = false;
 
-  root_note = 26;  // D @ 37Hz
+  root_note = to_root(26);  // D @ 37Hz
 
   air_locked = false;
   locked_air = 0;
@@ -396,7 +407,7 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
     //printf("footbass end note %d\n", current_fb_note);
     send_midi(MIDI_OFF, current_fb_note, 0, ENDPOINT_FOOTBASS);
     if (fb_chord) {
-      send_midi(MIDI_OFF, current_fb_note + 7, 0, ENDPOINT_FOOTBASS);
+      send_midi(MIDI_OFF, to_fifth(current_fb_note), 0, ENDPOINT_FOOTBASS);
     }
 
     current_fb_note = -1;
@@ -417,7 +428,7 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
 
       if (fb_chord) {
         send_midi(MIDI_ON,
-                  selected_note + 7,
+                  to_fifth(selected_note),
                   vol,  // 90,
                   ENDPOINT_FOOTBASS);
       }
@@ -734,11 +745,6 @@ void all_notes_off() {
   }
 }
 
-int to_root(int note_out) {
-  int offset = 4;
-  return (note_out - offset) % 12 + 24 + offset;
-}
-
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (note_in > MIDI_MAX) {
     return;
@@ -767,6 +773,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       int new_root = to_root(root_candidate_note_in);
       if (new_root != root_note) {
         root_note = new_root;
+        fifth_note = to_root(new_root + 7);
         update_bass();
       }
     }
