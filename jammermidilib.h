@@ -958,14 +958,14 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case '\'':
     return;
-  case ',':
+  case ';':
     fb_shorter = !fb_shorter;
     return;
   case '.':
     return;
   case '/':
     return;
-  case ';':
+  case ',':
     return;
   case '`':
     return;
