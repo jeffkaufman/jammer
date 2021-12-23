@@ -362,6 +362,10 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
     selected_note += 12;
   }
 
+  if (fb_chord) {
+    selected_note += 12;
+  }
+
   if (downbeat(subbeat)) {
     send_note = fb_downbeat;
   } else if (upbeat(subbeat)) {
