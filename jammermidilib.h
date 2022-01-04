@@ -76,7 +76,6 @@ bool tbd_b_on;
 bool atmospheric_drone;
 bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
-bool breath_chord_notes[MIDI_MAX];
 bool fb_on;
 bool fb_downbeat;
 bool fb_upbeat;
@@ -101,8 +100,6 @@ int hihat_times_index;
 uint64_t next_ns[N_SUBBEATS];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
-bool breath_chord_on;
-bool breath_chord_playing;
 bool jig_time;
 double fb_air;
 bool fb_follows_air;
@@ -147,7 +144,6 @@ void voices_reset() {
   for (int i = 0; i < MIDI_MAX; i++) {
     atmospheric_drone_notes[i] = false;
     piano_notes[i] = false;
-    breath_chord_notes[i] = false;
   }
   fb_on = false;
   fb_downbeat = true;
@@ -202,9 +198,6 @@ void voices_reset() {
 
   current_beat_ns = 0;
   last_downbeat_ns = 0;
-
-  breath_chord_on = false;
-  breath_chord_playing = false;
 
   jig_time = false;
 }
@@ -267,24 +260,10 @@ void atmospheric_drone_off() {
   current_note[ENDPOINT_SINE_PAD] = -1;
 }
 
-void breath_chord_off() {
-  for (int i = 0 ; i < MIDI_MAX; i++) {
-    if (breath_chord_notes[i]) {
-      breath_chord_notes[i] = false;
-      send_midi(MIDI_OFF, i, 0, ENDPOINT_HAMMOND);
-    }
-  }
-}
-
 void atmospheric_drone_note_on(int note) {
   send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SINE_PAD);
   send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SWEEP_PAD);
   atmospheric_drone_notes[note] = true;
-}
-
-void breath_chord_note_on(int note) {
-  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_HAMMOND);
-  breath_chord_notes[note] = true;
 }
 
 bool downbeat(int subbeat) {
@@ -536,19 +515,6 @@ void count_drum_hit(int note_in) {
   }
 }
 
-void trigger_breath_chord(int note_out) {
-  breath_chord_off();
-  current_note[ENDPOINT_HAMMOND] = note_out;
-  // voice each chord with the two highest options
-  int tonic = note_out;
-  while (tonic + 12 <= MAX_HAMMOND_NOTE) tonic += 12;
-  breath_chord_note_on(tonic);
-
-  int fifth = note_out + 7;
-  while (fifth + 12 <= MAX_HAMMOND_NOTE) fifth += 12;
-  breath_chord_note_on(fifth);
-}
-
 void update_bass() {
   int note_out = active_note();
 
@@ -559,10 +525,6 @@ void update_bass() {
     atmospheric_drone_note_on(note_out);
     atmospheric_drone_note_on(note_out + 12);
     atmospheric_drone_note_on(note_out + 12 + 7);
-  }
-
-  if (breath_chord_playing && current_note[ENDPOINT_HAMMOND] != note_out) {
-    trigger_breath_chord(note_out);
   }
 
   uint64_t current_time = now();
@@ -945,18 +907,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
   }
 
   breath = val;
-  send_midi(MIDI_CC, CC_MOD, breath_chord_on ? MIDI_MAX : val, ENDPOINT_HAMMOND);
-
-  if (breath_chord_on) {
-    if (!breath_chord_playing && breath > 80) {
-      breath_chord_playing = true;
-      update_bass();
-    } else if (breath_chord_playing && breath <= 80) {
-      breath_chord_playing = false;
-      breath_chord_off();
-      current_note[ENDPOINT_HAMMOND] = -1;
-    }
-  }
+  send_midi(MIDI_CC, CC_MOD, val, ENDPOINT_HAMMOND);
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
@@ -1109,7 +1060,7 @@ void forward_air() {
     if (!fb_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
-    send_midi(MIDI_CC, CC_07, breath_chord_on ? MIDI_MAX : val, ENDPOINT_HAMMOND);
+    send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
     if (!atmospheric_drone) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
