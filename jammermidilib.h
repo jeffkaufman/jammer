@@ -25,8 +25,6 @@
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS)
 
-#define MAX_SCHEDULED_NOTES 64
-
 #define MAX_HAMMOND_NOTE 96  // the hammond can't play higher than this note
 
 #define FOOTBASS_VOLUME 120
@@ -63,14 +61,6 @@ int normalize(int val) {
   }
   return val;
 }
-
-struct ScheduledNote {
-  uint64_t ts;
-  char actionType;
-  int noteNo;
-  int velocity;
-  int endpoint;
-};
 
 /* Anything mentioned here should be initialized in voices_reset */
 bool jawharp_on;
@@ -109,7 +99,6 @@ int crash_times_index;
 uint64_t hihat_times[HIHAT_TIMES_LENGTH];
 int hihat_times_index;
 uint64_t next_ns[N_SUBBEATS];
-struct ScheduledNote scheduled_notes[MAX_SCHEDULED_NOTES];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 bool breath_chord_on;
@@ -211,11 +200,6 @@ void voices_reset() {
     next_ns[i] = 0;
   }
 
-  for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
-    scheduled_notes[i].ts = 0;
-    // Any ScheduledNote with ts = 0 is considered unset.
-  }
-
   current_beat_ns = 0;
   last_downbeat_ns = 0;
 
@@ -225,36 +209,6 @@ void voices_reset() {
   jig_time = false;
 }
 
-
-
-struct ScheduledNote* allocate_scheduled_note() {
-  for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
-    if (scheduled_notes[i].ts == 0) {
-      printf("chose %d\n", i);
-      return &(scheduled_notes[i]);
-    }
-  }
-  // No notes available, just pick one.
-  printf("out of notes\n");
-  return &(scheduled_notes[0]);
-}
-
-void schedule_note(uint64_t wait, uint64_t length, int noteNo, int velocity, int endpoint) {
-  uint64_t current_time = now();
-  struct ScheduledNote* on = allocate_scheduled_note();
-  on->ts = current_time + wait;
-  on->actionType = MIDI_ON;
-  struct ScheduledNote* off = allocate_scheduled_note();
-  off->ts = on->ts + length;
-  off->actionType = MIDI_OFF;
-
-  on->noteNo = off->noteNo = noteNo;
-  on->velocity = off->velocity = velocity;
-  on->endpoint = off->endpoint = endpoint;
-
-  printf("scheduled %llu %llu %llu  %d %d %d %d %d\n",
-         on->ts, off->ts, length,  on->actionType, off->actionType, on->noteNo, on->velocity, on->endpoint);
-}
 
 //  The flex organ follows organ_flex_breath and organ_flex_base.
 //  organ_flex_breath follows breath.
@@ -789,10 +743,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }
 
-  //if (current_beat_ns != 0 && mode == MIDI_ON) {
-  //  schedule_note(current_beat_ns, current_beat_ns / 2, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
-  //}
-
   if (hammond_on && !is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
   }
@@ -1175,24 +1125,6 @@ void forward_air() {
   }
 }
 
-void trigger_scheduled_notes() {
-  uint64_t current_time = now();
-  for (int i = 0; i < MAX_SCHEDULED_NOTES; i++) {
-    if (scheduled_notes[i].ts != 0 && scheduled_notes[i].ts < current_time) {
-      printf("trigger %d %d %d %d\n",
-             scheduled_notes[i].actionType,
-             scheduled_notes[i].noteNo,
-             scheduled_notes[i].velocity,
-             scheduled_notes[i].endpoint);
-      send_midi(scheduled_notes[i].actionType,
-                scheduled_notes[i].noteNo,
-                scheduled_notes[i].velocity,
-                scheduled_notes[i].endpoint);
-      scheduled_notes[i].ts = 0;
-    }
-  }
-}
-
 void trigger_subbeats() {
   uint64_t current_time = now();
 
@@ -1211,7 +1143,6 @@ void jml_tick() {
   update_air();
   forward_air();
   trigger_subbeats();
-  //trigger_scheduled_notes();
 
   if (++tick_n % 450 == 0) {
 #ifdef FAKE_FEET
