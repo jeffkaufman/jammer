@@ -73,8 +73,6 @@ bool overdriven_rhodes_on;
 bool rhodes_on;
 bool tbd_a_on;
 bool tbd_b_on;
-bool atmospheric_drone;
-bool atmospheric_drone_notes[MIDI_MAX];
 bool piano_notes[MIDI_MAX];
 bool fb_on;
 bool fb_downbeat;
@@ -140,9 +138,7 @@ void voices_reset() {
   rhodes_on = false;
   tbd_a_on = false;
   tbd_b_on = false;
-  atmospheric_drone = false;
   for (int i = 0; i < MIDI_MAX; i++) {
-    atmospheric_drone_notes[i] = false;
     piano_notes[i] = false;
   }
   fb_on = false;
@@ -247,23 +243,6 @@ void jawharp_off() {
     send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = -1;
   }
-}
-
-void atmospheric_drone_off() {
-  for (int i = 0 ; i < MIDI_MAX; i++) {
-    if (atmospheric_drone_notes[i]) {
-      atmospheric_drone_notes[i] = false;
-      send_midi(MIDI_OFF, i, 0, ENDPOINT_SINE_PAD);
-      send_midi(MIDI_OFF, i, 0, ENDPOINT_SWEEP_PAD);
-    }
-  }
-  current_note[ENDPOINT_SINE_PAD] = -1;
-}
-
-void atmospheric_drone_note_on(int note) {
-  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SINE_PAD);
-  send_midi(MIDI_ON, note, MIDI_MAX, ENDPOINT_SWEEP_PAD);
-  atmospheric_drone_notes[note] = true;
 }
 
 bool downbeat(int subbeat) {
@@ -517,15 +496,6 @@ void count_drum_hit(int note_in) {
 
 void update_bass() {
   int note_out = active_note();
-
-  if (atmospheric_drone && current_note[ENDPOINT_SINE_PAD] != note_out) {
-    atmospheric_drone_off();
-    current_note[ENDPOINT_SINE_PAD] = note_out;
-
-    atmospheric_drone_note_on(note_out);
-    atmospheric_drone_note_on(note_out + 12);
-    atmospheric_drone_note_on(note_out + 12 + 7);
-  }
 
   uint64_t current_time = now();
   if (fb_on && current_time - last_downbeat_ns > NS_PER_SEC) {
@@ -1061,10 +1031,8 @@ void forward_air() {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
-    if (!atmospheric_drone) {
-      send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
-      send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
-    }
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
+    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
     last_air_val = val;
