@@ -62,31 +62,48 @@ int normalize(int val) {
   return val;
 }
 
+struct Configuration {
+  /* Anything mentioned here should be initialized in clear_configuration */
+  bool jawharp_on;
+  bool hammond_on;
+  bool organ_low_on;
+  bool organ_flex_on;
+  bool sine_pad_on;
+  bool sweep_pad_on;
+  bool overdriven_rhodes_on;
+  bool rhodes_on;
+  bool tbd_a_on;
+  bool tbd_b_on;
+  bool fb_on;
+  bool fb_downbeat;
+  bool fb_upbeat;
+  bool fb_upbeat_high;
+  bool fb_doubled;
+  int current_fb_note;
+  int current_fb_fifth;
+  int current_fb_len;
+  bool air_locked;
+  double locked_air;
+  double fb_air;
+  bool fb_follows_air;
+  bool fb_short;
+  bool fb_shorter;
+  bool fb_octave_up;
+  bool fb_pre_unique;
+  bool fb_chord;
+};
+
+// TODO: allow multiple of these.
+struct Configuration global_config;
+
+// TODO: pass this around
+struct Configuration* c = &global_config;
+
 /* Anything mentioned here should be initialized in voices_reset */
-bool jawharp_on;
-bool hammond_on;
-bool organ_low_on;
-bool organ_flex_on;
-bool sine_pad_on;
-bool sweep_pad_on;
-bool overdriven_rhodes_on;
-bool rhodes_on;
-bool tbd_a_on;
-bool tbd_b_on;
+
 bool piano_notes[MIDI_MAX];
-bool fb_on;
-bool fb_downbeat;
-bool fb_upbeat;
-bool fb_upbeat_high;
-bool fb_doubled;
-bool drum_breath_on;
-int current_fb_note;
-int current_fb_fifth;
-int current_fb_len;
 int root_note;
 int fifth_note;
-bool air_locked;
-double locked_air;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
 uint64_t snare_times[SNARE_TIMES_LENGTH];
@@ -99,14 +116,6 @@ uint64_t next_ns[N_SUBBEATS];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 bool jig_time;
-double fb_air;
-bool fb_follows_air;
-bool fb_short;
-bool fb_shorter;
-bool fb_octave_up;
-bool fb_pre_unique;
-bool fb_chord;
-
 
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
@@ -127,46 +136,47 @@ int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
 }
 
-void voices_reset() {
-  jawharp_on = false;
-  hammond_on = false;
-  organ_low_on = false;
-  organ_flex_on = false;
-  sine_pad_on = false;
-  sweep_pad_on = false;
-  overdriven_rhodes_on = false;
-  rhodes_on = false;
-  tbd_a_on = false;
-  tbd_b_on = false;
+void clear_configuration() {
+  c->jawharp_on = false;
+  c->hammond_on = false;
+  c->organ_low_on = false;
+  c->organ_flex_on = false;
+  c->sine_pad_on = false;
+  c->sweep_pad_on = false;
+  c->overdriven_rhodes_on = false;
+  c->rhodes_on = false;
+  c->tbd_a_on = false;
+  c->tbd_b_on = false;
+  c->fb_on = false;
+  c->fb_downbeat = true;
+  c->fb_upbeat = true;
+  c->fb_upbeat_high = false;
+  c->fb_doubled = false;
+  select_fb_voice(0); // TODO
+  select_jawharp_voice(5); // TODO
+  select_flex_voice(5); // TODO
+  c->current_fb_note = -1;
+  c->current_fb_fifth = -1;
+  c->current_fb_len = -1;
+
+  c->fb_follows_air = false;
+  c->fb_air = 40;
+
+  c->fb_short = false;
+  c->fb_shorter = false;
+  c->fb_octave_up = false;
+  c->fb_pre_unique = false;
+  c->fb_chord = false;
+
+  c->air_locked = false;
+  c->locked_air = 0;
+}
+
+void clear_status() {
   for (int i = 0; i < MIDI_MAX; i++) {
     piano_notes[i] = false;
   }
-  fb_on = false;
-  fb_downbeat = true;
-  fb_upbeat = true;
-  fb_upbeat_high = false;
-  fb_doubled = false;
-  drum_breath_on = false;
-  select_fb_voice(0);
-  select_jawharp_voice(5);
-  select_flex_voice(5);
-  current_fb_note = -1;
-  current_fb_fifth = -1;
-  current_fb_len = -1;
-
-  fb_follows_air = false;
-  fb_air = 40;
-
-  fb_short = false;
-  fb_shorter = false;
-  fb_octave_up = false;
-  fb_pre_unique = false;
-  fb_chord = false;
-
   root_note = to_root(26);  // D @ 37Hz
-
-  air_locked = false;
-  locked_air = 0;
 
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
     kick_times[i] = 0;
@@ -196,6 +206,11 @@ void voices_reset() {
   last_downbeat_ns = 0;
 
   jig_time = false;
+}
+
+void voices_reset() {
+  clear_configuration();
+  clear_status();
 }
 
 
@@ -260,99 +275,99 @@ bool predown(int subbeat) {
 }
 
 void arpeggiate_bass(int subbeat, uint64_t current_time) {
-  if (!fb_on) return;
+  if (!c->fb_on) return;
 
-  if (current_fb_note != -1) {
-    current_fb_len++;
+  if (c->current_fb_note != -1) {
+    c->current_fb_len++;
   }
 
   int note_out = active_note();
   int selected_note = note_out;
   bool send_note = false;
 
-  if (fb_octave_up) {
+  if (c->fb_octave_up) {
     selected_note += 12;
   }
 
-  if (fb_chord) {
+  if (c->fb_chord) {
     selected_note += 12;
   }
 
   if (downbeat(subbeat)) {
-    send_note = fb_downbeat;
+    send_note = c->fb_downbeat;
   } else if (upbeat(subbeat)) {
-    send_note = fb_upbeat;
-    if (fb_upbeat_high && fb_pre_unique) {
+    send_note = c->fb_upbeat;
+    if (c->fb_upbeat_high && c->fb_pre_unique) {
       selected_note += 24;
-    } else if (fb_upbeat_high || fb_pre_unique) {
+    } else if (c->fb_upbeat_high || c->fb_pre_unique) {
       selected_note += 12;
     }
   } else if (preup(subbeat) && !jig_time) {
-    send_note = fb_downbeat && fb_doubled;
-    if (fb_pre_unique) {
-      if (fb_upbeat_high) {
+    send_note = c->fb_downbeat && c->fb_doubled;
+    if (c->fb_pre_unique) {
+      if (c->fb_upbeat_high) {
         selected_note += 12;
       } else {
         selected_note += 7;
       }
     }
   } else if (predown(subbeat) || preup(subbeat)) {
-    send_note = fb_upbeat && fb_doubled;
+    send_note = c->fb_upbeat && c->fb_doubled;
 
-    if (fb_upbeat_high && fb_pre_unique) {
+    if (c->fb_upbeat_high && c->fb_pre_unique) {
       selected_note += 36;
-    } else if (fb_pre_unique) {
+    } else if (c->fb_pre_unique) {
       selected_note += 12 + 7;
-    } else if (fb_upbeat_high) {
+    } else if (c->fb_upbeat_high) {
       selected_note += 12;
     }
   }
 
   bool end_note = send_note;
 
-  if (current_fb_len != -1 && (fb_short || fb_shorter)) {
+  if (c->current_fb_len != -1 && (c->fb_short || c->fb_shorter)) {
     int threshold = jig_time ? 24 : 18;  // kept if fb_short only
-    if (fb_short && fb_shorter) {
+    if (c->fb_short && c->fb_shorter) {
       threshold /= 3;
-    } else if (fb_shorter) {
+    } else if (c->fb_shorter) {
       threshold /= 2;
     }
-    if (current_fb_len >= threshold) {
+    if (c->current_fb_len >= threshold) {
       end_note = true;
     }
   }
 
-  if (end_note && current_fb_note != -1) {
+  if (end_note && c->current_fb_note != -1) {
     //printf("footbass end note %d\n", current_fb_note);
-    send_midi(MIDI_OFF, current_fb_note, 0, ENDPOINT_FOOTBASS);
-    if (fb_chord) {
-      send_midi(MIDI_OFF, current_fb_fifth, 0, ENDPOINT_FOOTBASS);
+    send_midi(MIDI_OFF, c->current_fb_note, 0, ENDPOINT_FOOTBASS);
+    if (c->fb_chord) {
+      send_midi(MIDI_OFF, c->current_fb_fifth, 0, ENDPOINT_FOOTBASS);
     }
 
-    current_fb_note = -1;
-    current_fb_fifth = -1;
-    current_fb_len = -1;
+    c->current_fb_note = -1;
+    c->current_fb_fifth = -1;
+    c->current_fb_len = -1;
   }
 
   if (send_note) {
     if (selected_note != -1) {
-      if (fb_follows_air) {
-        fb_air = air;
+      if (c->fb_follows_air) {
+        c->fb_air = air;
       }
-      int vol = fb_air > MIDI_MAX ? MIDI_MAX : fb_air;
+      int vol = c->fb_air > MIDI_MAX ? MIDI_MAX : c->fb_air;
 
-      current_fb_note = selected_note;
-      current_fb_fifth = to_fifth(selected_note);
-      current_fb_len = 0;
+      c->current_fb_note = selected_note;
+      c->current_fb_fifth = to_fifth(selected_note);
+      c->current_fb_len = 0;
 
       send_midi(MIDI_ON,
-                current_fb_note,
+                c->current_fb_note,
                 vol,  // 90,
                 ENDPOINT_FOOTBASS);
 
-      if (fb_chord) {
+      if (c->fb_chord) {
         send_midi(MIDI_ON,
-                  current_fb_fifth,
+                  c->current_fb_fifth,
                   vol,  // 90,
                   ENDPOINT_FOOTBASS);
       }
@@ -498,13 +513,13 @@ void update_bass() {
   int note_out = active_note();
 
   uint64_t current_time = now();
-  if (fb_on && current_time - last_downbeat_ns > NS_PER_SEC) {
+  if (c->fb_on && current_time - last_downbeat_ns > NS_PER_SEC) {
     arpeggiate(0, current_time);
   }
 
   if (breath < 3) return;
 
-  if (jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
+  if (c->jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
     jawharp_off();
     send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = note_out;
@@ -675,25 +690,25 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }
 
-  if (hammond_on && !is_bass) {
+  if (c->hammond_on && !is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
   }
-  if (organ_low_on && is_bass) {
+  if (c->organ_low_on && is_bass) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_LOW);
   }
-  if (organ_flex_on) {
+  if (c->organ_flex_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_FLEX);
   }
-  if (sine_pad_on) {
+  if (c->sine_pad_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SINE_PAD);
   }
-  if (sweep_pad_on) {
+  if (c->sweep_pad_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SWEEP_PAD);
   }
-  if (overdriven_rhodes_on) {
+  if (c->overdriven_rhodes_on) {
     send_midi(mode, note_in, val, ENDPOINT_OVERDRIVEN_RHODES);
   }
-  if (rhodes_on) {
+  if (c->rhodes_on) {
     send_midi(mode, note_in, val, ENDPOINT_RHODES);
   }
 }
@@ -704,8 +719,8 @@ void full_reset() {
 }
 
 void air_lock() {
-  air_locked = !air_locked;
-  locked_air = air;
+  c->air_locked = !c->air_locked;
+  c->locked_air = air;
 }
 
 void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
@@ -720,9 +735,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'W':
     // toggle jawharp
     endpoint_notes_off(ENDPOINT_JAWHARP);
-    jawharp_on = !jawharp_on;
+    c->jawharp_on = !c->jawharp_on;
 
-    if (jawharp_on) {
+    if (c->jawharp_on) {
       update_bass();
     } else {
       jawharp_off();
@@ -730,31 +745,31 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'E':
     endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
-    organ_flex_on = !organ_flex_on;
+    c->organ_flex_on = !c->organ_flex_on;
     return;
   case 'R':
     endpoint_notes_off(ENDPOINT_SINE_PAD);
-    sine_pad_on = !sine_pad_on;
+    c->sine_pad_on = !c->sine_pad_on;
     return;
   case 'T':
     // toggle arp
-    fb_on = !fb_on;
+    c->fb_on = !c->fb_on;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
-    if (fb_on) {
+    if (c->fb_on) {
       send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
     }
     return;
   case 'Y':
-    fb_downbeat = !fb_downbeat;
+    c->fb_downbeat = !c->fb_downbeat;
     return;
   case 'K':
-    fb_upbeat = !fb_upbeat;
+    c->fb_upbeat = !c->fb_upbeat;
     return;
   case 'U':
-    fb_upbeat_high = !fb_upbeat_high;
+    c->fb_upbeat_high = !c->fb_upbeat_high;
     return;
   case 'I':
-    fb_doubled = !fb_doubled;
+    c->fb_doubled = !c->fb_doubled;
     return;
   case 'O':
     jig_time = !jig_time;
@@ -814,34 +829,34 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     select_flex_voice(5);
     return;
   case 'L':
-    if (fb_follows_air) {
-      fb_air = air;
-      fb_follows_air = false;
+    if (c->fb_follows_air) {
+      c->fb_air = air;
+      c->fb_follows_air = false;
     } else {
-      air = fb_air;
-      fb_follows_air = true;
+      air = c->fb_air;
+      c->fb_follows_air = true;
     }
     return;
   case 'P':
     // Manual arp air entry
-    fb_follows_air = false;
-    fb_air = val;
+    c->fb_follows_air = false;
+    c->fb_air = val;
     return;
   case 'J':
-    fb_pre_unique = !fb_pre_unique;
+    c->fb_pre_unique = !c->fb_pre_unique;
     return;
   case '[':
-    fb_octave_up = !fb_octave_up;
+    c->fb_octave_up = !c->fb_octave_up;
     return;
   case ']':
-    fb_short = !fb_short;
+    c->fb_short = !c->fb_short;
     return;
   case '\\':
-    fb_chord = !fb_chord;
+    c->fb_chord = !c->fb_chord;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
     return;
   case '\'':
-    fb_shorter = !fb_shorter;
+    c->fb_shorter = !c->fb_shorter;
     return;
   case ';':
     return;
@@ -1003,7 +1018,7 @@ void jml_setup() {
 void update_air() {
   // see calculate_breath_speeds()
   air *= leakage;
-  air += (breath * breath_gain * (fb_follows_air ? 0.25 : 1));
+  air += (breath * breath_gain * (c->fb_follows_air ? 0.25 : 1));
   if (air > max_air) {
     air = max_air;
   }
@@ -1018,8 +1033,8 @@ void forward_air() {
   organ_flex_base = val;
   int organ_flex_value = organ_flex_val();
 
-  if (air_locked) {
-    val = locked_air;
+  if (c->air_locked) {
+    val = c->locked_air;
   }
 
   if (val > MIDI_MAX) {
@@ -1027,7 +1042,7 @@ void forward_air() {
   }
 
   if (val != last_air_val) {
-    if (!fb_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
+    if (!c->fb_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
       send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
     }
     send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
