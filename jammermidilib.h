@@ -861,6 +861,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case ';':
     c->organ_low_on = !c->organ_low_on;
     endpoint_notes_off(ENDPOINT_ORGAN_LOW);
+    if (c->organ_low_on) {  // separate volumes?  endpoints?
+      send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
+    }
     return;
   case '.':
     return;
