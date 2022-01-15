@@ -859,6 +859,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->fb_shorter = !c->fb_shorter;
     return;
   case ';':
+    c->organ_low_on = !c->organ_low_on;
+    endpoint_notes_off(ENDPOINT_ORGAN_LOW);
     return;
   case '.':
     return;
