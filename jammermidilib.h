@@ -65,6 +65,7 @@ int normalize(int val) {
 struct Configuration {
   /* Anything mentioned here should be initialized in clear_configuration */
   bool jawharp_on;
+  bool jawharp_full_on;
   bool hammond_on;
   bool organ_low_on;
   bool organ_low_piano_vel;
@@ -139,6 +140,7 @@ int to_fifth(int note_out) {
 
 void clear_configuration() {
   c->jawharp_on = false;
+  c->jawharp_full_on = false;
   c->hammond_on = false;
   c->organ_low_on = false;
   c->organ_low_piano_vel = false;
@@ -519,7 +521,7 @@ void update_bass() {
     arpeggiate(0, current_time);
   }
 
-  if (breath < 3) return;
+  if (breath < 3 && !c->jawharp_full_on) return;
 
   if (c->jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
     jawharp_off();
@@ -876,6 +878,12 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->organ_low_piano_vel = !c->organ_low_piano_vel;
     return;
   case '/':
+    c->jawharp_full_on = !c->jawharp_full_on;
+    if (c->jawharp_full_on) {
+      send_midi(MIDI_CC, CC_11, MIDI_MAX, ENDPOINT_JAWHARP);
+    } else {
+      send_midi(MIDI_CC, CC_11, 0, ENDPOINT_JAWHARP);
+    }
     return;
   case ',':
     return;
@@ -931,7 +939,9 @@ void handle_cc(unsigned int cc, unsigned int val) {
       use_val = organ_flex_val();
       last_organ_flex_val = use_val;
     }
-    send_midi(MIDI_CC, CC_11, use_val, endpoint);
+    if (endpoint != ENDPOINT_JAWHARP || !c->jawharp_full_on) {
+      send_midi(MIDI_CC, CC_11, use_val, endpoint);
+    }
   }
 }
 
