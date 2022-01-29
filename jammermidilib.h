@@ -67,6 +67,7 @@ struct Configuration {
   bool jawharp_on;
   bool hammond_on;
   bool organ_low_on;
+  bool organ_low_piano_vel;
   bool organ_flex_on;
   bool sine_pad_on;
   bool sweep_pad_on;
@@ -140,6 +141,7 @@ void clear_configuration() {
   c->jawharp_on = false;
   c->hammond_on = false;
   c->organ_low_on = false;
+  c->organ_low_piano_vel = false;
   c->organ_flex_on = false;
   c->sine_pad_on = false;
   c->sweep_pad_on = false;
@@ -694,7 +696,9 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
   }
   if (c->organ_low_on && is_bass) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_LOW);
+    send_midi(mode, note_in,
+              c->organ_low_piano_vel ? val : 100,
+              ENDPOINT_ORGAN_LOW);
   }
   if (c->organ_flex_on) {
     send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_FLEX);
@@ -866,6 +870,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     }
     return;
   case '.':
+    c->organ_low_piano_vel = !c->organ_low_piano_vel;
     return;
   case '/':
     return;
