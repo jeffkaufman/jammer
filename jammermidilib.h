@@ -814,6 +814,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'N':
     select_jawharp_voice(5);
     return;
+  case 'M':
+    select_jawharp_voice(6);
+    return;
   case F1:
     select_flex_voice(0);
     return;
