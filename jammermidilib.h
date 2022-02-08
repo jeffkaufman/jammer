@@ -5,6 +5,59 @@
 // https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
 // https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
 
+// New layout:
+//
+//    +    volume up
+//    -    volume down
+//  del    manual volume entry
+//  esc    full reset
+
+//    note: toggling an instrument also selects it
+//    1    jawharp select
+//    Q    jawharp mute
+//    2    footbass select
+//    W    footbass mute
+//    3    flex select
+//    E    flex mute
+//    4    organ low select
+//    R    organ low mute
+//    5    organ high select
+//    T    organ high mute
+//    6    overlay select
+//    Y    overlay mute
+
+//    U    fb downbeat
+//    I    fb upbeat
+//    O    fb doubled
+//    P    fb pre unique
+//    [    fb octave up
+//    ]    fb short
+//    \    fb shorter
+//    ;    jig reel
+//    '    fb chord
+//    .    organ uses piano vel
+//    ?    jawharp drones
+
+//    A    39 Synth Bass 2
+//    S    38 Synth Bass 1
+//    D    84 Lead 3 (calliope)
+//    F    35 Electric Bass (finger)
+//    G    26 Acoustic Guitar (nylon)
+//    H    28 Electric Guitar (jazz)
+//    J    75 Pan Flute
+//    K    80 Lead 1 (square)
+//    L
+//    Z     4 Electric Piano 1
+//    X    24 Acoustic Guitar (nylon)
+//    C    85 Lead 6 (voice)
+//    V    64 Soprano Sax
+//    B    66 Tenor Sax
+//    N    67 Baritone Sax
+//    M    81 Lead 2 (sawtooth)
+
+// For every instrument there's a default volume modifier, and also for every
+// voice.  Then each combination also has a dynamic modifier, adjusted by +/-
+// that is saved and restored from a volume_[instrument]_[voice] file.
 
 #define MIDI_DRUM_IN_SNARE 46
 #define MIDI_DRUM_IN_KICK 38
@@ -51,6 +104,8 @@
 #define F8 (105)
 #define F9 (106)
 #define F10 (107)
+#define DELETE (108)
+#define ESCAPE (109)
 
 int normalize(int val) {
   if (val > MIDI_MAX) {
@@ -735,7 +790,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   printf("recv: %c\n", note_in);
 
   switch (note_in) {
-  case 'Q':
+  case ESCAPE:
     full_reset();
     return;
   case 'W':
@@ -846,7 +901,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       c->fb_follows_air = true;
     }
     return;
-  case 'P':
+  case DELETE:
     // Manual arp air entry
     c->fb_follows_air = false;
     c->fb_air = val;
