@@ -56,9 +56,16 @@ Type=simple
 WantedBy=multi-user.target
 ```
 
-Then `sudo systemctl enable fluidsynth`,
-`sudo systemctl enable jammer` and
-`sudo systemctl daemon-reload`.
+If this box will only ever run jammer then:
 
-Then set up at least the keyboard listener portion of
+```
+sudo systemctl enable fluidsynth
+sudo systemctl enable jammer
+sudo systemctl daemon-reload
+```
+
+Otherwise, when setting up whistle-synth it will start them dynamically based
+on whether we're in whistle mode or jammer mode.
+
+Regardless, continue with setting up at least the keyboard listener portion of
 https://github.com/jeffkaufman/whistle-synth
