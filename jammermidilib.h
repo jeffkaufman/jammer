@@ -942,7 +942,13 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     endpoint_notes_off(ENDPOINT_FOOTBASS);
     return;
   case '.':
-    c->organ_low_piano_vel = !c->organ_low_piano_vel;
+    if (c->selected_endpoint == ENDPOINT_LOW) {
+      c->organ_low_piano_vel = !c->organ_low_piano_vel;
+    } else if (c->selected_endpoint == ENDPOINT_HI) {
+      c->organ_hi_piano_vel = !c->organ_hi_piano_vel;
+    } else if (c->selected_endpoint == ENDPOINT_OVERLAY) {
+      c->overlay_piano_vel = !c->overlay_piano_vel;
+    }
     return;
   case '/':
     c->jawharp_full_on = !c->jawharp_full_on;
