@@ -1141,12 +1141,12 @@ void jml_tick() {
 
   // play startup chime
   if (tick_n == 0) {
-    send_midi(MIDI_ON, 30, 100, ENDPOINT_LOW);
+    send_midi(MIDI_ON, 28, 100, ENDPOINT_LOW);
   } else if (tick_n == 500) {
-    send_midi(MIDI_OFF, 30, 100, ENDPOINT_LOW);
-    send_midi(MIDI_ON, 42, 100, ENDPOINT_LOW);
+    send_midi(MIDI_OFF, 28, 100, ENDPOINT_LOW);
+    send_midi(MIDI_ON, 33, 100, ENDPOINT_LOW);
   } else if (tick_n == 2000) {
-    send_midi(MIDI_OFF, 42, 100, ENDPOINT_LOW);
+    send_midi(MIDI_OFF, 3, 100, ENDPOINT_LOW);
   }
 
   // Called every TICK_MS
