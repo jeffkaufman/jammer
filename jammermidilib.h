@@ -214,16 +214,15 @@ void select_voice(struct Configuration* c, int voice) {
   reload_voice_setting(c);
 }
 
-void clear_configuration() {
+void clear_jawharp() {
+  select_voice(c, 67);
   c->jawharp_on = false;
   c->jawharp_full_on = false;
-  c->organ_low_on = false;
-  c->organ_low_piano_vel = false;
-  c->organ_hi_on = false;
-  c->organ_hi_piano_vel = false;
-  c->overlay_on = false;
-  c->overlay_piano_vel = false;
-  c->flex_on = false;
+}
+
+void clear_footbass() {
+  select_voice(c, 39);
+
   c->fb_on = false;
   c->fb_downbeat = true;
   c->fb_upbeat = true;
@@ -240,7 +239,47 @@ void clear_configuration() {
   c->fb_octave_up = false;
   c->fb_pre_unique = false;
   c->fb_chord = false;
+}
 
+void clear_flex() {
+  select_voice(c, 81);
+
+  c->flex_on = false;
+}
+
+void clear_low() {
+  select_voice(c, 39);
+
+  c->organ_low_on = false;
+  c->organ_low_piano_vel = false;
+}
+
+void clear_high() {
+  select_voice(c, 39);
+
+  c->organ_hi_on = false;
+  c->organ_hi_piano_vel = false;
+}
+
+void clear_overlay() {
+  select_voice(c, 39);
+
+  c->overlay_on = false;
+  c->overlay_piano_vel = false;
+}
+
+void clear_endpoint() {
+  switch (c->selected_endpoint) {
+  case ENDPOINT_JAWHARP: clear_jawharp(); return;
+  case ENDPOINT_FOOTBASS: clear_footbass(); return;
+  case ENDPOINT_FLEX: clear_flex(); return;
+  case ENDPOINT_LOW: clear_low(); return;
+  case ENDPOINT_HI: clear_high(); return;
+  case ENDPOINT_OVERLAY: clear_overlay(); return;
+  }
+}
+
+void clear_configuration() {
   c->air_locked = false;
   c->locked_air = 0;
 
@@ -251,28 +290,9 @@ void clear_configuration() {
     c->manual_volumes[i] = -1;
   }
   for (int i = 0 ; i < N_ENDPOINTS; i++) {
-    c->voices[i] = 0;
+    c->selected_endpoint = i;
+    clear_endpoint();
   }
-
-  c->selected_endpoint = ENDPOINT_JAWHARP;
-  select_voice(c, 67);
-
-  c->selected_endpoint = ENDPOINT_FOOTBASS;
-  select_voice(c, 39);
-
-  c->selected_endpoint = ENDPOINT_FLEX;
-  select_voice(c, 81);
-
-  c->selected_endpoint = ENDPOINT_LOW;
-  select_voice(c, 39);
-
-  c->selected_endpoint = ENDPOINT_HI;
-  select_voice(c, 39);
-
-  c->selected_endpoint = ENDPOINT_OVERLAY;
-  select_voice(c, 39);
-
-  c->selected_endpoint = ENDPOINT_JAWHARP;
 }
 
 void clear_status() {
@@ -823,6 +843,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case ESCAPE:
     full_reset();
+    return;
+  case F1:
+    clear_endpoint();
     return;
   case '-':
     c->volume_deltas[selected_voice] -= 5;
