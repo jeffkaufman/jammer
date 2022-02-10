@@ -1132,6 +1132,17 @@ void trigger_subbeats() {
 uint64_t tick_n = 0;
 uint64_t subtick_n = 0;
 void jml_tick() {
+
+  // play startup chime
+  if (tick_n == 0) {
+    send_midi(MIDI_ON, 16, 100, ENDPOINT_LOW);
+  } else if (tick_n == 500) {
+    send_midi(MIDI_OFF, 16, 100, ENDPOINT_LOW);
+    send_midi(MIDI_ON, 21, 100, ENDPOINT_LOW);
+  } else if (tick_n == 2000) {
+    send_midi(MIDI_OFF, 21, 100, ENDPOINT_LOW);
+  }
+
   // Called every TICK_MS
   update_air();
   forward_air();

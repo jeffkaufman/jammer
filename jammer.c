@@ -382,6 +382,7 @@ int main(int argc, char** argv) {
     malloc(sizeof(struct pollfd) * n_poll_file_descriptors);
   snd_seq_poll_descriptors(seq, poll_file_descriptors, n_poll_file_descriptors,
                            POLLIN);
+
   while (true) {
     if (poll(poll_file_descriptors, n_poll_file_descriptors, TICK_MS) > 0) {
       do {
