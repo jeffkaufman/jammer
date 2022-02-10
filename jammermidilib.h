@@ -78,8 +78,6 @@
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS)
 
-#define FOOTBASS_VOLUME 120
-
 #define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BINARY(byte)                    \
   (byte & 0x80 ? '1' : '0'),                    \
@@ -854,9 +852,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->selected_endpoint = ENDPOINT_FOOTBASS;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
     c->fb_on = !c->fb_on;
-    if (c->fb_on) {
-      send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
-    }
     return;
   case '3':
     c->selected_endpoint = ENDPOINT_FLEX;
@@ -873,9 +868,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->selected_endpoint = ENDPOINT_LOW;
     endpoint_notes_off(ENDPOINT_LOW);
     c->organ_low_on = !c->organ_low_on;
-    if (c->organ_low_on) {  // separate volumes?  endpoints?
-      send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
-    }
     return;
 
   case 'U':
