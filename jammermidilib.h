@@ -819,6 +819,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     // Manual volume entry
     c->manual_volumes[selected_voice] = val;
     c->volume_deltas[selected_voice] = 0;
+    reload_voice_setting(c);
     return;
   case ESCAPE:
     full_reset();
