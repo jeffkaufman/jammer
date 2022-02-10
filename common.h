@@ -13,8 +13,8 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta);
 #define ENDPOINT_FOOTBASS 1
 #define ENDPOINT_FLEX 2
 #define ENDPOINT_LOW 3
-#define ENDPOINT_HI 3
-#define ENDPOINT_OVERLAY 4
+#define ENDPOINT_HI 4
+#define ENDPOINT_OVERLAY 5
 #define N_ENDPOINTS (ENDPOINT_OVERLAY+1)
 
 /* midi values */

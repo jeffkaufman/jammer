@@ -781,6 +781,9 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }
 
+  if (c->flex_on) {
+    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_FLEX);
+  }
   if (c->organ_low_on && is_bass) {
     send_midi(mode, note_in,
               c->organ_low_piano_vel ? val : 100,
