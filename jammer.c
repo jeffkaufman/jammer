@@ -248,7 +248,6 @@ void tick() {
 }
 
 int tmp_jawharp_voice = 1;
-int flex_voice = 1;
 void handle_event(snd_seq_event_t* event) {
   if (event->source.client == breath_controller_client) {
     handle_cc(event->data.control.param, event->data.control.value);
@@ -277,17 +276,7 @@ void handle_event(snd_seq_event_t* event) {
   if (event->source.client == keyboard_client) {
     handle_piano(action, note_in, val);
   } else if (event->source.client == axis49_client) {
-    if (note_in == 1 && action == MIDI_ON) {
-      flex_voice++;
-      choose_voice(ENDPOINT_ORGAN_FLEX, 0, flex_voice);
-      printf("Flex voice: %d\n", flex_voice);
-    } else if (note_in == 2 && action == MIDI_ON) {
-      flex_voice--;
-      choose_voice(ENDPOINT_ORGAN_FLEX, 0, flex_voice);
-      printf("Flex voice: %d\n", flex_voice);
-    } else {
-      handle_axis_49(action, note_in, val);
-    }
+    /// pass
   } else if (event->source.client == feet_client) {
     handle_feet(action, note_in, val);
   } else if (event->source.client == keypad_client) {
@@ -297,135 +286,58 @@ void handle_event(snd_seq_event_t* event) {
   }
 }
 
-
-void select_fb_voice(int voice_index) {
-  if (voice_index < 0 || voice_index >= N_FB_VOICES) {
-    printf("bad voice %d\n", voice_index);
-    return;
-  }
-
-  int voice = fb_voices[voice_index];
-  send_midi(MIDI_CC, CC_07, 0, ENDPOINT_ORGAN_LOW);
-  choose_voice(ENDPOINT_ORGAN_LOW, 0, voice);
+void select_endpoint_voice(int endpoint, int voice, int volume_delta) {
+  send_midi(MIDI_CC, CC_07, 0, endpoint);
+  
   int volume = 0;
-  switch(voice) {
+  switch (voice) {
+
+  case 80:
+    volume = 57;
+    break;
+  case 81:
+    volume = 60;
+    break;
+  case 84:
+    volume = 68;
+    break;
   case 38:
     volume = 82;
     break;
+  case 85:
+    volume = 84;
+    break;
+  case 75:
+    volume = 87;
+    break;
   case 39:
     volume = 96;
-    break;
-  case 26:
-  case 28:
-  case 35:
-    volume = 112;
-    break;
-  case 84:
-    volume = 64;
-    break;
-  }
-
-  send_midi(MIDI_CC, CC_07, volume, ENDPOINT_ORGAN_LOW);
-}
-
-void select_jawharp_voice(int voice_index) {
-  if (voice_index < 0 || voice_index >= N_JAWHARP_VOICES) {
-    printf("bad voice %d\n", voice_index);
-    return;
-  }
-
-  int voice = jawharp_voices[voice_index];
-  choose_voice(ENDPOINT_JAWHARP, 0, voice);
-  int volume = 0;
-  switch(voice) {
-  case 4:
-    volume = 127;
     break;
   case 7:
     volume = 98;
     break;
   case 24:
   case 26:
+  case 28:
+  case 35:
   case 64:
   case 66:
   case 67:
     volume = 112;
     break;
-  case 81:
-    volume = 64;
+  case 4:
+    volume = 127;
     break;
   }
 
-  send_midi(MIDI_CC, CC_07, volume, ENDPOINT_JAWHARP);
-}
+  volume += volume_delta;
 
-void select_flex_voice(int voice_index) {
-  // maybe flex:
-  //  109 / 46   shrill
-  //   20 / 56   reedy
-  //
-
-  if (voice_index < 0 || voice_index >= N_FLEX_VOICES) {
-    printf("bad voice %d\n", voice_index);
-    return;
+  if (endpoint == ENDPOINT_FLEX) {
+    volume = volume / 1.5;
   }
-
-  int voice = flex_voices[voice_index];
-  send_midi(MIDI_CC, CC_07, 0, ENDPOINT_ORGAN_FLEX);
-  choose_voice(ENDPOINT_ORGAN_FLEX, 0, voice);
-  int volume = 0;
-  switch(voice) {
-  case 85:
-    volume = 56;
-    break;
-  case 75:
-    volume = 58;
-    break;
-  case 80:
-    volume = 38;
-    break;
-  case 39:
-    volume = 68;
-    break;
-  case 84:
-    volume = 48;
-    break;
-  case 81:
-    volume = 36;
-    break;
-  }
-
-  send_midi(MIDI_CC, CC_07, volume, ENDPOINT_ORGAN_FLEX);
-}
-
-
-void setup_voices() {
-  // Everything defaults to max volume
-  for (int i = 0 ; i < N_ENDPOINTS; i++) {
-    send_midi(MIDI_CC, CC_07, 127, i);
-    send_midi(MIDI_CC, CC_11, 127, i);
-  }
-
-  choose_voice(ENDPOINT_JAWHARP, 0, 4);  // rhodes ep
-  choose_voice(ENDPOINT_HAMMOND, 0, 17);
-
-  // consider adding 82 or 87
-
-  choose_voice(ENDPOINT_SINE_PAD, 0, 89);
-  send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SINE_PAD);
-
-  choose_voice(ENDPOINT_OVERDRIVEN_RHODES, 0, 18); // needs better voice
-  send_midi(MIDI_CC, CC_07, 72, ENDPOINT_OVERDRIVEN_RHODES);
-
-  choose_voice(ENDPOINT_RHODES, 0, 4);
-  send_midi(MIDI_CC, CC_07, 96, ENDPOINT_RHODES);
-
-  choose_voice(ENDPOINT_SWEEP_PAD, 0, 97); // needs better voice
-  send_midi(MIDI_CC, CC_07, 48, ENDPOINT_SWEEP_PAD);
-
-  select_fb_voice(0);
-  select_jawharp_voice(0);
-  select_flex_voice(0);
+  
+  send_midi(MIDI_CC, CC_07, volume, endpoint);
+  choose_voice(endpoint, 0, voice);
 }
 
 int main(int argc, char** argv) {
@@ -435,7 +347,6 @@ int main(int argc, char** argv) {
           "set client name");
 
   setup_ports();
-  setup_voices();
 
   if (false) {
     int demo_note = 60;

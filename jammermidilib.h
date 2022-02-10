@@ -33,6 +33,7 @@
 //    [    fb octave up
 //    ]    fb short
 //    \    fb shorter
+//    L    fb upbeat hi
 //    ;    jig reel
 //    '    fb chord
 //    .    organ uses piano vel
@@ -46,7 +47,6 @@
 //    H    28 Electric Guitar (jazz)
 //    J    75 Pan Flute
 //    K    80 Lead 1 (square)
-//    L
 //    Z     4 Electric Piano 1
 //    X    24 Acoustic Guitar (nylon)
 //    C    85 Lead 6 (voice)
@@ -77,8 +77,6 @@
 
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS)
-
-#define MAX_HAMMOND_NOTE 96  // the hammond can't play higher than this note
 
 #define FOOTBASS_VOLUME 120
 
@@ -119,18 +117,16 @@ int normalize(int val) {
 
 struct Configuration {
   /* Anything mentioned here should be initialized in clear_configuration */
+  int selected_endpoint;
   bool jawharp_on;
   bool jawharp_full_on;
-  bool hammond_on;
   bool organ_low_on;
   bool organ_low_piano_vel;
-  bool organ_flex_on;
-  bool sine_pad_on;
-  bool sweep_pad_on;
-  bool overdriven_rhodes_on;
-  bool rhodes_on;
-  bool tbd_a_on;
-  bool tbd_b_on;
+  bool organ_hi_on;
+  bool organ_hi_piano_vel;
+  bool overlay_on;
+  bool overlay_piano_vel;
+  bool flex_on;
   bool fb_on;
   bool fb_downbeat;
   bool fb_upbeat;
@@ -148,6 +144,8 @@ struct Configuration {
   bool fb_octave_up;
   bool fb_pre_unique;
   bool fb_chord;
+  int volume_deltas[MIDI_MAX];
+  int voices[N_ENDPOINTS];
 };
 
 // TODO: allow multiple of these.
@@ -193,27 +191,45 @@ int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
 }
 
+void endpoint_notes_off(int endpoint) {
+  // send an explicit all notes off command
+  send_midi(MIDI_CC, 123, 0, endpoint);
+}
+
+void all_notes_off() {
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    endpoint_notes_off(endpoint);
+  }
+}
+
+void reload_voice_setting(struct Configuration* c) {
+  int endpoint = c->selected_endpoint;
+  int voice = c->voices[endpoint];
+  int volume_delta = c->volume_deltas[voice];
+  select_endpoint_voice(endpoint, voice, volume_delta);
+}
+
+void select_voice(struct Configuration* c, int voice) {
+  endpoint_notes_off(c->selected_endpoint);
+  c->voices[c->selected_endpoint] = voice;
+  reload_voice_setting(c);
+}
+
 void clear_configuration() {
   c->jawharp_on = false;
   c->jawharp_full_on = false;
-  c->hammond_on = false;
   c->organ_low_on = false;
   c->organ_low_piano_vel = false;
-  c->organ_flex_on = false;
-  c->sine_pad_on = false;
-  c->sweep_pad_on = false;
-  c->overdriven_rhodes_on = false;
-  c->rhodes_on = false;
-  c->tbd_a_on = false;
-  c->tbd_b_on = false;
+  c->organ_hi_on = false;
+  c->organ_hi_piano_vel = false;
+  c->overlay_on = false;
+  c->overlay_piano_vel = false;
+  c->flex_on = false;
   c->fb_on = false;
   c->fb_downbeat = true;
   c->fb_upbeat = true;
   c->fb_upbeat_high = false;
   c->fb_doubled = false;
-  select_fb_voice(0); // TODO
-  select_jawharp_voice(5); // TODO
-  select_flex_voice(5); // TODO
   c->current_fb_note = -1;
   c->current_fb_fifth = -1;
   c->current_fb_len = -1;
@@ -229,6 +245,33 @@ void clear_configuration() {
 
   c->air_locked = false;
   c->locked_air = 0;
+
+  for (int i = 0; i < MIDI_MAX; i++) {
+    c->volume_deltas[i] = 0;
+  }
+  for (int i = 0 ; i < N_ENDPOINTS; i++) {
+    c->voices[i] = 0;
+  }
+
+  c->selected_endpoint = ENDPOINT_JAWHARP;
+  select_voice(c, 67);
+
+  c->selected_endpoint = ENDPOINT_FOOTBASS;
+  select_voice(c, 39);
+
+  c->selected_endpoint = ENDPOINT_FLEX;
+  select_voice(c, 81);
+
+  c->selected_endpoint = ENDPOINT_LOW;
+  select_voice(c, 39);
+
+  c->selected_endpoint = ENDPOINT_HI;
+  select_voice(c, 39);
+
+  c->selected_endpoint = ENDPOINT_OVERLAY;
+  select_voice(c, 39);
+
+  c->selected_endpoint = ENDPOINT_JAWHARP;
 }
 
 void clear_status() {
@@ -273,13 +316,13 @@ void voices_reset() {
 }
 
 
-//  The flex organ follows organ_flex_breath and organ_flex_base.
-//  organ_flex_breath follows breath.
-int organ_flex_base = 0;
-int organ_flex_breath = 0;
-int last_organ_flex_val = 1;
-int organ_flex_val() {
-  return organ_flex_breath;
+//  The flex organ follows flex_breath and flex_base.
+//  flex_breath follows breath.
+int flex_base = 0;
+int flex_breath = 0;
+int last_flex_val = 1;
+int flex_val() {
+  return flex_breath;
 }
 
 // Only some endpoints use this, and some only use it some of the time:
@@ -704,17 +747,6 @@ char mapping(unsigned char note_in) {
   }
 }
 
-void endpoint_notes_off(int endpoint) {
-  // send an explicit all notes off command
-  send_midi(MIDI_CC, 123, 0, endpoint);
-}
-
-void all_notes_off() {
-  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-    endpoint_notes_off(endpoint);
-  }
-}
-
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (note_in > MIDI_MAX) {
     return;
@@ -749,28 +781,20 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }
 
-  if (c->hammond_on && !is_bass) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_HAMMOND);
-  }
   if (c->organ_low_on && is_bass) {
     send_midi(mode, note_in,
               c->organ_low_piano_vel ? val : 100,
-              ENDPOINT_ORGAN_LOW);
+              ENDPOINT_LOW);
   }
-  if (c->organ_flex_on) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_ORGAN_FLEX);
+  if (c->organ_hi_on && !is_bass) {
+    send_midi(mode, note_in,
+              c->organ_hi_piano_vel ? val : 100,
+              ENDPOINT_HI);
   }
-  if (c->sine_pad_on) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SINE_PAD);
-  }
-  if (c->sweep_pad_on) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_SWEEP_PAD);
-  }
-  if (c->overdriven_rhodes_on) {
-    send_midi(mode, note_in, val, ENDPOINT_OVERDRIVEN_RHODES);
-  }
-  if (c->rhodes_on) {
-    send_midi(mode, note_in, val, ENDPOINT_RHODES);
+  if (c->overlay_on) {
+    send_midi(mode, note_in,
+              c->overlay_piano_vel ? val : 100,
+              ENDPOINT_OVERLAY);
   }
 }
 
@@ -790,11 +814,27 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   printf("recv: %c\n", note_in);
 
   switch (note_in) {
+  case DELETE:
+    // Manual arp air entry
+    c->fb_follows_air = false;
+    c->fb_air = val;
+    return;
   case ESCAPE:
     full_reset();
     return;
-  case 'W':
-    // toggle jawharp
+  case '-':
+    c->volume_deltas[c->voices[c->selected_endpoint]]--;
+    reload_voice_setting(c);
+    return;
+  case '=': // +
+    c->volume_deltas[c->voices[c->selected_endpoint]]++;
+    reload_voice_setting(c);
+    return;
+  case '1':
+    c->selected_endpoint = ENDPOINT_JAWHARP;
+    return;
+  case 'Q':
+    c->selected_endpoint = ENDPOINT_JAWHARP;
     endpoint_notes_off(ENDPOINT_JAWHARP);
     c->jawharp_on = !c->jawharp_on;
 
@@ -804,109 +844,47 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       jawharp_off();
     }
     return;
-  case 'E':
-    endpoint_notes_off(ENDPOINT_ORGAN_FLEX);
-    c->organ_flex_on = !c->organ_flex_on;
+  case '2':
+    c->selected_endpoint = ENDPOINT_FOOTBASS;
     return;
-  case 'R':
-    endpoint_notes_off(ENDPOINT_SINE_PAD);
-    c->sine_pad_on = !c->sine_pad_on;
-    return;
-  case 'T':
-    // toggle arp
-    c->fb_on = !c->fb_on;
+  case 'W':
+    c->selected_endpoint = ENDPOINT_FOOTBASS;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
+    c->fb_on = !c->fb_on;
     if (c->fb_on) {
       send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
     }
     return;
-  case 'Y':
-    c->fb_downbeat = !c->fb_downbeat;
+  case '3':
+    c->selected_endpoint = ENDPOINT_FLEX;
     return;
-  case 'K':
-    c->fb_upbeat = !c->fb_upbeat;
+  case 'E':
+    c->selected_endpoint = ENDPOINT_FLEX;
+    endpoint_notes_off(ENDPOINT_FLEX);
+    c->flex_on = !c->flex_on;
     return;
-  case 'U':
-    c->fb_upbeat_high = !c->fb_upbeat_high;
+  case '4':
+    c->selected_endpoint = ENDPOINT_LOW;
     return;
-  case 'I':
-    c->fb_doubled = !c->fb_doubled;
-    return;
-  case 'O':
-    jig_time = !jig_time;
-    return;
-  case 'A':
-    select_fb_voice(0);
-    return;
-  case 'S':
-    select_fb_voice(1);
-    return;
-  case 'D':
-    select_fb_voice(2);
-    return;
-  case 'F':
-    select_fb_voice(3);
-    return;
-  case 'G':
-    select_fb_voice(4);
-    return;
-  case 'H':
-    select_fb_voice(5);
-    return;
-  case 'Z':
-    select_jawharp_voice(0);
-    return;
-  case 'X':
-    select_jawharp_voice(1);
-    return;
-  case 'C':
-    select_jawharp_voice(2);
-    return;
-  case 'V':
-    select_jawharp_voice(3);
-    return;
-  case 'B':
-    select_jawharp_voice(4);
-    return;
-  case 'N':
-    select_jawharp_voice(5);
-    return;
-  case 'M':
-    select_jawharp_voice(6);
-    return;
-  case F1:
-    select_flex_voice(0);
-    return;
-  case F2:
-    select_flex_voice(1);
-    return;
-  case F3:
-    select_flex_voice(2);
-    return;
-  case F4:
-    select_flex_voice(3);
-    return;
-  case F5:
-    select_flex_voice(4);
-    return;
-  case F6:
-    select_flex_voice(5);
-    return;
-  case 'L':
-    if (c->fb_follows_air) {
-      c->fb_air = air;
-      c->fb_follows_air = false;
-    } else {
-      air = c->fb_air;
-      c->fb_follows_air = true;
+  case 'R':
+    c->selected_endpoint = ENDPOINT_LOW;
+    endpoint_notes_off(ENDPOINT_LOW);
+    c->organ_low_on = !c->organ_low_on;
+    if (c->organ_low_on) {  // separate volumes?  endpoints?
+      send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
     }
     return;
-  case DELETE:
-    // Manual arp air entry
-    c->fb_follows_air = false;
-    c->fb_air = val;
+
+  case 'U':
+    c->fb_downbeat = !c->fb_downbeat;
     return;
-  case 'J':
+  case 'I':
+    c->fb_upbeat = !c->fb_upbeat;
+    return;
+  case 'O':
+    c->fb_doubled = !c->fb_doubled;
+    return;
+  case 'P':
     c->fb_pre_unique = !c->fb_pre_unique;
     return;
   case '[':
@@ -916,34 +894,42 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->fb_short = !c->fb_short;
     return;
   case '\\':
-    c->fb_chord = !c->fb_chord;
-    endpoint_notes_off(ENDPOINT_FOOTBASS);
-    return;
-  case '\'':
     c->fb_shorter = !c->fb_shorter;
     return;
+  case 'L':
+    c->fb_upbeat_high = !c->fb_upbeat_high;
+    return;
   case ';':
-    c->organ_low_on = !c->organ_low_on;
-    endpoint_notes_off(ENDPOINT_ORGAN_LOW);
-    if (c->organ_low_on) {  // separate volumes?  endpoints?
-      send_midi(MIDI_CC, CC_11, FOOTBASS_VOLUME, ENDPOINT_FOOTBASS);
-    }
+    jig_time = !jig_time;
+    return;
+  case '\'':
+    c->fb_chord = !c->fb_chord;
+    endpoint_notes_off(ENDPOINT_FOOTBASS);
     return;
   case '.':
     c->organ_low_piano_vel = !c->organ_low_piano_vel;
     return;
-  case '/':
+  case '?':
     c->jawharp_full_on = !c->jawharp_full_on;
-    if (c->jawharp_full_on) {
-      send_midi(MIDI_CC, CC_11, MIDI_MAX, ENDPOINT_JAWHARP);
-    } else {
-      send_midi(MIDI_CC, CC_11, 0, ENDPOINT_JAWHARP);
-    }
-    return;
-  case ',':
-    return;
-  case '`':
-    return;
+    send_midi(MIDI_CC, CC_11,
+              c->jawharp_full_on ? MIDI_MAX : 0, ENDPOINT_JAWHARP);
+
+  case 'A': select_voice(c, 39); return;
+  case 'S': select_voice(c, 38); return;
+  case 'D': select_voice(c, 84); return;
+  case 'F': select_voice(c, 35); return;
+  case 'G': select_voice(c, 26); return;
+  case 'H': select_voice(c, 28); return;
+  case 'J': select_voice(c, 75); return;
+  case 'K': select_voice(c, 80); return;
+  case 'Z': select_voice(c,  4); return;
+  case 'X': select_voice(c, 24); return;
+  case 'C': select_voice(c, 85); return;
+  case 'V': select_voice(c, 64); return;
+  case 'B': select_voice(c, 66); return;
+  case 'N': select_voice(c, 67); return;
+  case 'M': select_voice(c, 81); return;
+
   }
 }
 
@@ -968,12 +954,11 @@ void handle_cc(unsigned int cc, unsigned int val) {
   }
 
   breath = val;
-  send_midi(MIDI_CC, CC_MOD, val, ENDPOINT_HAMMOND);
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     if (endpoint != ENDPOINT_JAWHARP &&
-        endpoint != ENDPOINT_ORGAN_FLEX) {
+        endpoint != ENDPOINT_FLEX) {
       continue;
     }
     int use_val = normalize(val);
@@ -989,10 +974,10 @@ void handle_cc(unsigned int cc, unsigned int val) {
       }
     }
 
-    if (endpoint == ENDPOINT_ORGAN_FLEX) {
-      organ_flex_breath = use_val;
-      use_val = organ_flex_val();
-      last_organ_flex_val = use_val;
+    if (endpoint == ENDPOINT_FLEX) {
+      flex_breath = use_val;
+      use_val = flex_val();
+      last_flex_val = use_val;
     }
     if (endpoint != ENDPOINT_JAWHARP || !c->jawharp_full_on) {
       send_midi(MIDI_CC, CC_11, use_val, endpoint);
@@ -1108,8 +1093,8 @@ int last_air_val = 0;
 void forward_air() {
   int val = air;
 
-  organ_flex_base = val;
-  int organ_flex_value = organ_flex_val();
+  flex_base = val;
+  int flex_value = flex_val();
 
   if (c->air_locked) {
     val = c->locked_air;
@@ -1120,20 +1105,13 @@ void forward_air() {
   }
 
   if (val != last_air_val) {
-    if (!c->fb_on && ENDPOINT_ORGAN_LOW == ENDPOINT_FOOTBASS) {
-      send_midi(MIDI_CC, CC_11, val, ENDPOINT_ORGAN_LOW);
-    }
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_HAMMOND);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SINE_PAD);
-    send_midi(MIDI_CC, CC_11, val, ENDPOINT_SWEEP_PAD);
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_OVERDRIVEN_RHODES);
-    send_midi(MIDI_CC, CC_07, val, ENDPOINT_RHODES);
+    // add option to make instruments follow breath.  If so, they would go here
+    // with send_midi(MIDI_CC, CC_11, val, endpoint);
     last_air_val = val;
   }
-  if (organ_flex_value != last_organ_flex_val) {
-    send_midi(MIDI_CC, CC_11, organ_flex_value, ENDPOINT_ORGAN_FLEX);
-
-    last_organ_flex_val = organ_flex_value;
+  if (flex_value != last_flex_val) {
+    send_midi(MIDI_CC, CC_11, flex_value, ENDPOINT_FLEX);
+    last_flex_val = flex_value;
   }
 }
 

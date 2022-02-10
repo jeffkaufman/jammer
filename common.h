@@ -6,24 +6,16 @@ void die(char *errmsg) {
   exit(-1);
 }
 
-void select_fb_voice(int voice_index);
-void select_jawharp_voice(int voice_index);
-void select_flex_voice(int voice_index);
+void select_endpoint_voice(int endpoint, int voice, int volume_delta);
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
-#define ENDPOINT_HAMMOND 1
-#define ENDPOINT_ORGAN_LOW 2
-#define ENDPOINT_ORGAN_FLEX 3
-#define ENDPOINT_RHODES 4
-#define ENDPOINT_OVERDRIVEN_RHODES 4
-#define ENDPOINT_SINE_PAD 6
-#define ENDPOINT_SWEEP_PAD 7
-#define N_ENDPOINTS (ENDPOINT_SWEEP_PAD+1)
-
-// aliases
-#define ENDPOINT_FOOTBASS ENDPOINT_ORGAN_LOW
-
+#define ENDPOINT_FOOTBASS 1
+#define ENDPOINT_FLEX 2
+#define ENDPOINT_LOW 3
+#define ENDPOINT_HI 3
+#define ENDPOINT_OVERLAY 4
+#define N_ENDPOINTS (ENDPOINT_OVERLAY+1)
 
 /* midi values */
 #define MIDI_OFF 0x80
@@ -35,37 +27,5 @@ void select_flex_voice(int voice_index);
 #define CC_BREATH 0x02
 #define CC_07 0x07
 #define CC_11 0x0b
-
-#define N_FB_VOICES 6
-static int fb_voices[N_FB_VOICES] = {
-   39,  // Synth Bass 2
-   38,  // Synth Bass 1
-   84,  // Lead 3 (calliope)
-   35,  // Electric Bass (finger)
-   26,  // Acoustic Guitar (nylon)
-   28,  // Electric Guitar (jazz)
-};
-
-#define N_JAWHARP_VOICES 7
-static int jawharp_voices[N_JAWHARP_VOICES] = {
-   4,  // Electric Piano 1
-   24,
-   26,
-   64,
-   66,
-   67,
-   81,  // Lead 2 (sawtooth)
-};
-
-#define N_FLEX_VOICES 6
-static int flex_voices[N_FLEX_VOICES] = {
-   85,  // Lead 6 (voice)
-   75,  // Pan Flute
-   80,  // Lead 1 (square)
-   39,  // Synth Bass 2
-   84,  // Lead 3 (calliope)
-   81,  // Lead 2 (sawtooth)
-};
-
 
 #endif
