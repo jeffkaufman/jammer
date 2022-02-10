@@ -823,11 +823,11 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     full_reset();
     return;
   case '-':
-    c->volume_deltas[c->voices[c->selected_endpoint]]--;
+    c->volume_deltas[c->voices[c->selected_endpoint]] -= 5;
     reload_voice_setting(c);
     return;
   case '=': // +
-    c->volume_deltas[c->voices[c->selected_endpoint]]++;
+    c->volume_deltas[c->voices[c->selected_endpoint]] += 5;
     reload_voice_setting(c);
     return;
   case '1':
