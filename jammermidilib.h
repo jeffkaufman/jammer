@@ -812,21 +812,23 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
 
   printf("recv: %c\n", note_in);
 
+  int selected_voice = c->voices[c->selected_endpoint];
+
   switch (note_in) {
   case DELETE:
     // Manual volume entry
-    c->manual_volumes[c->voices[c->selected_endpoint]] = val;
-    c->volume_deltas[c->voices[c->selected_endpoint]] = 0;
+    c->manual_volumes[selected_voice] = val;
+    c->volume_deltas[selected_voice] = 0;
     return;
   case ESCAPE:
     full_reset();
     return;
   case '-':
-    c->volume_deltas[c->voices[c->selected_endpoint]] -= 5;
+    c->volume_deltas[selected_voice] -= 5;
     reload_voice_setting(c);
     return;
   case '=': // +
-    c->volume_deltas[c->voices[c->selected_endpoint]] += 5;
+    c->volume_deltas[selected_voice] += 5;
     reload_voice_setting(c);
     return;
   case '1':
