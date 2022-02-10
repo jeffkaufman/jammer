@@ -6,7 +6,7 @@ void die(char *errmsg) {
   exit(-1);
 }
 
-void select_endpoint_voice(int endpoint, int voice, int volume_delta);
+void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual_volume);
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0

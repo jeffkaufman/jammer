@@ -135,7 +135,6 @@ struct Configuration {
   int current_fb_len;
   bool air_locked;
   double locked_air;
-  double fb_air;
   bool fb_follows_air;
   bool fb_short;
   bool fb_shorter;
@@ -143,6 +142,7 @@ struct Configuration {
   bool fb_pre_unique;
   bool fb_chord;
   int volume_deltas[MIDI_MAX];
+  int manual_volumes[MIDI_MAX];
   int voices[N_ENDPOINTS];
 };
 
@@ -204,7 +204,8 @@ void reload_voice_setting(struct Configuration* c) {
   int endpoint = c->selected_endpoint;
   int voice = c->voices[endpoint];
   int volume_delta = c->volume_deltas[voice];
-  select_endpoint_voice(endpoint, voice, volume_delta);
+  int manual_volume = c->manual_volumes[voice];
+  select_endpoint_voice(endpoint, voice, volume_delta, manual_volume);
 }
 
 void select_voice(struct Configuration* c, int voice) {
@@ -233,7 +234,6 @@ void clear_configuration() {
   c->current_fb_len = -1;
 
   c->fb_follows_air = false;
-  c->fb_air = 40;
 
   c->fb_short = false;
   c->fb_shorter = false;
@@ -246,6 +246,9 @@ void clear_configuration() {
 
   for (int i = 0; i < MIDI_MAX; i++) {
     c->volume_deltas[i] = 0;
+  }
+  for (int i = 0; i < MIDI_MAX; i++) {
+    c->manual_volumes[i] = -1;
   }
   for (int i = 0 ; i < N_ENDPOINTS; i++) {
     c->voices[i] = 0;
@@ -451,24 +454,19 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
 
   if (send_note) {
     if (selected_note != -1) {
-      if (c->fb_follows_air) {
-        c->fb_air = air;
-      }
-      int vol = c->fb_air > MIDI_MAX ? MIDI_MAX : c->fb_air;
-
       c->current_fb_note = selected_note;
       c->current_fb_fifth = to_fifth(selected_note);
       c->current_fb_len = 0;
 
       send_midi(MIDI_ON,
                 c->current_fb_note,
-                vol,  // 90,
+                90,
                 ENDPOINT_FOOTBASS);
 
       if (c->fb_chord) {
         send_midi(MIDI_ON,
                   c->current_fb_fifth,
-                  vol,  // 90,
+                  90,
                   ENDPOINT_FOOTBASS);
       }
 
@@ -816,9 +814,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
 
   switch (note_in) {
   case DELETE:
-    // Manual arp air entry
-    c->fb_follows_air = false;
-    c->fb_air = val;
+    // Manual volume entry
+    c->manual_volumes[c->voices[c->selected_endpoint]] = val;
+    c->volume_deltas[c->voices[c->selected_endpoint]] = 0;
     return;
   case ESCAPE:
     full_reset();
@@ -868,6 +866,22 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->selected_endpoint = ENDPOINT_LOW;
     endpoint_notes_off(ENDPOINT_LOW);
     c->organ_low_on = !c->organ_low_on;
+    return;
+  case '5':
+    c->selected_endpoint = ENDPOINT_HI;
+    return;
+  case 'T':
+    c->selected_endpoint = ENDPOINT_HI;
+    endpoint_notes_off(ENDPOINT_HI);
+    c->organ_hi_on = !c->organ_hi_on;
+    return;
+  case '6':
+    c->selected_endpoint = ENDPOINT_OVERLAY;
+    return;
+  case 'Y':
+    c->selected_endpoint = ENDPOINT_OVERLAY;
+    endpoint_notes_off(ENDPOINT_OVERLAY);
+    c->overlay_on = !c->overlay_on;
     return;
 
   case 'U':
@@ -1127,12 +1141,12 @@ void jml_tick() {
 
   // play startup chime
   if (tick_n == 0) {
-    send_midi(MIDI_ON, 16, 100, ENDPOINT_LOW);
+    send_midi(MIDI_ON, 30, 100, ENDPOINT_LOW);
   } else if (tick_n == 500) {
-    send_midi(MIDI_OFF, 16, 100, ENDPOINT_LOW);
-    send_midi(MIDI_ON, 21, 100, ENDPOINT_LOW);
+    send_midi(MIDI_OFF, 30, 100, ENDPOINT_LOW);
+    send_midi(MIDI_ON, 42, 100, ENDPOINT_LOW);
   } else if (tick_n == 2000) {
-    send_midi(MIDI_OFF, 21, 100, ENDPOINT_LOW);
+    send_midi(MIDI_OFF, 42, 100, ENDPOINT_LOW);
   }
 
   // Called every TICK_MS

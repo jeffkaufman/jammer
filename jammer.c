@@ -286,9 +286,9 @@ void handle_event(snd_seq_event_t* event) {
   }
 }
 
-void select_endpoint_voice(int endpoint, int voice, int volume_delta) {
+void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual_volume) {
   send_midi(MIDI_CC, CC_07, 0, endpoint);
-  
+
   int volume = 0;
   switch (voice) {
 
@@ -330,12 +330,16 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta) {
     break;
   }
 
+  if (manual_volume != -1) {
+    volume = manual_volume;
+  }
+
   volume += volume_delta;
 
   if (endpoint == ENDPOINT_FLEX) {
     volume = volume / 1.5;
   }
-  
+
   send_midi(MIDI_CC, CC_07, volume, endpoint);
   choose_voice(endpoint, 0, voice);
 }
