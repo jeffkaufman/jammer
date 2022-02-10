@@ -786,17 +786,17 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
   if (c->organ_low_on && is_bass) {
     send_midi(mode, note_in,
-              c->organ_low_piano_vel ? val : 100,
+              c->organ_low_piano_vel ? val : 75,
               ENDPOINT_LOW);
   }
   if (c->organ_hi_on && !is_bass) {
     send_midi(mode, note_in,
-              c->organ_hi_piano_vel ? val : 100,
+              c->organ_hi_piano_vel ? val : 75,
               ENDPOINT_HI);
   }
   if (c->overlay_on) {
     send_midi(mode, note_in,
-              c->overlay_piano_vel ? val : 100,
+              c->overlay_piano_vel ? val : 75,
               ENDPOINT_OVERLAY);
   }
 }
