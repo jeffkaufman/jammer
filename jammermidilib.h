@@ -156,6 +156,7 @@ struct Configuration* c = &global_config;
 
 bool piano_notes[MIDI_MAX];
 int root_note;
+int last_update_bass_note;
 int fifth_note;
 uint64_t kick_times[KICK_TIMES_LENGTH];
 int kick_times_index;
@@ -300,6 +301,7 @@ void clear_status() {
     piano_notes[i] = false;
   }
   root_note = to_root(26);  // D @ 37Hz
+  last_update_bass_note = 0;
 
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
     kick_times[i] = 0;
@@ -631,9 +633,12 @@ void update_bass() {
   int note_out = active_note();
 
   uint64_t current_time = now();
-  if (c->fb_on && current_time - last_downbeat_ns > NS_PER_SEC) {
+  if (c->fb_on && current_time - last_downbeat_ns > NS_PER_SEC &&
+      note_out != last_update_bass_note) {
     arpeggiate(0, current_time);
   }
+
+  last_update_bass_note = note_out;
 
   if (breath < 3 && !c->jawharp_full_on) return;
 
