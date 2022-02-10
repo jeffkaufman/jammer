@@ -37,7 +37,7 @@
 //    ;    jig reel
 //    '    fb chord
 //    .    organ uses piano vel
-//    ?    jawharp drones
+//    /    jawharp drones
 
 //    A    39 Synth Bass 2
 //    S    38 Synth Bass 1
@@ -909,7 +909,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '.':
     c->organ_low_piano_vel = !c->organ_low_piano_vel;
     return;
-  case '?':
+  case '/':
     c->jawharp_full_on = !c->jawharp_full_on;
     send_midi(MIDI_CC, CC_11,
               c->jawharp_full_on ? MIDI_MAX : 0, ENDPOINT_JAWHARP);
