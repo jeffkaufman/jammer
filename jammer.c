@@ -293,7 +293,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual
   switch (voice) {
 
   case 80:
-    volume = 57;
+    volume = 62;
     break;
   case 81:
     volume = 60;
@@ -305,7 +305,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual
     volume = 82;
     break;
   case 85:
-    volume = 84;
+    volume = 80;
     break;
   case 75:
     volume = 87;
@@ -337,7 +337,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual
   volume += volume_delta;
 
   if (endpoint == ENDPOINT_FLEX) {
-    volume = volume / 1.5;
+    volume -= 24;
   } else if (endpoint == ENDPOINT_FOOTBASS) {
     volume -= 20;
   } else if (endpoint == ENDPOINT_LOW) {
