@@ -1183,7 +1183,7 @@ void jml_tick() {
     send_midi(MIDI_OFF, 28, 100, ENDPOINT_LOW);
     send_midi(MIDI_ON, 33, 100, ENDPOINT_LOW);
   } else if (tick_n == 2000) {
-    send_midi(MIDI_OFF, 3, 100, ENDPOINT_LOW);
+    send_midi(MIDI_OFF, 33, 100, ENDPOINT_LOW);
   }
 
   // Called every TICK_MS
