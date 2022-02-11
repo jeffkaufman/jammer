@@ -144,6 +144,7 @@ struct Configuration {
   int volume_deltas[MIDI_MAX];
   int manual_volumes[MIDI_MAX];
   int voices[N_ENDPOINTS];
+  bool pans[N_ENDPOINTS];
 };
 
 // TODO: allow multiple of these.
@@ -206,7 +207,8 @@ void reload_voice_setting(struct Configuration* c) {
   int voice = c->voices[endpoint];
   int volume_delta = c->volume_deltas[voice];
   int manual_volume = c->manual_volumes[voice];
-  select_endpoint_voice(endpoint, voice, volume_delta, manual_volume);
+  bool pan = c->pans[endpoint];
+  select_endpoint_voice(endpoint, voice, volume_delta, manual_volume, pan);
 }
 
 void select_voice(struct Configuration* c, int voice) {
@@ -278,6 +280,7 @@ void clear_endpoint() {
   case ENDPOINT_HI: clear_high(); return;
   case ENDPOINT_OVERLAY: clear_overlay(); return;
   }
+  c->pans[c->selected_endpoint] = false;
 }
 
 void clear_configuration() {
@@ -851,6 +854,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case F1:
     clear_endpoint();
+    return;
+  case F2:
+    c->pans[c->selected_endpoint] = !c->pans[c->selected_endpoint];
+    reload_voice_setting(c);
     return;
   case '-':
     c->volume_deltas[selected_voice] -= 5;

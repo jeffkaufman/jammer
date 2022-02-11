@@ -6,7 +6,8 @@ void die(char *errmsg) {
   exit(-1);
 }
 
-void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual_volume);
+void select_endpoint_voice(int endpoint, int voice, int volume_delta,
+                           int manual_volume, bool pan);
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
@@ -26,6 +27,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual
 #define CC_MOD 0x01
 #define CC_BREATH 0x02
 #define CC_07 0x07
+#define CC_PAN 0x0a
 #define CC_11 0x0b
 
 #endif
