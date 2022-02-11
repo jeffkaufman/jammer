@@ -338,6 +338,10 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta, int manual
 
   if (endpoint == ENDPOINT_FLEX) {
     volume = volume / 1.5;
+  } else if (endpoint == ENDPOINT_FOOTBASS) {
+    volume -= 20;
+  } else if (endpoint == ENDPOINT_LOW) {
+    volume += 10;
   }
 
   send_midi(MIDI_CC, CC_07, volume, endpoint);
