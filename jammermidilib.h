@@ -181,6 +181,8 @@ void print_kick_times(uint64_t current_time) {
   }
 }
 
+void update_bass();
+
 int to_root(int note_out) {
   int offset = 4;
   return (note_out - offset) % 12 + 24 + offset;
@@ -215,6 +217,10 @@ void select_voice(struct Configuration* c, int voice) {
   endpoint_notes_off(c->selected_endpoint);
   c->voices[c->selected_endpoint] = voice;
   reload_voice_setting(c);
+  if (c->selected_endpoint == ENDPOINT_FOOTBASS ||
+      c->selected_endpoint == ENDPOINT_JAWHARP) {
+    update_bass();
+  }
 }
 
 void clear_jawharp() {
@@ -966,6 +972,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->jawharp_full_on = !c->jawharp_full_on;
     send_midi(MIDI_CC, CC_11,
               c->jawharp_full_on ? MIDI_MAX : 0, ENDPOINT_JAWHARP);
+    update_bass();
     return;
 
   case 'A': select_voice(c, 39); return;
