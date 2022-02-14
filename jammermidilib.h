@@ -966,6 +966,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->jawharp_full_on = !c->jawharp_full_on;
     send_midi(MIDI_CC, CC_11,
               c->jawharp_full_on ? MIDI_MAX : 0, ENDPOINT_JAWHARP);
+    return;
 
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
