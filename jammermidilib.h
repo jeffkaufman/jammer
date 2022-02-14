@@ -894,6 +894,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->selected_endpoint = ENDPOINT_FOOTBASS;
     endpoint_notes_off(ENDPOINT_FOOTBASS);
     c->fb_on = !c->fb_on;
+    update_bass();
     return;
   case '3':
     c->selected_endpoint = ENDPOINT_FLEX;
