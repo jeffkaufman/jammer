@@ -563,7 +563,7 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
                 90,
                 ENDPOINT_ARP);
 
-      if (c->fb_chord) {
+      if (c->arp_chord) {
         send_midi(MIDI_ON,
                   c->current_arp_fifth,
                   90,
