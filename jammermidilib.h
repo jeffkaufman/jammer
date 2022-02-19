@@ -481,11 +481,15 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
 
   int note_out = active_note();
   int selected_note = note_out;
+  int fifth = to_fifth(selected_note);
   bool send_note = false;
 
   select_note(subbeat, c->fb_octave_up, c->fb_chord, c->fb_downbeat,
               c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
               c->fb_doubled, &selected_note, &send_note);
+  select_note(subbeat, c->fb_octave_up, c->fb_chord, c->fb_downbeat,
+              c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
+              c->fb_doubled, &fifth, &send_note);
 
   bool end_note = send_note ||
     should_end_note(c->current_fb_len, c->fb_short, c->fb_shorter);
@@ -504,7 +508,7 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
   if (send_note) {
     if (selected_note != -1) {
       c->current_fb_note = selected_note;
-      c->current_fb_fifth = to_fifth(selected_note);
+      c->current_fb_fifth = fifth;
       c->current_fb_len = 0;
 
       send_midi(MIDI_ON,
@@ -532,11 +536,15 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
 
   int note_out = active_note();
   int selected_note = note_out;
+  int fifth = to_fifth(selected_note);
   bool send_note = false;
 
   select_note(subbeat, c->arp_octave_up, c->arp_chord, c->arp_downbeat,
               c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
               c->arp_doubled, &selected_note, &send_note);
+  select_note(subbeat, c->arp_octave_up, c->arp_chord, c->arp_downbeat,
+              c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
+              c->arp_doubled, &fifth, &send_note);
 
   bool end_note = send_note ||
     should_end_note(c->current_arp_len, c->arp_short, c->arp_shorter);
@@ -555,7 +563,7 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
   if (send_note) {
     if (selected_note != -1) {
       c->current_arp_note = selected_note;
-      c->current_arp_fifth = to_fifth(selected_note);
+      c->current_arp_fifth = fifth;
       c->current_arp_len = 0;
 
       send_midi(MIDI_ON,
