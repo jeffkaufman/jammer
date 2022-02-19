@@ -297,13 +297,13 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
     volume = 62;
     break;
   case 81:
-    volume = 60;
+    volume = 100;
     break;
   case 84:
     volume = 68;
     break;
   case 38:
-    volume = 82;
+    volume = 87;
     break;
   case 85:
     volume = 80;
@@ -312,22 +312,32 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
     volume = 87;
     break;
   case 39:
-    volume = 96;
+    volume = 86;
     break;
   case 7:
     volume = 98;
     break;
+  case 35:
+    volume = 107;
+    break;
   case 24:
+    volume = 102;
+    break;
+  case 64:
+    volume = 87;
+    break;
+  case 66:
+    volume = 82;
+    break;
+  case 67:
+    volume = 92;
+    break;
   case 26:
   case 28:
-  case 35:
-  case 64:
-  case 66:
-  case 67:
     volume = 112;
     break;
   case 4:
-    volume = 127;
+    volume = 122;
     break;
   }
 
@@ -343,6 +353,20 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
     volume -= 20;
   } else if (endpoint == ENDPOINT_LOW) {
     volume += 10;
+  }
+
+  if (endpoint == ENDPOINT_OVERLAY ||
+      endpoint == ENDPOINT_FLEX ||
+      endpoint == ENDPOINT_HI) {
+    if (voice == 39) {
+      volume -= 10;
+    } else if (voice == 26) {
+      volume -= 20;
+    } else if (voice == 4) {
+      volume -= 15;
+    } else if (voice == 64) {
+      volume -= 10;
+    }
   }
 
   send_midi(MIDI_CC, CC_07, volume, endpoint);
