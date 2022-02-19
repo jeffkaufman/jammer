@@ -492,7 +492,7 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
 
   if (end_note && c->current_fb_note != -1) {
     send_midi(MIDI_OFF, c->current_fb_note, 0, ENDPOINT_FOOTBASS);
-    if (c->fb_chord) {
+    if (c->current_fb_fifth != -1) {
       send_midi(MIDI_OFF, c->current_fb_fifth, 0, ENDPOINT_FOOTBASS);
     }
 
@@ -543,7 +543,7 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
 
   if (end_note && c->current_arp_note != -1) {
     send_midi(MIDI_OFF, c->current_arp_note, 0, ENDPOINT_ARP);
-    if (c->arp_chord) {
+    if (c->current_arp_fifth != -1) {
       send_midi(MIDI_OFF, c->current_arp_fifth, 0, ENDPOINT_ARP);
     }
 
