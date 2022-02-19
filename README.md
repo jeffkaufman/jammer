@@ -81,3 +81,17 @@ https://github.com/jeffkaufman/whistle-synth
 3. Run imager
 
 4. Install Raspberry PI OS Lite
+
+5. Connect a keyboard and monitor and log in: pi/raspberry
+
+6. Change the password to something more secure
+
+7. Use the automated setup tool:
+
+   i. Set the country to US
+
+   ii. Configure Wi-Fi
+
+   iii. Enable SSH
+
+8. sudo apt install emacs mosh
