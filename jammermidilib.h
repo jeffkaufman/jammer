@@ -534,8 +534,6 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
   int selected_note = note_out;
   bool send_note = false;
 
-  selected_note += 12;  // arp is higher than fb
-
   select_note(subbeat, c->arp_octave_up, c->arp_chord, c->arp_downbeat,
               c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
               c->arp_doubled, &selected_note, &send_note);
