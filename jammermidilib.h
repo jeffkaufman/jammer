@@ -235,7 +235,7 @@ void clear_footbass() {
 }
 
 void clear_arp() {
-  select_voice(c, 39);
+  select_voice(c, 38);
 
   c->arp_on = false;
   c->arp_downbeat = true;
