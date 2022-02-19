@@ -5,40 +5,6 @@
 // https://www.midi.org/specifications-old/item/table-1-summary-of-midi-message
 // https://www.midi.org/specifications-old/item/table-3-control-change-messages-data-bytes-2
 
-// New layout:
-//
-//    +    volume up
-//    -    volume down
-//  del    manual volume entry
-//  esc    full reset
-
-//    note: toggling an instrument also selects it
-//    1    jawharp select
-//    Q    jawharp mute
-//    2    footbass select
-//    W    footbass mute
-//    3    flex select
-//    E    flex mute
-//    4    organ low select
-//    R    organ low mute
-//    5    organ high select
-//    T    organ high mute
-//    6    overlay select
-//    Y    overlay mute
-
-//    U    fb downbeat
-//    I    fb upbeat
-//    O    fb doubled
-//    P    fb pre unique
-//    [    fb octave up
-//    ]    fb short
-//    \    fb shorter
-//    L    fb upbeat hi
-//    ;    jig reel
-//    '    fb chord
-//    .    organ uses piano vel
-//    /    jawharp drones
-
 //    A    39 Synth Bass 2
 //    S    38 Synth Bass 1
 //    D    84 Lead 3 (calliope)
@@ -56,8 +22,7 @@
 //    M    81 Lead 2 (sawtooth)
 
 // For every instrument there's a default volume modifier, and also for every
-// voice.  Then each combination also has a dynamic modifier, adjusted by +/-
-// that is saved and restored from a volume_[instrument]_[voice] file.
+// voice.  Then each combination also has a dynamic modifier, adjusted by +/-.
 
 #define MIDI_DRUM_IN_SNARE 46
 #define MIDI_DRUM_IN_KICK 38
@@ -125,6 +90,7 @@ struct Configuration {
   bool overlay_on;
   bool overlay_piano_vel;
   bool flex_on;
+
   bool fb_on;
   bool fb_downbeat;
   bool fb_upbeat;
@@ -133,14 +99,30 @@ struct Configuration {
   int current_fb_note;
   int current_fb_fifth;
   int current_fb_len;
-  bool air_locked;
-  double locked_air;
-  bool fb_follows_air;
   bool fb_short;
   bool fb_shorter;
   bool fb_octave_up;
   bool fb_pre_unique;
   bool fb_chord;
+
+  bool arp_on;
+  bool arp_downbeat;
+  bool arp_upbeat;
+  bool arp_upbeat_high;
+  bool arp_doubled;
+  int current_arp_note;
+  int current_arp_fifth;
+  int current_arp_len;
+  bool arp_short;
+  bool arp_shorter;
+  bool arp_octave_up;
+  bool arp_pre_unique;
+  bool arp_chord;
+
+  bool air_locked;
+  double locked_air;
+  bool fb_follows_air;
+
   int volume_deltas[MIDI_MAX];
   int manual_volumes[MIDI_MAX];
   int voices[N_ENDPOINTS];
@@ -218,6 +200,7 @@ void select_voice(struct Configuration* c, int voice) {
   c->voices[c->selected_endpoint] = voice;
   reload_voice_setting(c);
   if (c->selected_endpoint == ENDPOINT_FOOTBASS ||
+      c->selected_endpoint == ENDPOINT_ARP ||
       c->selected_endpoint == ENDPOINT_JAWHARP) {
     update_bass();
   }
@@ -243,11 +226,32 @@ void clear_footbass() {
 
   c->fb_follows_air = false;
 
-  c->fb_short = false;
-  c->fb_shorter = false;
   c->fb_octave_up = false;
   c->fb_pre_unique = false;
   c->fb_chord = false;
+
+  c->fb_short = false;
+  c->fb_shorter = false;
+}
+
+void clear_arp() {
+  select_voice(c, 39);
+
+  c->arp_on = false;
+  c->arp_downbeat = true;
+  c->arp_upbeat = true;
+  c->arp_upbeat_high = true;
+  c->arp_doubled = true;
+  c->current_arp_note = -1;
+  c->current_arp_fifth = -1;
+  c->current_arp_len = -1;
+
+  c->arp_octave_up = false;
+  c->arp_pre_unique = false;
+  c->arp_chord = false;
+
+  c->arp_short = false;
+  c->arp_shorter = false;
 }
 
 void clear_flex() {
@@ -281,6 +285,7 @@ void clear_endpoint() {
   switch (c->selected_endpoint) {
   case ENDPOINT_JAWHARP: clear_jawharp(); return;
   case ENDPOINT_FOOTBASS: clear_footbass(); return;
+  case ENDPOINT_ARP: clear_arp(); return;
   case ENDPOINT_FLEX: clear_flex(); return;
   case ENDPOINT_LOW: clear_low(); return;
   case ENDPOINT_HI: clear_high(); return;
@@ -408,6 +413,64 @@ bool predown(int subbeat) {
   return subbeat == (3*72/4-1);
 }
 
+void select_note(int subbeat, bool octave_up, bool chord, bool send_downbeat,
+                 bool send_upbeat, bool upbeat_high, bool pre_unique,
+                 bool doubled, int* selected_note, bool* send_note) {
+  if (octave_up) {
+    *selected_note += 12;
+  }
+
+  if (chord) {
+    *selected_note += 12;
+  }
+
+  if (downbeat(subbeat)) {
+    *send_note = send_downbeat;
+  } else if (upbeat(subbeat)) {
+    *send_note = send_upbeat;
+    if (upbeat_high && pre_unique) {
+      *selected_note += 24;
+    } else if (upbeat_high || pre_unique) {
+      *selected_note += 12;
+    }
+  } else if (preup(subbeat) && !jig_time) {
+    *send_note = send_downbeat && doubled;
+    if (pre_unique) {
+      if (upbeat_high) {
+        *selected_note += 12;
+      } else {
+        *selected_note += 7;
+      }
+    }
+  } else if (predown(subbeat) || preup(subbeat)) {
+    *send_note = send_upbeat && doubled;
+
+    if (upbeat_high && pre_unique) {
+      *selected_note += 36;
+    } else if (pre_unique) {
+      *selected_note += 12 + 7;
+    } else if (upbeat_high) {
+      *selected_note += 12;
+    }
+  }
+}
+
+bool should_end_note(int current_len, bool is_short, bool is_shorter) {
+  if (current_len != -1 && (is_short || is_shorter)) {
+    int threshold = jig_time ? 24 : 18;  // kept if short only
+    if (is_short && is_shorter) {
+      threshold /= 3;
+    } else if (is_shorter) {
+      threshold /= 2;
+    }
+    if (current_len >= threshold) {
+      return true;
+    }
+  }
+  return false;
+}
+
+
 void arpeggiate_bass(int subbeat, uint64_t current_time) {
   if (!c->fb_on) return;
 
@@ -419,60 +482,14 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
   int selected_note = note_out;
   bool send_note = false;
 
-  if (c->fb_octave_up) {
-    selected_note += 12;
-  }
+  select_note(subbeat, c->fb_octave_up, c->fb_chord, c->fb_downbeat,
+              c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
+              c->fb_doubled, &selected_note, &send_note);
 
-  if (c->fb_chord) {
-    selected_note += 12;
-  }
-
-  if (downbeat(subbeat)) {
-    send_note = c->fb_downbeat;
-  } else if (upbeat(subbeat)) {
-    send_note = c->fb_upbeat;
-    if (c->fb_upbeat_high && c->fb_pre_unique) {
-      selected_note += 24;
-    } else if (c->fb_upbeat_high || c->fb_pre_unique) {
-      selected_note += 12;
-    }
-  } else if (preup(subbeat) && !jig_time) {
-    send_note = c->fb_downbeat && c->fb_doubled;
-    if (c->fb_pre_unique) {
-      if (c->fb_upbeat_high) {
-        selected_note += 12;
-      } else {
-        selected_note += 7;
-      }
-    }
-  } else if (predown(subbeat) || preup(subbeat)) {
-    send_note = c->fb_upbeat && c->fb_doubled;
-
-    if (c->fb_upbeat_high && c->fb_pre_unique) {
-      selected_note += 36;
-    } else if (c->fb_pre_unique) {
-      selected_note += 12 + 7;
-    } else if (c->fb_upbeat_high) {
-      selected_note += 12;
-    }
-  }
-
-  bool end_note = send_note;
-
-  if (c->current_fb_len != -1 && (c->fb_short || c->fb_shorter)) {
-    int threshold = jig_time ? 24 : 18;  // kept if fb_short only
-    if (c->fb_short && c->fb_shorter) {
-      threshold /= 3;
-    } else if (c->fb_shorter) {
-      threshold /= 2;
-    }
-    if (c->current_fb_len >= threshold) {
-      end_note = true;
-    }
-  }
+  bool end_note = send_note ||
+    should_end_note(c->current_fb_len, c->fb_short, c->fb_shorter);
 
   if (end_note && c->current_fb_note != -1) {
-    //printf("footbass end note %d\n", current_fb_note);
     send_midi(MIDI_OFF, c->current_fb_note, 0, ENDPOINT_FOOTBASS);
     if (c->fb_chord) {
       send_midi(MIDI_OFF, c->current_fb_fifth, 0, ENDPOINT_FOOTBASS);
@@ -500,6 +517,58 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
                   90,
                   ENDPOINT_FOOTBASS);
       }
+    }
+  }
+}
+
+void arpeggiate_arp(int subbeat, uint64_t current_time) {
+  if (!c->arp_on) return;
+
+  if (c->current_arp_note != -1) {
+    c->current_arp_len++;
+  }
+
+  int note_out = active_note();
+  int selected_note = note_out;
+  bool send_note = false;
+
+  selected_note += 12;  // arp is higher than fb
+
+  select_note(subbeat, c->arp_octave_up, c->arp_chord, c->arp_downbeat,
+              c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
+              c->arp_doubled, &selected_note, &send_note);
+
+  bool end_note = send_note ||
+    should_end_note(c->current_arp_len, c->arp_short, c->arp_shorter);
+
+  if (end_note && c->current_arp_note != -1) {
+    send_midi(MIDI_OFF, c->current_arp_note, 0, ENDPOINT_ARP);
+    if (c->arp_chord) {
+      send_midi(MIDI_OFF, c->current_arp_fifth, 0, ENDPOINT_ARP);
+    }
+
+    c->current_arp_note = -1;
+    c->current_arp_fifth = -1;
+    c->current_arp_len = -1;
+  }
+
+  if (send_note) {
+    if (selected_note != -1) {
+      c->current_arp_note = selected_note;
+      c->current_arp_fifth = to_fifth(selected_note);
+      c->current_arp_len = 0;
+
+      send_midi(MIDI_ON,
+                c->current_arp_note,
+                90,
+                ENDPOINT_ARP);
+
+      if (c->fb_chord) {
+        send_midi(MIDI_ON,
+                  c->current_arp_fifth,
+                  90,
+                  ENDPOINT_ARP);
+      }
 
       //printf("footbass start note %d\n", current_fb_note);
     }
@@ -508,6 +577,7 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
 
 void arpeggiate(int subbeat, uint64_t current_time) {
   arpeggiate_bass(subbeat, current_time);
+  arpeggiate_arp(subbeat, current_time);
 }
 
 uint64_t delta(uint64_t a, uint64_t b) {
@@ -897,68 +967,114 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     update_bass();
     return;
   case '3':
-    c->selected_endpoint = ENDPOINT_FLEX;
+    c->selected_endpoint = ENDPOINT_ARP;
     return;
   case 'E':
+    c->selected_endpoint = ENDPOINT_ARP;
+    endpoint_notes_off(ENDPOINT_ARP);
+    c->arp_on = !c->arp_on;
+    update_bass();
+    return;
+  case '4':
+    c->selected_endpoint = ENDPOINT_FLEX;
+    return;
+  case 'R':
     c->selected_endpoint = ENDPOINT_FLEX;
     endpoint_notes_off(ENDPOINT_FLEX);
     c->flex_on = !c->flex_on;
     return;
-  case '4':
+  case '5':
     c->selected_endpoint = ENDPOINT_LOW;
     return;
-  case 'R':
+  case 'T':
     c->selected_endpoint = ENDPOINT_LOW;
     endpoint_notes_off(ENDPOINT_LOW);
     c->organ_low_on = !c->organ_low_on;
     return;
-  case '5':
+  case '6':
     c->selected_endpoint = ENDPOINT_HI;
     return;
-  case 'T':
+  case 'Y':
     c->selected_endpoint = ENDPOINT_HI;
     endpoint_notes_off(ENDPOINT_HI);
     c->organ_hi_on = !c->organ_hi_on;
     return;
-  case '6':
+  case '7':
     c->selected_endpoint = ENDPOINT_OVERLAY;
     return;
-  case 'Y':
+  case 'U':
     c->selected_endpoint = ENDPOINT_OVERLAY;
     endpoint_notes_off(ENDPOINT_OVERLAY);
     c->overlay_on = !c->overlay_on;
     return;
 
-  case 'U':
-    c->fb_downbeat = !c->fb_downbeat;
-    return;
   case 'I':
-    c->fb_upbeat = !c->fb_upbeat;
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_downbeat = !c->arp_downbeat;
+    } else {
+      c->fb_downbeat = !c->fb_downbeat;
+    }
     return;
   case 'O':
-    c->fb_doubled = !c->fb_doubled;
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_upbeat = !c->arp_upbeat;
+    } else {
+      c->fb_upbeat = !c->fb_upbeat;
+    }
     return;
   case 'P':
-    c->fb_pre_unique = !c->fb_pre_unique;
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_doubled = !c->arp_doubled;
+    } else {
+      c->fb_doubled = !c->fb_doubled;
+    }
     return;
   case '[':
-    c->fb_octave_up = !c->fb_octave_up;
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_pre_unique = !c->arp_pre_unique;
+    } else {
+      c->fb_pre_unique = !c->fb_pre_unique;
+    }
     return;
   case ']':
-    c->fb_short = !c->fb_short;
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_octave_up = !c->arp_octave_up;
+    } else {
+      c->fb_octave_up = !c->fb_octave_up;
+    }
     return;
   case '\\':
-    c->fb_shorter = !c->fb_shorter;
-    return;
-  case 'L':
-    c->fb_upbeat_high = !c->fb_upbeat_high;
-    return;
-  case ';':
     jig_time = !jig_time;
     return;
+  case 'L':
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_upbeat_high = !c->arp_upbeat_high;
+    } else {
+      c->fb_upbeat_high = !c->fb_upbeat_high;
+    }
+    return;
+  case ';':
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_short = !c->arp_short;
+    } else {
+      c->fb_short = !c->fb_short;
+    }
+    return;
   case '\'':
-    c->fb_chord = !c->fb_chord;
-    endpoint_notes_off(ENDPOINT_FOOTBASS);
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_shorter = !c->arp_shorter;
+    } else {
+      c->fb_shorter = !c->fb_shorter;
+    }
+    return;
+  case ',':
+    if (c->selected_endpoint == ENDPOINT_ARP) {
+      c->arp_chord = !c->arp_chord;
+      endpoint_notes_off(ENDPOINT_ARP);
+    } else {
+      c->fb_chord = !c->fb_chord;
+      endpoint_notes_off(ENDPOINT_FOOTBASS);
+    }
     return;
   case '.':
     if (c->selected_endpoint == ENDPOINT_LOW) {

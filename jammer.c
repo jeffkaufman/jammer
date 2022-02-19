@@ -351,13 +351,16 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
     volume -= 24;
   } else if (endpoint == ENDPOINT_FOOTBASS) {
     volume -= 20;
+  } else if (endpoint == ENDPOINT_ARP) {
+    volume -= 40;
   } else if (endpoint == ENDPOINT_LOW) {
     volume += 10;
   }
 
   if (endpoint == ENDPOINT_OVERLAY ||
       endpoint == ENDPOINT_FLEX ||
-      endpoint == ENDPOINT_HI) {
+      endpoint == ENDPOINT_HI ||
+      endpoint == ENDPOINT_ARP) {
     if (voice == 39) {
       volume -= 10;
     } else if (voice == 26) {
