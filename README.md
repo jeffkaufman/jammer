@@ -25,6 +25,8 @@ sudo apt install fluidsynth fluid-soundfont-gm alsa-utils jackd2
 
 (When JACK asks if it can have realtime priority, say yes)
 
+Check out this repo and put it at `/home/pi/jammer/`.
+
 To run on boot, `/etc/systemd/system/fluidsynth.service` should have:
 
 ```
@@ -94,4 +96,4 @@ https://github.com/jeffkaufman/whistle-synth
 
    iii. Enable SSH
 
-8. sudo apt install emacs mosh
+8. `sudo apt install emacs mosh`
