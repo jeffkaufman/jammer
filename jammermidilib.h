@@ -712,7 +712,7 @@ void update_bass() {
   int note_out = active_note();
 
   uint64_t current_time = now();
-  if (c->fb_on && current_time - last_downbeat_ns > NS_PER_SEC &&
+  if (current_time - last_downbeat_ns > NS_PER_SEC &&
       note_out != last_update_bass_note) {
     arpeggiate(0, current_time);
   }
