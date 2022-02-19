@@ -15,6 +15,8 @@ And send audio to fluidsynth.
 
 ## Setup
 
+First set up the Raspberry PI (see below)
+
 Install deps
 
 ```
@@ -69,3 +71,13 @@ on whether we're in whistle mode or jammer mode.
 
 Regardless, continue with setting up at least the keyboard listener portion of
 https://github.com/jeffkaufman/whistle-synth
+
+## Raspberry PI Setup
+
+1. Put the micro SD card into an adapter and attach to laptop
+
+2. Download the imager: https://www.raspberrypi.com/software/
+
+3. Run imager
+
+4. Install Raspberry PI OS Lite
