@@ -471,8 +471,9 @@ bool should_end_note(int current_len, bool is_short, bool is_shorter) {
 }
 
 
-void arpeggiate_bass(int subbeat, uint64_t current_time) {
+void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
   if (!c->fb_on) return;
+  if (drone && c->current_fb_note == -1) return;
 
   if (c->current_fb_note != -1) {
     c->current_fb_len++;
@@ -521,8 +522,9 @@ void arpeggiate_bass(int subbeat, uint64_t current_time) {
   }
 }
 
-void arpeggiate_arp(int subbeat, uint64_t current_time) {
+void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
   if (!c->arp_on) return;
+  if (drone && c->current_fb_note == -1) return;
 
   if (c->current_arp_note != -1) {
     c->current_arp_len++;
@@ -575,9 +577,9 @@ void arpeggiate_arp(int subbeat, uint64_t current_time) {
   }
 }
 
-void arpeggiate(int subbeat, uint64_t current_time) {
-  arpeggiate_bass(subbeat, current_time);
-  arpeggiate_arp(subbeat, current_time);
+void arpeggiate(int subbeat, uint64_t current_time, bool drone) {
+  arpeggiate_bass(subbeat, current_time, drone);
+  arpeggiate_arp(subbeat, current_time, drone);
 }
 
 uint64_t delta(uint64_t a, uint64_t b) {
@@ -676,7 +678,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
   if (acceptable_error) {
     current_beat_ns = whole_beat;
 
-    arpeggiate(0, current_time);
+    arpeggiate(0, current_time, /*drone=*/false);
     last_downbeat_ns = current_time;
 
     next_ns[0] = current_time;
@@ -714,7 +716,7 @@ void update_bass() {
   uint64_t current_time = now();
   if (current_time - last_downbeat_ns > NS_PER_SEC &&
       note_out != last_update_bass_note) {
-    arpeggiate(0, current_time);
+    arpeggiate(0, current_time, /*drone=*/true);
   }
 
   last_update_bass_note = note_out;
@@ -1298,7 +1300,7 @@ void trigger_subbeats() {
 
   for (int i = 1 /* 0 is triggered by kick directly */; i < N_SUBBEATS; i++) {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
-      arpeggiate(i, current_time);
+      arpeggiate(i, current_time, /*drone=*/false);
       next_ns[i] = 0;
     }
   }
