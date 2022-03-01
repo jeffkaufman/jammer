@@ -107,11 +107,14 @@ https://github.com/jeffkaufman/whistle-synth
 
 ```
 $ sudo emacs /etc/apt/sources.list
-  -> uncomment deb-src line
+     uncomment deb-src line
 $ sudo apt-get update
 $ sudo apt-get build-dep fluidsynth --no-install-recommends
 $ git clone git@github.com:FluidSynth/fluidsynth.git
 $ cd fluidsynth
+$ emacs src/drivers/fluid_adriver.c
+     find fluid_settings_register_int(settings, "audio.periods", 16, ...)
+     repl fluid_settings_register_int(settings, "audio.periods", 2, ...)
 $ mkdir build
 $ cd build
 $ cmake ..
