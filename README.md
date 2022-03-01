@@ -102,3 +102,18 @@ https://github.com/jeffkaufman/whistle-synth
    iii. Enable SSH
 
 8. `sudo apt install emacs mosh git`
+
+### Fluidsynth from source
+
+```
+$ sudo emacs /etc/apt/sources.list
+  -> uncomment deb-src line
+$ sudo apt-get update
+$ sudo apt-get build-dep fluidsynth --no-install-recommends
+$ git clone git@github.com:FluidSynth/fluidsynth.git
+$ cd fluidsynth
+$ mkdir build
+$ cd build
+$ cmake ..
+$ make
+```
