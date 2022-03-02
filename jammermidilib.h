@@ -175,9 +175,17 @@ int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
 }
 
+void psend_midi(int action, int note, int velocity, int endpoint) {
+  if ((action == MIDI_ON || action == MIDI_OFF) &&
+      c->voices[endpoint] == 16) {
+    note += 12;  // Drawbar organ should be up an octave
+  }
+  send_midi(action, note, velocity, endpoint);
+}
+
 void endpoint_notes_off(int endpoint) {
   // send an explicit all notes off command
-  send_midi(MIDI_CC, 123, 0, endpoint);
+  psend_midi(MIDI_CC, 123, 0, endpoint);
 }
 
 void all_notes_off() {
@@ -394,7 +402,7 @@ float subbeat_location() {
 
 void jawharp_off() {
   if (current_note[ENDPOINT_JAWHARP] != -1) {
-    send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
+    psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = -1;
   }
 }
@@ -495,9 +503,9 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
     should_end_note(c->current_fb_len, c->fb_short, c->fb_shorter);
 
   if (end_note && c->current_fb_note != -1) {
-    send_midi(MIDI_OFF, c->current_fb_note, 0, ENDPOINT_FOOTBASS);
+    psend_midi(MIDI_OFF, c->current_fb_note, 0, ENDPOINT_FOOTBASS);
     if (c->current_fb_fifth != -1) {
-      send_midi(MIDI_OFF, c->current_fb_fifth, 0, ENDPOINT_FOOTBASS);
+      psend_midi(MIDI_OFF, c->current_fb_fifth, 0, ENDPOINT_FOOTBASS);
     }
 
     c->current_fb_note = -1;
@@ -511,13 +519,13 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
       c->current_fb_fifth = fifth;
       c->current_fb_len = 0;
 
-      send_midi(MIDI_ON,
+      psend_midi(MIDI_ON,
                 c->current_fb_note,
                 90,
                 ENDPOINT_FOOTBASS);
 
       if (c->fb_chord) {
-        send_midi(MIDI_ON,
+        psend_midi(MIDI_ON,
                   c->current_fb_fifth,
                   90,
                   ENDPOINT_FOOTBASS);
@@ -550,9 +558,9 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
     should_end_note(c->current_arp_len, c->arp_short, c->arp_shorter);
 
   if (end_note && c->current_arp_note != -1) {
-    send_midi(MIDI_OFF, c->current_arp_note, 0, ENDPOINT_ARP);
+    psend_midi(MIDI_OFF, c->current_arp_note, 0, ENDPOINT_ARP);
     if (c->current_arp_fifth != -1) {
-      send_midi(MIDI_OFF, c->current_arp_fifth, 0, ENDPOINT_ARP);
+      psend_midi(MIDI_OFF, c->current_arp_fifth, 0, ENDPOINT_ARP);
     }
 
     c->current_arp_note = -1;
@@ -566,13 +574,13 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
       c->current_arp_fifth = fifth;
       c->current_arp_len = 0;
 
-      send_midi(MIDI_ON,
+      psend_midi(MIDI_ON,
                 c->current_arp_note,
                 90,
                 ENDPOINT_ARP);
 
       if (c->arp_chord) {
-        send_midi(MIDI_ON,
+        psend_midi(MIDI_ON,
                   c->current_arp_fifth,
                   90,
                   ENDPOINT_ARP);
@@ -731,7 +739,7 @@ void update_bass() {
 
   if (c->jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
     jawharp_off();
-    send_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
+    psend_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = note_out;
   }
 }
@@ -890,20 +898,20 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   if (c->flex_on) {
-    send_midi(mode, note_in, MIDI_MAX, ENDPOINT_FLEX);
+    psend_midi(mode, note_in, MIDI_MAX, ENDPOINT_FLEX);
   }
   if (c->organ_low_on && is_bass) {
-    send_midi(mode, note_in,
+    psend_midi(mode, note_in,
               c->organ_low_piano_vel ? val : 75,
               ENDPOINT_LOW);
   }
   if (c->organ_hi_on && !is_bass) {
-    send_midi(mode, note_in,
+    psend_midi(mode, note_in,
               c->organ_hi_piano_vel ? val : 75,
               ENDPOINT_HI);
   }
   if (c->overlay_on) {
-    send_midi(mode, note_in,
+    psend_midi(mode, note_in,
               c->overlay_piano_vel ? val : 75,
               ENDPOINT_OVERLAY);
   }
@@ -1095,7 +1103,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case '/':
     c->jawharp_full_on = !c->jawharp_full_on;
-    send_midi(MIDI_CC, CC_11,
+    psend_midi(MIDI_CC, CC_11,
               c->jawharp_full_on ? MIDI_MAX : 0, ENDPOINT_JAWHARP);
     update_bass();
     return;
@@ -1115,7 +1123,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'B': select_voice(c, 66); return;
   case 'N': select_voice(c, 67); return;
   case 'M': select_voice(c, 81); return;
-
+  case F3:  select_voice(c,  0); return;
+  case F4:  select_voice(c,  5); return;
+  case F5:  select_voice(c, 16); return;
+  case F6:  select_voice(c, 18); return;
   }
 }
 
@@ -1152,7 +1163,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
     if (endpoint == ENDPOINT_JAWHARP) {
       if (breath < 10 &&
           current_note[ENDPOINT_JAWHARP] != -1) {
-        send_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
+        psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
                   ENDPOINT_JAWHARP);
         current_note[ENDPOINT_JAWHARP] = -1;
       } else if (breath > 20) {
@@ -1166,7 +1177,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
       last_flex_val = use_val;
     }
     if (endpoint != ENDPOINT_JAWHARP || !c->jawharp_full_on) {
-      send_midi(MIDI_CC, CC_11, use_val, endpoint);
+      psend_midi(MIDI_CC, CC_11, use_val, endpoint);
     }
   }
 }
@@ -1292,11 +1303,11 @@ void forward_air() {
 
   if (val != last_air_val) {
     // add option to make instruments follow breath.  If so, they would go here
-    // with send_midi(MIDI_CC, CC_11, val, endpoint);
+    // with psend_midi(MIDI_CC, CC_11, val, endpoint);
     last_air_val = val;
   }
   if (flex_value != last_flex_val) {
-    send_midi(MIDI_CC, CC_11, flex_value, ENDPOINT_FLEX);
+    psend_midi(MIDI_CC, CC_11, flex_value, ENDPOINT_FLEX);
     last_flex_val = flex_value;
   }
 }
@@ -1318,12 +1329,12 @@ void jml_tick() {
 
   // play startup chime
   if (tick_n == 0) {
-    send_midi(MIDI_ON, 28, 100, ENDPOINT_LOW);
+    psend_midi(MIDI_ON, 28, 100, ENDPOINT_LOW);
   } else if (tick_n == 500) {
-    send_midi(MIDI_OFF, 28, 100, ENDPOINT_LOW);
-    send_midi(MIDI_ON, 33, 100, ENDPOINT_LOW);
+    psend_midi(MIDI_OFF, 28, 100, ENDPOINT_LOW);
+    psend_midi(MIDI_ON, 33, 100, ENDPOINT_LOW);
   } else if (tick_n == 2000) {
-    send_midi(MIDI_OFF, 33, 100, ENDPOINT_LOW);
+    psend_midi(MIDI_OFF, 33, 100, ENDPOINT_LOW);
   }
 
   // Called every TICK_MS

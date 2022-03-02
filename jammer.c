@@ -290,14 +290,14 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
                            int manual_volume, bool pan) {
   send_midi(MIDI_CC, CC_07, 0, endpoint);
 
-  int volume = 0;
+  int volume = 70;
   switch (voice) {
 
   case 80:
     volume = 62;
     break;
   case 81:
-    volume = 100;
+    volume = 90;
     break;
   case 84:
     volume = 68;
@@ -338,6 +338,16 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
     break;
   case 4:
     volume = 122;
+    break;
+  case 0:
+  case 18:
+    volume = 100;
+    break;
+  case 5:
+    volume = 90;
+    break;
+  case 16:
+    volume = 110;
     break;
   }
 
