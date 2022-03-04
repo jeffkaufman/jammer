@@ -177,8 +177,9 @@ int to_fifth(int note_out) {
 
 void psend_midi(int action, int note, int velocity, int endpoint) {
   if ((action == MIDI_ON || action == MIDI_OFF) &&
-      c->voices[endpoint] == 16) {
-    note += 12;  // Drawbar organ should be up an octave
+      (c->voices[endpoint] == 16 ||
+       c->voices[endpoint] == 18)) {
+    note += 12;  // organs should be up an octave
   }
   send_midi(action, note, velocity, endpoint);
 }
