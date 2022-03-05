@@ -101,7 +101,6 @@ struct Configuration {
   int current_fb_len;
   bool fb_short;
   bool fb_shorter;
-  bool fb_octave_up;
   bool fb_pre_unique;
   bool fb_chord;
 
@@ -115,18 +114,19 @@ struct Configuration {
   int current_arp_len;
   bool arp_short;
   bool arp_shorter;
-  bool arp_octave_up;
   bool arp_pre_unique;
   bool arp_chord;
-
-  bool air_locked;
-  double locked_air;
-  bool fb_follows_air;
 
   int volume_deltas[MIDI_MAX];
   int manual_volumes[MIDI_MAX];
   int voices[N_ENDPOINTS];
   bool pans[N_ENDPOINTS];
+
+  int octave_deltas[N_ENDPOINTS];
+
+  bool air_lockeds[N_ENDPOINTS];
+  double locked_airs[N_ENDPOINTS];
+  bool follows_air[N_ENDPOINTS];
 };
 
 // TODO: allow multiple of these.
@@ -223,7 +223,6 @@ void clear_jawharp() {
 
 void clear_footbass() {
   select_voice(c, 39);
-
   c->fb_on = false;
   c->fb_downbeat = true;
   c->fb_upbeat = true;
@@ -233,9 +232,6 @@ void clear_footbass() {
   c->current_fb_fifth = -1;
   c->current_fb_len = -1;
 
-  c->fb_follows_air = false;
-
-  c->fb_octave_up = false;
   c->fb_pre_unique = false;
   c->fb_chord = false;
 
@@ -255,7 +251,6 @@ void clear_arp() {
   c->current_arp_fifth = -1;
   c->current_arp_len = -1;
 
-  c->arp_octave_up = false;
   c->arp_pre_unique = false;
   c->arp_chord = false;
 
@@ -301,12 +296,14 @@ void clear_endpoint() {
   case ENDPOINT_OVERLAY: clear_overlay(); return;
   }
   c->pans[c->selected_endpoint] = false;
+  c->octave_deltas[c->selected_endpoint] = 0;
+  c->air_lockeds[c->selected_endpoint] = false;
+  c->locked_airs[c->selected_endpoint] = 0;
+  c->follows_air[c->selected_endpoint] = false;
+  psend_midi(MIDI_CC, CC_11, 100, c->selected_endpoint);
 }
 
 void clear_configuration() {
-  c->air_locked = false;
-  c->locked_air = 0;
-
   for (int i = 0; i < MIDI_MAX; i++) {
     c->volume_deltas[i] = 0;
   }
@@ -422,12 +419,10 @@ bool predown(int subbeat) {
   return subbeat == (3*72/4-1);
 }
 
-void select_note(int subbeat, bool octave_up, bool chord, bool send_downbeat,
+void select_note(int subbeat, int octave_delta, bool chord, bool send_downbeat,
                  bool send_upbeat, bool upbeat_high, bool pre_unique,
                  bool doubled, int* selected_note, bool* send_note) {
-  if (octave_up) {
-    *selected_note += 12;
-  }
+  *selected_note += octave_delta * 12;
 
   if (chord) {
     *selected_note += 12;
@@ -493,10 +488,12 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
   int fifth = to_fifth(selected_note);
   bool send_note = false;
 
-  select_note(subbeat, c->fb_octave_up, c->fb_chord, c->fb_downbeat,
+  select_note(subbeat, c->octave_deltas[ENDPOINT_FOOTBASS],
+	      c->fb_chord, c->fb_downbeat,
               c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
               c->fb_doubled, &selected_note, &send_note);
-  select_note(subbeat, c->fb_octave_up, c->fb_chord, c->fb_downbeat,
+  select_note(subbeat, c->octave_deltas[ENDPOINT_FOOTBASS],
+	      c->fb_chord, c->fb_downbeat,
               c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
               c->fb_doubled, &fifth, &send_note);
 
@@ -548,10 +545,12 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
   int fifth = to_fifth(selected_note);
   bool send_note = false;
 
-  select_note(subbeat, c->arp_octave_up, c->arp_chord, c->arp_downbeat,
+  select_note(subbeat, c->octave_deltas[ENDPOINT_ARP],
+	      c->arp_chord, c->arp_downbeat,
               c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
               c->arp_doubled, &selected_note, &send_note);
-  select_note(subbeat, c->arp_octave_up, c->arp_chord, c->arp_downbeat,
+  select_note(subbeat,  c->octave_deltas[ENDPOINT_ARP],
+	      c->arp_chord, c->arp_downbeat,
               c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
               c->arp_doubled, &fifth, &send_note);
 
@@ -923,9 +922,16 @@ void full_reset() {
   all_notes_off();
 }
 
-void air_lock() {
-  c->air_locked = !c->air_locked;
-  c->locked_air = air;
+void toggle_air_locked() {
+  c->air_lockeds[c->selected_endpoint] = !c->air_lockeds[c->selected_endpoint];
+  c->locked_airs[c->selected_endpoint] = air;
+}
+
+void toggle_follows_air() {
+  c->follows_air[c->selected_endpoint] = !c->follows_air[c->selected_endpoint];
+  psend_midi(MIDI_CC, CC_11,
+	     c->follows_air[c->selected_endpoint] ? 0 : 100,
+	     c->selected_endpoint);
 }
 
 void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
@@ -1054,14 +1060,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     }
     return;
   case ']':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_octave_up = !c->arp_octave_up;
-    } else {
-      c->fb_octave_up = !c->fb_octave_up;
-    }
+    c->octave_deltas[c->selected_endpoint]++;
     return;
   case '\\':
-    jig_time = !jig_time;
+    c->octave_deltas[c->selected_endpoint]--;
     return;
   case 'L':
     if (c->selected_endpoint == ENDPOINT_ARP) {
@@ -1108,6 +1110,16 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
               c->jawharp_full_on ? MIDI_MAX : 0, ENDPOINT_JAWHARP);
     update_bass();
     return;
+  case '8':
+    toggle_air_locked();
+    return;
+  case '9':
+    toggle_follows_air();
+    return;
+  case '0':
+    jig_time = !jig_time;
+    return;
+    
 
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
@@ -1279,7 +1291,7 @@ void jml_setup() {
 void update_air() {
   // see calculate_breath_speeds()
   air *= leakage;
-  air += (breath * breath_gain * (c->fb_follows_air ? 0.25 : 1));
+  air += breath * breath_gain;
   if (air > max_air) {
     air = max_air;
   }
@@ -1294,17 +1306,19 @@ void forward_air() {
   flex_base = val;
   int flex_value = flex_val();
 
-  if (c->air_locked) {
-    val = c->locked_air;
-  }
-
   if (val > MIDI_MAX) {
     val = MIDI_MAX;
   }
 
   if (val != last_air_val) {
-    // add option to make instruments follow breath.  If so, they would go here
-    // with psend_midi(MIDI_CC, CC_11, val, endpoint);
+    for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+      if (c->follows_air[endpoint]) {
+	psend_midi(MIDI_CC, CC_11,
+		   c->air_lockeds[endpoint] ? c->locked_airs[endpoint] : val,
+		   endpoint);
+      }
+    }
+    
     last_air_val = val;
   }
   if (flex_value != last_flex_val) {
