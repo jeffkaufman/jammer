@@ -176,10 +176,12 @@ int to_fifth(int note_out) {
 }
 
 void psend_midi(int action, int note, int velocity, int endpoint) {
-  if ((action == MIDI_ON || action == MIDI_OFF) &&
-      (c->voices[endpoint] == 16 ||
-       c->voices[endpoint] == 18)) {
-    note += 12;  // organs should be up an octave
+  if (action == MIDI_ON || action == MIDI_OFF) {
+    if (c->voices[endpoint] == 16 ||
+	c->voices[endpoint] == 18) {
+      note += 12;  // organs should be up an octave
+    }
+    note += c->octave_deltas[endpoint]*12;
   }
   send_midi(action, note, velocity, endpoint);
 }
@@ -287,13 +289,13 @@ void clear_overlay() {
 
 void clear_endpoint() {
   switch (c->selected_endpoint) {
-  case ENDPOINT_JAWHARP: clear_jawharp(); return;
-  case ENDPOINT_FOOTBASS: clear_footbass(); return;
-  case ENDPOINT_ARP: clear_arp(); return;
-  case ENDPOINT_FLEX: clear_flex(); return;
-  case ENDPOINT_LOW: clear_low(); return;
-  case ENDPOINT_HI: clear_high(); return;
-  case ENDPOINT_OVERLAY: clear_overlay(); return;
+  case ENDPOINT_JAWHARP: clear_jawharp(); break;
+  case ENDPOINT_FOOTBASS: clear_footbass(); break;
+  case ENDPOINT_ARP: clear_arp(); break;
+  case ENDPOINT_FLEX: clear_flex(); break;
+  case ENDPOINT_LOW: clear_low(); break;
+  case ENDPOINT_HI: clear_high(); break;
+  case ENDPOINT_OVERLAY: clear_overlay(); break;
   }
   c->pans[c->selected_endpoint] = false;
   c->octave_deltas[c->selected_endpoint] = 0;
@@ -419,11 +421,9 @@ bool predown(int subbeat) {
   return subbeat == (3*72/4-1);
 }
 
-void select_note(int subbeat, int octave_delta, bool chord, bool send_downbeat,
+void select_note(int subbeat, bool chord, bool send_downbeat,
                  bool send_upbeat, bool upbeat_high, bool pre_unique,
                  bool doubled, int* selected_note, bool* send_note) {
-  *selected_note += octave_delta * 12;
-
   if (chord) {
     *selected_note += 12;
   }
@@ -488,12 +488,10 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
   int fifth = to_fifth(selected_note);
   bool send_note = false;
 
-  select_note(subbeat, c->octave_deltas[ENDPOINT_FOOTBASS],
-	      c->fb_chord, c->fb_downbeat,
+  select_note(subbeat, c->fb_chord, c->fb_downbeat,
               c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
               c->fb_doubled, &selected_note, &send_note);
-  select_note(subbeat, c->octave_deltas[ENDPOINT_FOOTBASS],
-	      c->fb_chord, c->fb_downbeat,
+  select_note(subbeat, c->fb_chord, c->fb_downbeat,
               c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
               c->fb_doubled, &fifth, &send_note);
 
@@ -545,12 +543,10 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
   int fifth = to_fifth(selected_note);
   bool send_note = false;
 
-  select_note(subbeat, c->octave_deltas[ENDPOINT_ARP],
-	      c->arp_chord, c->arp_downbeat,
+  select_note(subbeat, c->arp_chord, c->arp_downbeat,
               c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
               c->arp_doubled, &selected_note, &send_note);
-  select_note(subbeat,  c->octave_deltas[ENDPOINT_ARP],
-	      c->arp_chord, c->arp_downbeat,
+  select_note(subbeat, c->arp_chord, c->arp_downbeat,
               c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
               c->arp_doubled, &fifth, &send_note);
 
@@ -1060,9 +1056,11 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     }
     return;
   case ']':
+    endpoint_notes_off(c->selected_endpoint);
     c->octave_deltas[c->selected_endpoint]++;
     return;
   case '\\':
+    endpoint_notes_off(c->selected_endpoint);
     c->octave_deltas[c->selected_endpoint]--;
     return;
   case 'L':
