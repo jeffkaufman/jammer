@@ -274,14 +274,14 @@ void clear_low() {
 }
 
 void clear_high() {
-  select_voice(c, 39);
+  select_voice(c, 16);
 
   c->organ_hi_on = false;
   c->organ_hi_piano_vel = false;
 }
 
 void clear_overlay() {
-  select_voice(c, 39);
+  select_voice(c, 18);
 
   c->overlay_on = false;
   c->overlay_piano_vel = false;

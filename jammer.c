@@ -347,7 +347,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
     volume = 90;
     break;
   case 16:
-    volume = 110;
+    volume = 80;
     break;
   }
 
