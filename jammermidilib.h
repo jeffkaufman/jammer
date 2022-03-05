@@ -166,7 +166,7 @@ void print_kick_times(uint64_t current_time) {
 void update_bass();
 
 int to_root(int note_out) {
-  int offset = 4;
+  int offset = 0;
   return (note_out - offset) % 12 + 24 + offset;
 }
 
