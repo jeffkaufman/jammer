@@ -67,6 +67,10 @@
 #define F10 (107)
 #define DELETE (108)
 #define ESCAPE (109)
+#define UP (110)
+#define LEFT (111)
+#define DOWN (112)
+#define RIGHT (113)
 
 #define MODE_MAJOR 1
 #define MODE_MIXO 2
@@ -418,7 +422,7 @@ void clear_status() {
   allow_all_drums_downbeat = false;
 
   drum_chooses_notes = false;
-  musical_mode = MODE_MAJOR;
+  musical_mode = MODE_MIXO;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
   is_minor_chord = false;
 }
@@ -1201,6 +1205,21 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case F10:
     allow_all_drums_downbeat = !allow_all_drums_downbeat;
+    return;
+  case F9:
+    drum_chooses_notes = !drum_chooses_notes;
+    return;
+  case UP:
+    musical_mode = MODE_MAJOR;
+    return;
+  case LEFT:
+    musical_mode = MODE_MIXO;
+    return;
+  case DOWN:
+    musical_mode = MODE_MINOR;
+    return;
+  case RIGHT:
+    musical_mode = MODE_RACOON;
     return;
 
   case 'A': select_voice(c, 39); return;
