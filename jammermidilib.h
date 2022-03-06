@@ -97,6 +97,8 @@ struct Configuration {
   int selected_endpoint;
   bool jawharp_on;
   bool jawharp_full_on;
+  bool jawharp_chord;
+
   bool organ_low_on;
   bool organ_low_piano_vel;
   bool organ_hi_on;
@@ -478,6 +480,7 @@ float subbeat_location() {
 void jawharp_off() {
   if (current_note[ENDPOINT_JAWHARP] != -1) {
     psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
+    psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP] + 7, 0, ENDPOINT_JAWHARP);
     current_note[ENDPOINT_JAWHARP] = -1;
   }
 }
@@ -822,6 +825,9 @@ void update_bass() {
   if (c->jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
     jawharp_off();
     psend_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
+    if (c->jawharp_chord) {
+      psend_midi(MIDI_ON, note_out + 7, MIDI_MAX, ENDPOINT_JAWHARP);
+    }
     current_note[ENDPOINT_JAWHARP] = note_out;
   }
 }
@@ -1174,7 +1180,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     if (c->selected_endpoint == ENDPOINT_ARP) {
       c->arp_chord = !c->arp_chord;
       endpoint_notes_off(ENDPOINT_ARP);
-    } else {
+    } else if (c->selected_endpoint == ENDPOINT_JAWHARP) {
+      c->jawharp_chord = !c->jawharp_chord;
+      endpoint_notes_off(ENDPOINT_JAWHARP);
+    } else if (c->selected_endpoint == ENDPOINT_ARP) {
       c->fb_chord = !c->fb_chord;
       endpoint_notes_off(ENDPOINT_FOOTBASS);
     }
@@ -1281,6 +1290,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
       if (breath < 10 &&
           current_note[ENDPOINT_JAWHARP] != -1) {
         psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
+                  ENDPOINT_JAWHARP);
+        psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP] + 7, 0,
                   ENDPOINT_JAWHARP);
         current_note[ENDPOINT_JAWHARP] = -1;
       } else if (breath > 20) {
