@@ -153,6 +153,7 @@ uint64_t next_ns[N_SUBBEATS];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 bool jig_time;
+bool allow_all_drums_downbeat;
 
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
@@ -353,6 +354,7 @@ void clear_status() {
   last_downbeat_ns = 0;
 
   jig_time = false;
+  allow_all_drums_downbeat = false;
 }
 
 void voices_reset() {
@@ -611,11 +613,7 @@ uint64_t best_match_hit(uint64_t target, uint64_t* hits, int hit_len) {
   return best_error;
 }
 
-void estimate_tempo(uint64_t current_time, int note_in) {
-  //print_kick_times(current_time);
-
-  current_beat_ns = 0;
-
+float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
   // Take a super naive approach: for each candidate tempo, consider
   // how much error that would imply for each recent hit we've seen,
   // and take the tempo with the lowest error.
@@ -636,12 +634,19 @@ void estimate_tempo(uint64_t current_time, int note_in) {
     uint64_t whole_note_ns = 60L * NS_PER_SEC / candidate_bpm;
     uint64_t candidate_error = 0;
 
-    // Look for a kick or snare on every past downbeat
+    // Look for a kick or snare (or maybe anything) on every past downbeat
     for (int i = 0; i < n_downbeats_to_consider; i++) {
       uint64_t target = current_time - (i+1)*whole_note_ns;
       uint64_t error =
         min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
             best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
+
+      if (consider_high) {
+	error = min(error,
+		    best_match_hit(target, crash_times, CRASH_TIMES_LENGTH));
+	error = min(error,
+		    best_match_hit(target, hihat_times, HIHAT_TIMES_LENGTH));
+      }
 
       candidate_error += error;
     }
@@ -654,7 +659,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 
   if (best_bpm < 0) {
     printf("best_bpm = %.2f : not expected\n", best_bpm);
-    return;
+    return best_bpm;
   }
 
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
@@ -674,16 +679,34 @@ void estimate_tempo(uint64_t current_time, int note_in) {
            100 * (float)best_error / (float)max_allowed_error);
   }
 
-  if (acceptable_error) {
-    current_beat_ns = whole_beat;
+  if (!acceptable_error) {
+    return -1;
+  }
 
-    arpeggiate(0, current_time, /*drone=*/false);
-    last_downbeat_ns = current_time;
+  return best_bpm;
+}
 
-    next_ns[0] = current_time;
-    for (int i = 1; i < N_SUBBEATS; i++) {
-      next_ns[i] = next_ns[i-1] + (whole_beat)/72;
-    }
+void estimate_tempo(uint64_t current_time, int note_in) {
+  //print_kick_times(current_time);
+
+  current_beat_ns = 0;
+
+  float best_bpm = estimate_tempo_helper(current_time, /*consider_high=*/ false);
+  if (best_bpm < 0 && allow_all_drums_downbeat) {
+    best_bpm = estimate_tempo_helper(current_time, /*consider_high=*/ true);
+  }
+
+  if (best_bpm <= 0) return;
+
+  uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
+  current_beat_ns = whole_beat;
+
+  arpeggiate(0, current_time, /*drone=*/false);
+  last_downbeat_ns = current_time;
+
+  next_ns[0] = current_time;
+  for (int i = 1; i < N_SUBBEATS; i++) {
+    next_ns[i] = next_ns[i-1] + (whole_beat)/72;
   }
 }
 
@@ -1106,7 +1129,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '0':
     jig_time = !jig_time;
     return;
-    
+  case F10:
+    allow_all_drums_downbeat = !allow_all_drums_downbeat;
+    return;
 
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
@@ -1305,7 +1330,7 @@ void forward_air() {
 		   endpoint);
       }
     }
-    
+
     last_air_val = val;
   }
   if (flex_value != last_flex_val) {
