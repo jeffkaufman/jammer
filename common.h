@@ -28,6 +28,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
 #define CC_MOD 0x01
 #define CC_BREATH 0x02
 #define CC_07 0x07
+#define CC_BALANCE 0x08
 #define CC_PAN 0x0a
 #define CC_11 0x0b
 
