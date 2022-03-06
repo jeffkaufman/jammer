@@ -68,6 +68,16 @@
 #define DELETE (108)
 #define ESCAPE (109)
 
+#define MODE_MAJOR 1
+#define MODE_MIXO 2
+#define MODE_MINOR 3
+#define MODE_RACOON 4
+
+#define MIDI_DRUM_PEDAL_1 MIDI_DRUM_IN_SNARE
+#define MIDI_DRUM_PEDAL_2 MIDI_DRUM_IN_KICK
+#define MIDI_DRUM_PEDAL_3 MIDI_DRUM_IN_CRASH
+#define MIDI_DRUM_PEDAL_4 MIDI_DRUM_IN_HIHAT
+
 int normalize(int val) {
   if (val > MIDI_MAX) {
     return MIDI_MAX;
@@ -154,6 +164,10 @@ uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 bool jig_time;
 bool allow_all_drums_downbeat;
+bool drum_chooses_notes;
+int musical_mode;
+int most_recent_drum_pedal;
+bool is_minor_chord;  // only used when drum_chooses_notes
 
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
@@ -162,6 +176,53 @@ void print_kick_times(uint64_t current_time) {
                                    KICK_TIMES_LENGTH];
     printf("  %llu   %llu\n", kick_time, current_time - kick_time);
   }
+}
+
+int current_drum_pedal_note() {
+  int note = root_note;
+
+  is_minor_chord = false;
+  if (musical_mode == MODE_MAJOR) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 3;  // vi
+      is_minor_chord = true;
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note + 5;  // IV
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note = root_note + 7;  // V
+    }
+  } else if (musical_mode == MODE_MIXO) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 2; // VII
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note + 5;  // IV
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note = root_note + 7;  // V
+    }
+  } else if (musical_mode == MODE_MINOR) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note - 2;  // VII
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_2) {
+      note = root_note - 4;  // VI
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 5;  // V
+    } else {
+      is_minor_chord = true;  // i
+    }
+    note += 12;
+  } else if (musical_mode == MODE_RACOON) {
+    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+      note = root_note - 2; // VII
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note = root_note + 3;  // III
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note = root_note + 5;  // IV
+    } else {
+      is_minor_chord = true;  // i
+    }
+  }
+
+  return note;
 }
 
 void update_bass();
@@ -355,6 +416,11 @@ void clear_status() {
 
   jig_time = false;
   allow_all_drums_downbeat = false;
+
+  drum_chooses_notes = false;
+  musical_mode = MODE_MAJOR;
+  most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
+  is_minor_chord = false;
 }
 
 void voices_reset() {
@@ -388,6 +454,9 @@ double max_air = 0; // set by calculate_breath_speeds()
 double air = 0;  // maintained by update_air()
 
 char active_note() {
+  if (drum_chooses_notes) {
+    return current_drum_pedal_note();
+  }
   return root_note;
 }
 
@@ -712,6 +781,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 
 void count_drum_hit(int note_in) {
   uint64_t current_time = now();
+  most_recent_drum_pedal = note_in;
   if (note_in == MIDI_DRUM_IN_KICK) {
     //printf("saving kick @ %llu\n", current_time);
     kick_times[kick_times_index] = current_time;
@@ -1167,6 +1237,9 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   //printf("foot: %d %d\n", note_in, val);
   count_drum_hit(note_in);
+  if (drum_chooses_notes) {
+    update_bass();
+  }
 }
 
 void handle_cc(unsigned int cc, unsigned int val) {
