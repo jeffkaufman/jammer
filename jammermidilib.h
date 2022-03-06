@@ -636,24 +636,13 @@ void estimate_tempo(uint64_t current_time, int note_in) {
     uint64_t whole_note_ns = 60L * NS_PER_SEC / candidate_bpm;
     uint64_t candidate_error = 0;
 
-    // Look for a kick or snare on every past downbeat, but allow
-    // kicks preceeding a snare to be exactly half a beat early.
+    // Look for a kick or snare on every past downbeat
     for (int i = 0; i < n_downbeats_to_consider; i++) {
       uint64_t target = current_time - (i+1)*whole_note_ns;
       uint64_t error =
         min(best_match_hit(target, kick_times, KICK_TIMES_LENGTH),
             best_match_hit(target, snare_times, SNARE_TIMES_LENGTH));
 
-      /*
-      bool early_kick_allowed =
-        i % 2 == ((note_in == MIDI_DRUM_IN_KICK) ? 1 : 0);
-      if (early_kick_allowed) {
-        uint64_t early_kick_target = target - (whole_note_ns/2);
-        uint64_t early_kick_error = best_match_hit(early_kick_target, kick_times, KICK_TIMES_LENGTH);
-        error = min(error, early_kick_error);
-      }
-
-      */
       candidate_error += error;
     }
 
