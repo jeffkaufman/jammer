@@ -424,7 +424,7 @@ void clear_status() {
   allow_all_drums_downbeat = false;
 
   drum_chooses_notes = false;
-  musical_mode = MODE_MIXO;
+  musical_mode = MODE_MAJOR;
   most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
   is_minor_chord = false;
 }
