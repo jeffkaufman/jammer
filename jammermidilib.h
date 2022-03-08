@@ -768,7 +768,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
   current_beat_ns = 0;
 
   float best_bpm = estimate_tempo_helper(current_time, /*consider_high=*/ false);
-  if (best_bpm < 0 && allow_all_drums_downbeat) {
+  if (best_bpm < 0 && (allow_all_drums_downbeat || drum_chooses_notes)) {
     best_bpm = estimate_tempo_helper(current_time, /*consider_high=*/ true);
   }
 
