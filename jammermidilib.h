@@ -190,7 +190,7 @@ int current_drum_pedal_note() {
   is_minor_chord = false;
   if (musical_mode == MODE_MAJOR) {
     if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 3;  // vi
+      note = root_note + 9;  // vi
       is_minor_chord = true;
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
       note = root_note + 5;  // IV
