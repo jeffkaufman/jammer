@@ -119,6 +119,7 @@ struct Configuration {
   bool fb_shorter;
   bool fb_pre_unique;
   bool fb_chord;
+  bool fb_vel;
 
   bool arp_on;
   bool arp_downbeat;
@@ -168,6 +169,7 @@ int hihat_times_index;
 uint64_t next_ns[N_SUBBEATS];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
+int last_fb_vel;
 bool jig_time;
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
@@ -307,6 +309,8 @@ void clear_footbass() {
 
   c->fb_short = false;
   c->fb_shorter = false;
+
+  c->fb_vel = false;
 }
 
 void clear_arp() {
@@ -594,15 +598,15 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
       c->current_fb_len = 0;
 
       psend_midi(MIDI_ON,
-                c->current_fb_note,
-                90,
-                ENDPOINT_FOOTBASS);
+                 c->current_fb_note,
+                 c->fb_vel ? last_fb_vel : 90,
+                 ENDPOINT_FOOTBASS);
 
       if (c->fb_chord) {
         psend_midi(MIDI_ON,
-                  c->current_fb_fifth,
-                  90,
-                  ENDPOINT_FOOTBASS);
+                   c->current_fb_fifth,
+                   c->fb_vel ? last_fb_vel : 90,
+                   ENDPOINT_FOOTBASS);
       }
     }
   }
@@ -1200,6 +1204,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       c->organ_hi_piano_vel = !c->organ_hi_piano_vel;
     } else if (c->selected_endpoint == ENDPOINT_OVERLAY) {
       c->overlay_piano_vel = !c->overlay_piano_vel;
+    } else if (c->selected_endpoint == ENDPOINT_FOOTBASS) {
+      c->fb_vel = !c->fb_vel;
     }
     return;
   case '/':
@@ -1266,6 +1272,10 @@ int remap(int val, int min, int max) {
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (mode != MIDI_ON) {
     return;
+  }
+
+  if (note_in == MIDI_DRUM_IN_KICK) {
+    last_fb_vel = val;
   }
 
   //printf("foot: %d %d\n", note_in, val);
