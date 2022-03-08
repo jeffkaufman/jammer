@@ -772,7 +772,12 @@ void estimate_tempo(uint64_t current_time, int note_in) {
     best_bpm = estimate_tempo_helper(current_time, /*consider_high=*/ true);
   }
 
-  if (best_bpm <= 0) return;
+  if (best_bpm <= 0) {
+    if (drum_chooses_notes) {
+      arpeggiate(0, current_time, /*drone=*/false);
+    }
+    return;
+  }
 
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
   current_beat_ns = whole_beat;
