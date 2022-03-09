@@ -526,14 +526,14 @@ bool downbeat(int subbeat) {
   return subbeat % 72 == 0;
 }
 bool preup(int subbeat) {
-  return subbeat == (jig_time ? (72/3-3) : (72/4-1));
+  return subbeat == (jig_time ? (72/3) : (72/4));
 }
 bool upbeat(int subbeat) {
-  return subbeat == (jig_time ? (2*72/3-3) : (72/2-2));
+  return subbeat == (jig_time ? (2*72/3) : (72/2));
 }
 bool predown(int subbeat) {
   if (jig_time) return false;  // This beat doesn't happen in jig time.
-  return subbeat == (3*72/4-1);
+  return subbeat == (3*72/4);
 }
 
 void select_note(int subbeat, bool chord, bool send_downbeat,
