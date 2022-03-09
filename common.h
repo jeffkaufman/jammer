@@ -17,7 +17,10 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
 #define ENDPOINT_LOW 4
 #define ENDPOINT_HI 5
 #define ENDPOINT_OVERLAY 6
-#define N_ENDPOINTS (ENDPOINT_OVERLAY+1)
+#define ENDPOINT_DRUM 7
+#define N_ENDPOINTS (ENDPOINT_DRUM+1)
+
+#define CHANNEL_DRUM 9
 
 /* midi values */
 #define MIDI_OFF 0x80
