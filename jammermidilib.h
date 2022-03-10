@@ -1339,6 +1339,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case RIGHT:
     musical_mode = MODE_RACOON;
     return;
+  case F8:
+    root_note = val;
+    return;
 
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
