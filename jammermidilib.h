@@ -658,6 +658,15 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
                ENDPOINT_DRUM);
   }
 
+
+  if (downbeat(subbeat) && c->drum_upbeat_high) {
+    psend_midi(MIDI_ON,
+               MIDI_DRUM_OUT_CLOSED_HIHAT,
+               c->drum_vel ? last_fb_vel : 52,
+               ENDPOINT_DRUM);
+  }
+
+
   if (upbeat(subbeat) && c->drum_upbeat) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
