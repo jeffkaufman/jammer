@@ -385,7 +385,10 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
   send_midi(MIDI_CC, CC_07, volume, endpoint);
   send_midi(MIDI_CC, CC_PAN, pan ? MIDI_MAX : 0, endpoint);
   send_midi(MIDI_CC, CC_BALANCE, pan ? MIDI_MAX : 0, endpoint);
-  choose_voice(endpoint, 0, voice);
+
+  if (endpoint != CHANNEL_DRUM) {
+    choose_voice(endpoint, 0, voice);
+  }
 }
 
 int main(int argc, char** argv) {

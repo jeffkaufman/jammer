@@ -262,19 +262,22 @@ int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
 }
 
-void psend_midi(int action, int note, int velocity, int endpoint) {
+int endpoint_to_channel(int endpoint) {
   if (endpoint == ENDPOINT_DRUM) {
-    endpoint = CHANNEL_DRUM;
+    return CHANNEL_DRUM;
   }
+  return endpoint;
+}
 
-  if (action == MIDI_ON || action == MIDI_OFF) {
+void psend_midi(int action, int note, int velocity, int endpoint) {
+  if (endpoint != ENDPOINT_DRUM && (action == MIDI_ON || action == MIDI_OFF)) {
     if (c->voices[endpoint] == 16 ||
 	c->voices[endpoint] == 18) {
       note += 12;  // organs should be up an octave
     }
     note += c->octave_deltas[endpoint]*12;
   }
-  send_midi(action, note, velocity, endpoint);
+  send_midi(action, note, velocity, endpoint_to_channel(endpoint));
 }
 
 void endpoint_notes_off(int endpoint) {
@@ -294,7 +297,8 @@ void reload_voice_setting(struct Configuration* c) {
   int volume_delta = c->volume_deltas[voice];
   int manual_volume = c->manual_volumes[voice];
   bool pan = c->pans[endpoint];
-  select_endpoint_voice(endpoint, voice, volume_delta, manual_volume, pan);
+  select_endpoint_voice(endpoint_to_channel(endpoint), voice, volume_delta,
+                        manual_volume, pan);
 }
 
 void select_voice(struct Configuration* c, int voice) {
