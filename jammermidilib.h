@@ -115,6 +115,7 @@ struct Configuration {
   bool overlay_on;
   bool overlay_piano_vel;
   bool flex_on;
+  bool flex_min;
 
   bool fb_on;
   bool fb_downbeat;
@@ -373,6 +374,7 @@ void clear_flex() {
   select_voice(c, 81);
 
   c->flex_on = false;
+  c->flex_min = false;
 }
 
 void clear_low() {
@@ -483,7 +485,11 @@ int flex_base = 0;
 int flex_breath = 0;
 int last_flex_val = 1;
 int flex_val() {
-  return flex_breath;
+  int val = flex_breath;
+  if (c->flex_min) {
+    val += 60;
+  }
+  return val;
 }
 
 // Only some endpoints use this, and some only use it some of the time:
@@ -1307,10 +1313,14 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     }
     return;
   case '/':
-    c->jawharp_full_on = !c->jawharp_full_on;
-    psend_midi(MIDI_CC, CC_11,
-              c->jawharp_full_on ? 60 : 0, ENDPOINT_JAWHARP);
-    update_bass();
+    if (c->selected_endpoint == ENDPOINT_JAWHARP) {
+      c->jawharp_full_on = !c->jawharp_full_on;
+      psend_midi(MIDI_CC, CC_11,
+                 c->jawharp_full_on ? 60 : 0, ENDPOINT_JAWHARP);
+      update_bass();
+    } else if (c->selected_endpoint == ENDPOINT_FLEX) {
+      c->flex_min = !c->flex_min;
+    }
     return;
   case '8':
     toggle_air_locked();
