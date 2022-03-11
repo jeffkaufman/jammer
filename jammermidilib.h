@@ -1309,7 +1309,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '/':
     c->jawharp_full_on = !c->jawharp_full_on;
     psend_midi(MIDI_CC, CC_11,
-              c->jawharp_full_on ? MIDI_MAX : 0, ENDPOINT_JAWHARP);
+              c->jawharp_full_on ? 60 : 0, ENDPOINT_JAWHARP);
     update_bass();
     return;
   case '8':
