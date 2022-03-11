@@ -151,7 +151,7 @@ struct Configuration {
   bool arp_pre_unique;
   bool arp_chord;
 
-  int volume_deltas[MIDI_MAX];
+  int volume_deltas[N_ENDPOINTS];
   int manual_volumes[MIDI_MAX];
   int voices[N_ENDPOINTS];
   bool pans[N_ENDPOINTS];
@@ -294,7 +294,7 @@ void all_notes_off() {
 void reload_voice_setting(struct Configuration* c) {
   int endpoint = c->selected_endpoint;
   int voice = c->voices[endpoint];
-  int volume_delta = c->volume_deltas[voice];
+  int volume_delta = c->volume_deltas[endpoint];
   int manual_volume = c->manual_volumes[voice];
   bool pan = c->pans[endpoint];
   select_endpoint_voice(endpoint_to_channel(endpoint), voice, volume_delta,
@@ -415,7 +415,7 @@ void clear_endpoint() {
 }
 
 void clear_configuration() {
-  for (int i = 0; i < MIDI_MAX; i++) {
+  for (int i = 0; i < N_ENDPOINTS; i++) {
     c->volume_deltas[i] = 0;
   }
   for (int i = 0; i < MIDI_MAX; i++) {
@@ -1120,7 +1120,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case DELETE:
     // Manual volume entry
     c->manual_volumes[selected_voice] = val;
-    c->volume_deltas[selected_voice] = 0;
     reload_voice_setting(c);
     return;
   case ESCAPE:
@@ -1134,11 +1133,11 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     reload_voice_setting(c);
     return;
   case '-':
-    c->volume_deltas[selected_voice] -= 5;
+    c->volume_deltas[c->selected_endpoint] -= 5;
     reload_voice_setting(c);
     return;
   case '=': // +
-    c->volume_deltas[selected_voice] += 5;
+    c->volume_deltas[c->selected_endpoint] += 5;
     reload_voice_setting(c);
     return;
   case '`':
