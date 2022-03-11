@@ -316,6 +316,7 @@ void clear_jawharp() {
   select_voice(c, 67);
   c->jawharp_on = false;
   c->jawharp_full_on = false;
+  c->jawharp_chord = false;
 }
 
 void clear_footbass() {
