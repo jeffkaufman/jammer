@@ -340,8 +340,10 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
     volume = 122;
     break;
   case 0:
-  case 18:
     volume = 100;
+    break;
+  case 18:
+    volume = 75;
     break;
   case 5:
     volume = 90;
