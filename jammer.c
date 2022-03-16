@@ -351,6 +351,9 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
   case 16:
     volume = 80;
     break;
+  case 32:
+    volume = 115;
+    break;
   }
 
   if (manual_volume != -1) {
