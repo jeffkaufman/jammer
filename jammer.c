@@ -286,7 +286,7 @@ void handle_event(snd_seq_event_t* event) {
   }
 }
 
-void select_endpoint_voice(int endpoint, int voice, int volume_delta,
+void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
                            int manual_volume, bool pan) {
   send_midi(MIDI_CC, CC_07, 0, endpoint);
 
@@ -392,7 +392,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
   send_midi(MIDI_CC, CC_BALANCE, pan ? MIDI_MAX : 0, endpoint);
 
   if (endpoint != CHANNEL_DRUM) {
-    choose_voice(endpoint, 0, voice);
+    choose_voice(endpoint, bank, voice);
   }
 }
 

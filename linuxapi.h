@@ -37,8 +37,8 @@ void send_midi(int action, int note, int velocity, int endpoint) {
 
   if (velocity < 0) velocity = 0;
   if (velocity > 127) velocity = 127;
-                  
-  
+
+
   int channel = endpoint;
   //printf("sending %d %d %d %d\n", action, channel, note, velocity);
 
@@ -68,7 +68,15 @@ void send_midi(int action, int note, int velocity, int endpoint) {
 }
 
 void choose_voice(int channel, int bank, int voice) {
-  // bank is ignored :(
+  if (bank < 0) bank = 0;
+  if (bank > 127) bank = 127;
+  if (voice < 0) voice = 0;
+  if (voice > 127) voice = 127;
+
+  // bank select doesn't seem to work, though
+  printf("selecting voice %d-%d for channel %d\n", bank, voice, channel);
+  send_midi(MIDI_CC, CC_BANK_SELECT, bank, channel);
+
   snd_seq_event_t ev;
   reset_event(&ev);
   snd_seq_ev_set_pgmchange(&ev, channel, voice);

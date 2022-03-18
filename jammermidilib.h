@@ -140,6 +140,8 @@ struct Configuration {
   bool drum_doubled;
   bool drum_pre_unique;
   bool drum_vel;
+  // Pretend voices, by choosing which notes
+  int drum_voice;
 
   bool arp_on;
   bool arp_downbeat;
@@ -155,7 +157,7 @@ struct Configuration {
   bool arp_chord;
 
   int volume_deltas[N_ENDPOINTS];
-  int manual_volumes[MIDI_MAX];
+  int manual_volumes[128*9];
   int voices[N_ENDPOINTS];
   bool pans[N_ENDPOINTS];
 
@@ -302,8 +304,10 @@ void reload_voice_setting(struct Configuration* c) {
   int volume_delta = c->volume_deltas[endpoint];
   int manual_volume = c->manual_volumes[voice];
   bool pan = c->pans[endpoint];
-  select_endpoint_voice(endpoint_to_channel(endpoint), voice, volume_delta,
-                        manual_volume, pan);
+
+  select_endpoint_voice(endpoint_to_channel(endpoint),
+                        voice % 128, voice / 128,
+                        volume_delta, manual_volume, pan);
 }
 
 void select_voice(struct Configuration* c, int voice) {
@@ -1365,7 +1369,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
   case 'D': select_voice(c, 32); return;
-  case 'F': select_voice(c, 35); return;
+  case 'F': select_voice(c, 35 /* 128*8 + 38 */); return;
   case 'G': select_voice(c, 26); return;
   case 'H': select_voice(c, 28); return;
   case 'J': select_voice(c, 75); return;

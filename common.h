@@ -6,7 +6,7 @@ void die(char *errmsg) {
   exit(-1);
 }
 
-void select_endpoint_voice(int endpoint, int voice, int volume_delta,
+void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
                            int manual_volume, bool pan);
 
 /* endpoints */
@@ -28,6 +28,7 @@ void select_endpoint_voice(int endpoint, int voice, int volume_delta,
 #define MIDI_CC 0xb0
 #define MIDI_PITCH_BEND 0xe0
 
+#define CC_BANK_SELECT 0x00
 #define CC_MOD 0x01
 #define CC_BREATH 0x02
 #define CC_07 0x07
