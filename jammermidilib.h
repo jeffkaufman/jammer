@@ -864,10 +864,12 @@ void update_bass() {
     if (current_note[endpoint] == note_out) continue;
     if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
 
+    int vel = endpoint == ENDPOINT_JAWHARP ? MIDI_MAX : 70;
+
     drone_endpoint_off(endpoint);
-    psend_midi(MIDI_ON, note_out, MIDI_MAX, endpoint);
+    psend_midi(MIDI_ON, note_out, vel, endpoint);
     if (c->chord[endpoint]) {
-      psend_midi(MIDI_ON, note_out + 7, MIDI_MAX, endpoint);
+      psend_midi(MIDI_ON, note_out + 7, vel, endpoint);
     }
     current_note[endpoint] = note_out;
   }
