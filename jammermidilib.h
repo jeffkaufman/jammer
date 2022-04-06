@@ -1163,10 +1163,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     toggle_endpoint(ENDPOINT_OVERLAY);
     return;
 
-  case 'I':
+  case 'J':
     c->downbeat[c->selected_endpoint] = !c->downbeat[c->selected_endpoint];
     return;
-  case 'O':
+  case 'K':
     c->upbeat[c->selected_endpoint] = !c->upbeat[c->selected_endpoint];
     return;
   case 'P':
@@ -1209,10 +1209,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       c->flex_min = !c->flex_min;
     }
     return;
-  case '8':
+  case F6:
     toggle_air_locked();
     return;
-  case '9':
+  case F7:
     toggle_follows_air();
     return;
   case '0':
@@ -1239,29 +1239,20 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case F8:
     root_note = val;
     return;
-  case F7:
-    c->expression[c->selected_endpoint] = !c->expression[c->selected_endpoint];
-    return;
 
+  // punchy
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
   case 'D': select_voice(c, 32); return;
   case 'F': select_voice(c, 35 /* 128*8 + 38 */); return;
-  case 'G': select_voice(c, 26); return;
-  case 'H': select_voice(c, 28); return;
-  case 'J': select_voice(c, 75); return;
-  case 'K': select_voice(c, 80); return;
-  case 'Z': select_voice(c,  4); return;
-  case 'X': select_voice(c, 24); return;
-  case 'C': select_voice(c, 85); return;
-  case 'V': select_voice(c, 64); return;
-  case 'B': select_voice(c, 66); return;
-  case 'N': select_voice(c, 67); return;
-  case 'M': select_voice(c, 81); return;
-  case F3:  select_voice(c,  0); return;
-  case F4:  select_voice(c,  5); return;
-  case F5:  select_voice(c, 16); return;
-  case F6:  select_voice(c, 18); return;
+  case 'G': select_voice(c,  0); return;
+  case 'H': select_voice(c, 18); return;
+  // continuous
+  case 'Z': select_voice(c, 75); return;
+  case 'X': select_voice(c, 85); return;
+  case 'C': select_voice(c,  4); return;
+  case 'V': select_voice(c, 67); return;
+  case 'B': select_voice(c, 81); return;
   }
 }
 
