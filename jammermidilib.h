@@ -106,55 +106,25 @@ int normalize(int val) {
 struct Configuration {
   /* Anything mentioned here should be initialized in clear_configuration */
   int selected_endpoint;
-  bool jawharp_on;
   bool jawharp_full_on;
-  bool jawharp_chord;
-
-  bool organ_low_on;
-  bool organ_low_piano_vel;
-  bool organ_hi_on;
-  bool organ_hi_piano_vel;
-  bool overlay_on;
-  bool overlay_piano_vel;
-  bool flex_on;
   bool flex_min;
 
-  bool fb_on;
-  bool fb_downbeat;
-  bool fb_upbeat;
-  bool fb_upbeat_high;
-  bool fb_doubled;
-  int current_fb_note;
-  int current_fb_fifth;
-  int current_fb_len;
-  bool fb_short;
-  bool fb_shorter;
-  bool fb_pre_unique;
-  bool fb_chord;
-  bool fb_vel;
-
-  bool drum_on;
-  bool drum_downbeat;
-  bool drum_upbeat;
-  bool drum_upbeat_high;
-  bool drum_doubled;
-  bool drum_pre_unique;
-  bool drum_vel;
   // Pretend voices, by choosing which notes
   int drum_voice;
 
-  bool arp_on;
-  bool arp_downbeat;
-  bool arp_upbeat;
-  bool arp_upbeat_high;
-  bool arp_doubled;
-  int current_arp_note;
-  int current_arp_fifth;
-  int current_arp_len;
-  bool arp_short;
-  bool arp_shorter;
-  bool arp_pre_unique;
-  bool arp_chord;
+  bool on[N_ENDPOINTS];
+  bool downbeat[N_ENDPOINTS];
+  bool upbeat[N_ENDPOINTS];
+  bool upbeat_high[N_ENDPOINTS];
+  bool doubled[N_ENDPOINTS];
+  int current_note[N_ENDPOINTS];
+  int current_fifth[N_ENDPOINTS];
+  int current_len[N_ENDPOINTS];
+  bool shortish[N_ENDPOINTS];
+  bool shorter[N_ENDPOINTS];
+  bool pre_unique[N_ENDPOINTS];
+  bool chord[N_ENDPOINTS];
+  bool vel[N_ENDPOINTS];
 
   int volume_deltas[N_ENDPOINTS];
   int manual_volumes[128*9];
@@ -323,90 +293,65 @@ void select_voice(struct Configuration* c, int voice) {
 
 void clear_jawharp() {
   select_voice(c, 67);
-  c->jawharp_on = false;
   c->jawharp_full_on = false;
-  c->jawharp_chord = false;
 }
 
 void clear_footbass() {
   select_voice(c, 39);
-  c->fb_on = false;
-  c->fb_downbeat = true;
-  c->fb_upbeat = true;
-  c->fb_upbeat_high = false;
-  c->fb_doubled = false;
-  c->current_fb_note = -1;
-  c->current_fb_fifth = -1;
-  c->current_fb_len = -1;
-
-  c->fb_pre_unique = false;
-  c->fb_chord = false;
-
-  c->fb_short = false;
-  c->fb_shorter = false;
-
-  c->fb_vel = false;
 }
 
 void clear_drum() {
   // select_voice ??
-  c->drum_on = false;
-  c->drum_downbeat = true;
-  c->drum_upbeat = false;
-  c->drum_upbeat_high = false;
-  c->drum_doubled = false;
-  c->drum_pre_unique = false;
-  c->drum_vel = false;
 }
 
 void clear_arp() {
   select_voice(c, 38);
 
-  c->arp_on = false;
-  c->arp_downbeat = true;
-  c->arp_upbeat = true;
-  c->arp_upbeat_high = true;
-  c->arp_doubled = true;
-  c->current_arp_note = -1;
-  c->current_arp_fifth = -1;
-  c->current_arp_len = -1;
-
-  c->arp_pre_unique = false;
-  c->arp_chord = false;
-
-  c->arp_short = false;
-  c->arp_shorter = false;
+  c->downbeat[ENDPOINT_ARP] = true;
+  c->upbeat[ENDPOINT_ARP] = true;
+  c->upbeat_high[ENDPOINT_ARP] = true;
+  c->doubled[ENDPOINT_ARP] = true;
 }
 
 void clear_flex() {
   select_voice(c, 81);
 
-  c->flex_on = false;
   c->flex_min = false;
 }
 
 void clear_low() {
   select_voice(c, 39);
-
-  c->organ_low_on = false;
-  c->organ_low_piano_vel = false;
 }
 
 void clear_high() {
   select_voice(c, 16);
-
-  c->organ_hi_on = false;
-  c->organ_hi_piano_vel = false;
 }
 
 void clear_overlay() {
   select_voice(c, 18);
-
-  c->overlay_on = false;
-  c->overlay_piano_vel = false;
 }
 
 void clear_endpoint() {
+  c->on[c->selected_endpoint] = false;
+  c->downbeat[c->selected_endpoint] = true;
+  c->upbeat[c->selected_endpoint] = false;
+  c->upbeat_high[c->selected_endpoint] = false;
+  c->doubled[c->selected_endpoint] = false;
+  c->current_note[c->selected_endpoint] = -1;
+  c->current_fifth[c->selected_endpoint] = -1;
+  c->current_len[c->selected_endpoint] = 0;
+  c->shortish[c->selected_endpoint] = false;
+  c->shorter[c->selected_endpoint] = false;
+  c->pre_unique[c->selected_endpoint] = false;
+  c->chord[c->selected_endpoint] = false;
+  c->vel[c->selected_endpoint] = false;
+  c->pans[c->selected_endpoint] = false;
+  c->octave_deltas[c->selected_endpoint] = 0;
+  c->air_lockeds[c->selected_endpoint] = false;
+  c->locked_airs[c->selected_endpoint] = 0;
+  c->follows_air[c->selected_endpoint] = false;
+  c->expression[c->selected_endpoint] = false;
+
   switch (c->selected_endpoint) {
   case ENDPOINT_JAWHARP: clear_jawharp(); break;
   case ENDPOINT_FOOTBASS: clear_footbass(); break;
@@ -417,12 +362,7 @@ void clear_endpoint() {
   case ENDPOINT_HI: clear_high(); break;
   case ENDPOINT_OVERLAY: clear_overlay(); break;
   }
-  c->pans[c->selected_endpoint] = false;
-  c->octave_deltas[c->selected_endpoint] = 0;
-  c->air_lockeds[c->selected_endpoint] = false;
-  c->locked_airs[c->selected_endpoint] = 0;
-  c->follows_air[c->selected_endpoint] = false;
-  c->expression[c->selected_endpoint] = false;
+
   psend_midi(MIDI_CC, EXPRESSION, 0, c->selected_endpoint);
   psend_midi(MIDI_CC, CC_11, 100, c->selected_endpoint);
 }
@@ -595,10 +535,10 @@ void select_note(int subbeat, bool chord, bool send_downbeat,
   }
 }
 
-bool should_end_note(int current_len, bool is_short, bool is_shorter) {
-  if (current_len != -1 && (is_short || is_shorter)) {
-    int threshold = jig_time ? 24 : 18;  // kept if short only
-    if (is_short && is_shorter) {
+bool should_end_note(int current_len, bool is_shortish, bool is_shorter) {
+  if (current_len != -1 && (is_shortish || is_shorter)) {
+    int threshold = jig_time ? 24 : 18;  // kept if shortish only
+    if (is_shortish && is_shorter) {
       threshold /= 3;
     } else if (is_shorter) {
       threshold /= 2;
@@ -611,11 +551,11 @@ bool should_end_note(int current_len, bool is_short, bool is_shorter) {
 }
 
 void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
-  if (!c->fb_on) return;
-  if (drone && c->current_fb_note == -1) return;
+  if (!c->on[ENDPOINT_FOOTBASS]) return;
+  if (drone && c->current_note[ENDPOINT_FOOTBASS] == -1) return;
 
-  if (c->current_fb_note != -1) {
-    c->current_fb_len++;
+  if (c->current_note[ENDPOINT_FOOTBASS] != -1) {
+    c->current_len[ENDPOINT_FOOTBASS]++;
   }
 
   int note_out = active_note();
@@ -623,42 +563,42 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
   int fifth = to_fifth(selected_note);
   bool send_note = false;
 
-  select_note(subbeat, c->fb_chord, c->fb_downbeat,
-              c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
-              c->fb_doubled, &selected_note, &send_note);
-  select_note(subbeat, c->fb_chord, c->fb_downbeat,
-              c->fb_upbeat, c->fb_upbeat_high, c->fb_pre_unique,
-              c->fb_doubled, &fifth, &send_note);
+  select_note(subbeat, c->chord[ENDPOINT_FOOTBASS], c->downbeat[ENDPOINT_FOOTBASS],
+              c->upbeat[ENDPOINT_FOOTBASS], c->upbeat_high[ENDPOINT_FOOTBASS], c->pre_unique[ENDPOINT_FOOTBASS],
+              c->doubled[ENDPOINT_FOOTBASS], &selected_note, &send_note);
+  select_note(subbeat, c->chord[ENDPOINT_FOOTBASS], c->downbeat[ENDPOINT_FOOTBASS],
+              c->upbeat[ENDPOINT_FOOTBASS], c->upbeat_high[ENDPOINT_FOOTBASS], c->pre_unique[ENDPOINT_FOOTBASS],
+              c->doubled[ENDPOINT_FOOTBASS], &fifth, &send_note);
 
   bool end_note = send_note ||
-    should_end_note(c->current_fb_len, c->fb_short, c->fb_shorter);
+    should_end_note(c->current_len[ENDPOINT_FOOTBASS], c->shortish[ENDPOINT_FOOTBASS], c->shorter[ENDPOINT_FOOTBASS]);
 
-  if (end_note && c->current_fb_note != -1) {
-    psend_midi(MIDI_OFF, c->current_fb_note, 0, ENDPOINT_FOOTBASS);
-    if (c->current_fb_fifth != -1) {
-      psend_midi(MIDI_OFF, c->current_fb_fifth, 0, ENDPOINT_FOOTBASS);
+  if (end_note && c->current_note[ENDPOINT_FOOTBASS] != -1) {
+    psend_midi(MIDI_OFF, c->current_note[ENDPOINT_FOOTBASS], 0, ENDPOINT_FOOTBASS);
+    if (c->current_fifth[ENDPOINT_FOOTBASS] != -1) {
+      psend_midi(MIDI_OFF, c->current_fifth[ENDPOINT_FOOTBASS], 0, ENDPOINT_FOOTBASS);
     }
 
-    c->current_fb_note = -1;
-    c->current_fb_fifth = -1;
-    c->current_fb_len = -1;
+    c->current_note[ENDPOINT_FOOTBASS] = -1;
+    c->current_fifth[ENDPOINT_FOOTBASS] = -1;
+    c->current_len[ENDPOINT_FOOTBASS] = -1;
   }
 
   if (send_note) {
     if (selected_note != -1) {
-      c->current_fb_note = selected_note;
-      c->current_fb_fifth = fifth;
-      c->current_fb_len = 0;
+      c->current_note[ENDPOINT_FOOTBASS] = selected_note;
+      c->current_fifth[ENDPOINT_FOOTBASS] = fifth;
+      c->current_len[ENDPOINT_FOOTBASS] = 0;
 
       psend_midi(MIDI_ON,
-                 c->current_fb_note,
-                 c->fb_vel ? last_fb_vel : 90,
+                 c->current_note[ENDPOINT_FOOTBASS],
+                 c->vel[ENDPOINT_FOOTBASS] ? last_fb_vel : 90,
                  ENDPOINT_FOOTBASS);
 
-      if (c->fb_chord) {
+      if (c->chord[ENDPOINT_FOOTBASS]) {
         psend_midi(MIDI_ON,
-                   c->current_fb_fifth,
-                   c->fb_vel ? last_fb_vel : 90,
+                   c->current_fifth[ENDPOINT_FOOTBASS],
+                   c->vel[ENDPOINT_FOOTBASS] ? last_fb_vel : 90,
                    ENDPOINT_FOOTBASS);
       }
     }
@@ -666,52 +606,52 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
 }
 
 void arpeggiate_drum(int subbeat, uint64_t current_time) {
-  if (!c->drum_on) return;
+  if (!c->on[ENDPOINT_DRUM]) return;
 
-  if (downbeat(subbeat) && c->drum_downbeat) {
+  if (downbeat(subbeat) && c->downbeat[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_KICK_2,
-               c->drum_vel ? last_fb_vel : 90,
+               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90,
                ENDPOINT_DRUM);
   }
 
 
-  if (downbeat(subbeat) && c->drum_upbeat_high) {
+  if (downbeat(subbeat) && c->upbeat_high[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->drum_vel ? last_fb_vel : 52,
+               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 52,
                ENDPOINT_DRUM);
   }
 
 
-  if (upbeat(subbeat) && c->drum_upbeat) {
+  if (upbeat(subbeat) && c->upbeat[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->drum_vel ? last_fb_vel : 45,
+               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 45,
                ENDPOINT_DRUM);
   }
 
-  if (preup(subbeat) && c->drum_doubled) {
+  if (preup(subbeat) && c->doubled[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->drum_vel ? last_fb_vel : 60,
+               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 60,
                ENDPOINT_DRUM);
   }
 
-  if (predown(subbeat) && c->drum_pre_unique) {
+  if (predown(subbeat) && c->pre_unique[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->drum_vel ? last_fb_vel : 45,
+               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 45,
                ENDPOINT_DRUM);
   }
 }
 
 void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
-  if (!c->arp_on) return;
-  if (drone && c->current_fb_note == -1) return;
+  if (!c->on[ENDPOINT_ARP]) return;
+  if (drone && c->current_note[ENDPOINT_FOOTBASS] == -1) return;
 
-  if (c->current_arp_note != -1) {
-    c->current_arp_len++;
+  if (c->current_note[ENDPOINT_ARP] != -1) {
+    c->current_len[ENDPOINT_ARP]++;
   }
 
   int note_out = active_note();
@@ -719,46 +659,46 @@ void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
   int fifth = to_fifth(selected_note);
   bool send_note = false;
 
-  select_note(subbeat, c->arp_chord, c->arp_downbeat,
-              c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
-              c->arp_doubled, &selected_note, &send_note);
-  select_note(subbeat, c->arp_chord, c->arp_downbeat,
-              c->arp_upbeat, c->arp_upbeat_high, c->arp_pre_unique,
-              c->arp_doubled, &fifth, &send_note);
+  select_note(subbeat, c->chord[ENDPOINT_ARP], c->downbeat[ENDPOINT_ARP],
+              c->upbeat[ENDPOINT_ARP], c->upbeat_high[ENDPOINT_ARP], c->pre_unique[ENDPOINT_ARP],
+              c->doubled[ENDPOINT_ARP], &selected_note, &send_note);
+  select_note(subbeat, c->chord[ENDPOINT_ARP], c->downbeat[ENDPOINT_ARP],
+              c->upbeat[ENDPOINT_ARP], c->upbeat_high[ENDPOINT_ARP], c->pre_unique[ENDPOINT_ARP],
+              c->doubled[ENDPOINT_ARP], &fifth, &send_note);
 
   bool end_note = send_note ||
-    should_end_note(c->current_arp_len, c->arp_short, c->arp_shorter);
+    should_end_note(c->current_len[ENDPOINT_ARP], c->shortish[ENDPOINT_ARP], c->shorter[ENDPOINT_ARP]);
 
-  if (end_note && c->current_arp_note != -1) {
-    psend_midi(MIDI_OFF, c->current_arp_note, 0, ENDPOINT_ARP);
-    if (c->current_arp_fifth != -1) {
-      psend_midi(MIDI_OFF, c->current_arp_fifth, 0, ENDPOINT_ARP);
+  if (end_note && c->current_note[ENDPOINT_ARP] != -1) {
+    psend_midi(MIDI_OFF, c->current_note[ENDPOINT_ARP], 0, ENDPOINT_ARP);
+    if (c->current_fifth[ENDPOINT_ARP] != -1) {
+      psend_midi(MIDI_OFF, c->current_fifth[ENDPOINT_ARP], 0, ENDPOINT_ARP);
     }
 
-    c->current_arp_note = -1;
-    c->current_arp_fifth = -1;
-    c->current_arp_len = -1;
+    c->current_note[ENDPOINT_ARP] = -1;
+    c->current_fifth[ENDPOINT_ARP] = -1;
+    c->current_len[ENDPOINT_ARP] = -1;
   }
 
   if (send_note) {
     if (selected_note != -1) {
-      c->current_arp_note = selected_note;
-      c->current_arp_fifth = fifth;
-      c->current_arp_len = 0;
+      c->current_note[ENDPOINT_ARP] = selected_note;
+      c->current_fifth[ENDPOINT_ARP] = fifth;
+      c->current_len[ENDPOINT_ARP] = 0;
 
       psend_midi(MIDI_ON,
-                c->current_arp_note,
+                c->current_note[ENDPOINT_ARP],
                 90,
                 ENDPOINT_ARP);
 
-      if (c->arp_chord) {
+      if (c->chord[ENDPOINT_ARP]) {
         psend_midi(MIDI_ON,
-                  c->current_arp_fifth,
+                  c->current_fifth[ENDPOINT_ARP],
                   90,
                   ENDPOINT_ARP);
       }
 
-      //printf("footbass start note %d\n", current_fb_note);
+      //printf("footbass start note %d\n", current_note[ENDPOINT_FOOTBASS]);
     }
   }
 }
@@ -926,10 +866,10 @@ void update_bass() {
 
   if (breath < 3 && !c->jawharp_full_on) return;
 
-  if (c->jawharp_on && current_note[ENDPOINT_JAWHARP] != note_out) {
+  if (c->on[ENDPOINT_JAWHARP] && current_note[ENDPOINT_JAWHARP] != note_out) {
     jawharp_off();
     psend_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
-    if (c->jawharp_chord) {
+    if (c->chord[ENDPOINT_JAWHARP]) {
       psend_midi(MIDI_ON, note_out + 7, MIDI_MAX, ENDPOINT_JAWHARP);
     }
     current_note[ENDPOINT_JAWHARP] = note_out;
@@ -1089,22 +1029,22 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
     }
   }
 
-  if (c->flex_on) {
+  if (c->on[ENDPOINT_FLEX]) {
     psend_midi(mode, note_in, MIDI_MAX, ENDPOINT_FLEX);
   }
-  if (c->organ_low_on && is_bass) {
+  if (c->on[ENDPOINT_LOW] && is_bass) {
     psend_midi(mode, note_in,
-              c->organ_low_piano_vel ? val : 75,
+              c->vel[ENDPOINT_LOW] ? val : 75,
               ENDPOINT_LOW);
   }
-  if (c->organ_hi_on && !is_bass) {
+  if (c->on[ENDPOINT_HI] && !is_bass) {
     psend_midi(mode, note_in,
-              c->organ_hi_piano_vel ? val : 75,
+              c->vel[ENDPOINT_HI] ? val : 75,
               ENDPOINT_HI);
   }
-  if (c->overlay_on) {
+  if (c->on[ENDPOINT_OVERLAY]) {
     psend_midi(mode, note_in,
-              c->overlay_piano_vel ? val : 75,
+              c->vel[ENDPOINT_OVERLAY] ? val : 75,
               ENDPOINT_OVERLAY);
   }
 }
@@ -1125,6 +1065,13 @@ void toggle_follows_air() {
 	     c->follows_air[c->selected_endpoint] ? 0 : 100,
 	     c->selected_endpoint);
 }
+
+void toggle_endpoint(int endpoint) {
+  c->selected_endpoint = endpoint;
+  endpoint_notes_off(c->selected_endpoint);
+  c->on[c->selected_endpoint] = !c->on[c->selected_endpoint];
+}
+
 
 void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   if (mode != MIDI_ON) return;
@@ -1161,19 +1108,15 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->selected_endpoint = ENDPOINT_DRUM;
     return;
   case 'r':
-    c->selected_endpoint = ENDPOINT_DRUM;
-    endpoint_notes_off(ENDPOINT_DRUM);
-    c->drum_on = !c->drum_on;
+    toggle_endpoint(ENDPOINT_DRUM);
     return;
   case '1':
     c->selected_endpoint = ENDPOINT_JAWHARP;
     return;
   case 'Q':
-    c->selected_endpoint = ENDPOINT_JAWHARP;
-    endpoint_notes_off(ENDPOINT_JAWHARP);
-    c->jawharp_on = !c->jawharp_on;
+    toggle_endpoint(ENDPOINT_JAWHARP);
 
-    if (c->jawharp_on) {
+    if (c->on[ENDPOINT_JAWHARP]) {
       update_bass();
     } else {
       jawharp_off();
@@ -1183,88 +1126,54 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->selected_endpoint = ENDPOINT_FOOTBASS;
     return;
   case 'W':
-    c->selected_endpoint = ENDPOINT_FOOTBASS;
-    endpoint_notes_off(ENDPOINT_FOOTBASS);
-    c->fb_on = !c->fb_on;
+    toggle_endpoint(ENDPOINT_FOOTBASS);
+
     update_bass();
     return;
   case '3':
     c->selected_endpoint = ENDPOINT_ARP;
     return;
   case 'E':
-    c->selected_endpoint = ENDPOINT_ARP;
-    endpoint_notes_off(ENDPOINT_ARP);
-    c->arp_on = !c->arp_on;
+    toggle_endpoint(ENDPOINT_ARP);
+
     update_bass();
     return;
   case '4':
     c->selected_endpoint = ENDPOINT_FLEX;
     return;
   case 'R':
-    c->selected_endpoint = ENDPOINT_FLEX;
-    endpoint_notes_off(ENDPOINT_FLEX);
-    c->flex_on = !c->flex_on;
+    toggle_endpoint(ENDPOINT_FLEX);
     return;
   case '5':
     c->selected_endpoint = ENDPOINT_LOW;
     return;
   case 'T':
-    c->selected_endpoint = ENDPOINT_LOW;
-    endpoint_notes_off(ENDPOINT_LOW);
-    c->organ_low_on = !c->organ_low_on;
+    toggle_endpoint(ENDPOINT_LOW);
     return;
   case '6':
     c->selected_endpoint = ENDPOINT_HI;
     return;
   case 'Y':
-    c->selected_endpoint = ENDPOINT_HI;
-    endpoint_notes_off(ENDPOINT_HI);
-    c->organ_hi_on = !c->organ_hi_on;
+    toggle_endpoint(ENDPOINT_HI);
     return;
   case '7':
     c->selected_endpoint = ENDPOINT_OVERLAY;
     return;
   case 'U':
-    c->selected_endpoint = ENDPOINT_OVERLAY;
-    endpoint_notes_off(ENDPOINT_OVERLAY);
-    c->overlay_on = !c->overlay_on;
+    toggle_endpoint(ENDPOINT_OVERLAY);
     return;
 
   case 'I':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_downbeat = !c->arp_downbeat;
-    } else if (c->selected_endpoint == ENDPOINT_FOOTBASS) {
-      c->fb_downbeat = !c->fb_downbeat;
-    } else if (c->selected_endpoint == ENDPOINT_DRUM) {
-      c->drum_downbeat = !c->drum_downbeat;
-    }
+    c->downbeat[c->selected_endpoint] = !c->downbeat[c->selected_endpoint];
     return;
   case 'O':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_upbeat = !c->arp_upbeat;
-    } else if (c->selected_endpoint == ENDPOINT_FOOTBASS) {
-      c->fb_upbeat = !c->fb_upbeat;
-    } else if (c->selected_endpoint == ENDPOINT_DRUM) {
-      c->drum_upbeat = !c->drum_upbeat;
-    }
+    c->upbeat[c->selected_endpoint] = !c->upbeat[c->selected_endpoint];
     return;
   case 'P':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_doubled = !c->arp_doubled;
-    } else if (c->selected_endpoint == ENDPOINT_FOOTBASS) {
-      c->fb_doubled = !c->fb_doubled;
-    } else if (c->selected_endpoint == ENDPOINT_DRUM) {
-      c->drum_doubled = !c->drum_doubled;
-    }
+    c->doubled[c->selected_endpoint] = !c->doubled[c->selected_endpoint];
     return;
   case '[':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_pre_unique = !c->arp_pre_unique;
-    } else if (c->selected_endpoint == ENDPOINT_FOOTBASS) {
-      c->fb_pre_unique = !c->fb_pre_unique;
-    } else if (c->selected_endpoint == ENDPOINT_DRUM) {
-      c->drum_pre_unique = !c->drum_pre_unique;
-    }
+    c->pre_unique[c->selected_endpoint] = !c->pre_unique[c->selected_endpoint];
     return;
   case ']':
     endpoint_notes_off(c->selected_endpoint);
@@ -1275,52 +1184,20 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     c->octave_deltas[c->selected_endpoint]--;
     return;
   case 'L':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_upbeat_high = !c->arp_upbeat_high;
-    } else if (c->selected_endpoint == ENDPOINT_FOOTBASS) {
-      c->fb_upbeat_high = !c->fb_upbeat_high;
-    } else if (c->selected_endpoint == ENDPOINT_DRUM) {
-      c->drum_upbeat_high = !c->drum_upbeat_high;
-    }
+    c->upbeat_high[c->selected_endpoint] = !c->upbeat_high[c->selected_endpoint];
     return;
   case ';':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_short = !c->arp_short;
-    } else {
-      c->fb_short = !c->fb_short;
-    }
+    c->shortish[c->selected_endpoint] = !c->shortish[c->selected_endpoint];
     return;
   case '\'':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_shorter = !c->arp_shorter;
-    } else {
-      c->fb_shorter = !c->fb_shorter;
-    }
+    c->shorter[c->selected_endpoint] = !c->shorter[c->selected_endpoint];
     return;
   case ',':
-    if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->arp_chord = !c->arp_chord;
-      endpoint_notes_off(ENDPOINT_ARP);
-    } else if (c->selected_endpoint == ENDPOINT_JAWHARP) {
-      c->jawharp_chord = !c->jawharp_chord;
-      endpoint_notes_off(ENDPOINT_JAWHARP);
-    } else if (c->selected_endpoint == ENDPOINT_ARP) {
-      c->fb_chord = !c->fb_chord;
-      endpoint_notes_off(ENDPOINT_FOOTBASS);
-    }
+    c->chord[c->selected_endpoint] = !c->chord[c->selected_endpoint];
+    endpoint_notes_off(c->selected_endpoint);
     return;
   case '.':
-    if (c->selected_endpoint == ENDPOINT_LOW) {
-      c->organ_low_piano_vel = !c->organ_low_piano_vel;
-    } else if (c->selected_endpoint == ENDPOINT_HI) {
-      c->organ_hi_piano_vel = !c->organ_hi_piano_vel;
-    } else if (c->selected_endpoint == ENDPOINT_OVERLAY) {
-      c->overlay_piano_vel = !c->overlay_piano_vel;
-    } else if (c->selected_endpoint == ENDPOINT_FOOTBASS) {
-      c->fb_vel = !c->fb_vel;
-    } else if (c->selected_endpoint == ENDPOINT_DRUM) {
-      c->drum_vel = !c->drum_vel;
-    }
+    c->vel[c->selected_endpoint] = !c->vel[c->selected_endpoint];
     return;
   case '/':
     if (c->selected_endpoint == ENDPOINT_JAWHARP) {
