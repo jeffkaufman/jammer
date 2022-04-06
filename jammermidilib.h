@@ -104,7 +104,6 @@ int normalize(int val) {
 struct Configuration {
   /* Anything mentioned here should be initialized in clear_configuration */
   int selected_endpoint;
-  bool jawharp_full_on;
   bool flex_min;
 
   // Pretend voices, by choosing which notes
@@ -235,13 +234,6 @@ int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
 }
 
-int endpoint_to_channel(int endpoint) {
-  if (endpoint == ENDPOINT_DRUM) {
-    return CHANNEL_DRUM;
-  }
-  return endpoint;
-}
-
 void psend_midi(int action, int note, int velocity, int endpoint) {
   if (endpoint != ENDPOINT_DRUM && (action == MIDI_ON || action == MIDI_OFF)) {
     if (c->voices[endpoint] == 16 ||
@@ -250,7 +242,7 @@ void psend_midi(int action, int note, int velocity, int endpoint) {
     }
     note += c->octave_deltas[endpoint]*12;
   }
-  send_midi(action, note, velocity, endpoint_to_channel(endpoint));
+  send_midi(action, note, velocity, endpoint);
 }
 
 void endpoint_notes_off(int endpoint) {
@@ -271,7 +263,7 @@ void reload_voice_setting(struct Configuration* c) {
   int manual_volume = c->manual_volumes[voice];
   bool pan = c->pans[endpoint];
 
-  select_endpoint_voice(endpoint_to_channel(endpoint),
+  select_endpoint_voice(endpoint,
                         voice % 128, voice / 128,
                         volume_delta, manual_volume, pan);
 }
@@ -282,14 +274,22 @@ void select_voice(struct Configuration* c, int voice) {
   reload_voice_setting(c);
   if (c->selected_endpoint == ENDPOINT_FOOTBASS ||
       c->selected_endpoint == ENDPOINT_ARP ||
-      c->selected_endpoint == ENDPOINT_JAWHARP) {
+      c->selected_endpoint < N_DRONE_ENDPOINTS) {
     update_bass();
   }
 }
 
 void clear_jawharp() {
   select_voice(c, 67);
-  c->jawharp_full_on = false;
+}
+
+void clear_drone_bass() {
+  select_voice(c, 18);
+}
+
+void clear_drone_chord() {
+  select_voice(c, 18);
+  c->chord[c->selected_endpoint] = true;
 }
 
 void clear_footbass() {
@@ -356,6 +356,8 @@ void clear_endpoint() {
   case ENDPOINT_LOW: clear_low(); break;
   case ENDPOINT_HI: clear_high(); break;
   case ENDPOINT_OVERLAY: clear_overlay(); break;
+  case ENDPOINT_DRONE_BASS: clear_drone_bass(); break;
+  case ENDPOINT_DRONE_CHORD: clear_drone_chord(); break;
   }
 
   psend_midi(MIDI_CC, CC_11, 100, c->selected_endpoint);
@@ -469,11 +471,10 @@ float subbeat_location() {
   return -1;
 }
 
-void jawharp_off() {
-  if (current_note[ENDPOINT_JAWHARP] != -1) {
-    psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0, ENDPOINT_JAWHARP);
-    psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP] + 7, 0, ENDPOINT_JAWHARP);
-    current_note[ENDPOINT_JAWHARP] = -1;
+void drone_endpoint_off(int endpoint) {
+  if (current_note[endpoint] != -1) {
+    endpoint_notes_off(endpoint);
+    current_note[endpoint] = -1;
   }
 }
 
@@ -858,15 +859,17 @@ void update_bass() {
 
   last_update_bass_note = note_out;
 
-  if (breath < 3 && !c->jawharp_full_on) return;
+  for (int endpoint = ENDPOINT_JAWHARP; endpoint < N_DRONE_ENDPOINTS; endpoint++) {
+    if (!c->on[endpoint]) continue;
+    if (current_note[endpoint] == note_out) continue;
+    if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
 
-  if (c->on[ENDPOINT_JAWHARP] && current_note[ENDPOINT_JAWHARP] != note_out) {
-    jawharp_off();
-    psend_midi(MIDI_ON, note_out, MIDI_MAX, ENDPOINT_JAWHARP);
-    if (c->chord[ENDPOINT_JAWHARP]) {
-      psend_midi(MIDI_ON, note_out + 7, MIDI_MAX, ENDPOINT_JAWHARP);
+    drone_endpoint_off(endpoint);
+    psend_midi(MIDI_ON, note_out, MIDI_MAX, endpoint);
+    if (c->chord[endpoint]) {
+      psend_midi(MIDI_ON, note_out + 7, MIDI_MAX, endpoint);
     }
-    current_note[ENDPOINT_JAWHARP] = note_out;
+    current_note[endpoint] = note_out;
   }
 }
 
@@ -1064,8 +1067,15 @@ void toggle_endpoint(int endpoint) {
   c->selected_endpoint = endpoint;
   endpoint_notes_off(c->selected_endpoint);
   c->on[c->selected_endpoint] = !c->on[c->selected_endpoint];
-}
 
+  if (endpoint < N_DRONE_ENDPOINTS) {
+    if (c->on[endpoint]) {
+      update_bass();
+    } else {
+      drone_endpoint_off(endpoint);
+    }
+  }
+}
 
 void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   if (mode != MIDI_ON) return;
@@ -1109,19 +1119,12 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'Q':
     toggle_endpoint(ENDPOINT_JAWHARP);
-
-    if (c->on[ENDPOINT_JAWHARP]) {
-      update_bass();
-    } else {
-      jawharp_off();
-    }
     return;
   case '2':
     c->selected_endpoint = ENDPOINT_FOOTBASS;
     return;
   case 'W':
     toggle_endpoint(ENDPOINT_FOOTBASS);
-
     update_bass();
     return;
   case '3':
@@ -1129,7 +1132,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'E':
     toggle_endpoint(ENDPOINT_ARP);
-
     update_bass();
     return;
   case '4':
@@ -1155,6 +1157,18 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'U':
     toggle_endpoint(ENDPOINT_OVERLAY);
+    return;
+  case '8':
+    c->selected_endpoint = ENDPOINT_DRONE_BASS;
+    return;
+  case 'I':
+    toggle_endpoint(ENDPOINT_DRONE_BASS);
+    return;
+  case '9':
+    c->selected_endpoint = ENDPOINT_DRONE_CHORD;
+    return;
+  case 'O':
+    toggle_endpoint(ENDPOINT_DRONE_CHORD);
     return;
 
   case 'J':
@@ -1192,16 +1206,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case '.':
     c->vel[c->selected_endpoint] = !c->vel[c->selected_endpoint];
-    return;
-  case '/':
-    if (c->selected_endpoint == ENDPOINT_JAWHARP) {
-      c->jawharp_full_on = !c->jawharp_full_on;
-      psend_midi(MIDI_CC, CC_11,
-                 c->jawharp_full_on ? 60 : 0, ENDPOINT_JAWHARP);
-      update_bass();
-    } else if (c->selected_endpoint == ENDPOINT_FLEX) {
-      c->flex_min = !c->flex_min;
-    }
     return;
   case F6:
     toggle_air_locked();
@@ -1304,8 +1308,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
       flex_breath = use_val;
       use_val = flex_val();
       last_flex_val = use_val;
-    }
-    if (endpoint != ENDPOINT_JAWHARP || !c->jawharp_full_on) {
       psend_midi(MIDI_CC, CC_11, use_val, endpoint);
     }
   }
