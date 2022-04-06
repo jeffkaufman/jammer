@@ -91,8 +91,6 @@
 #define MIDI_DRUM_PEDAL_3 MIDI_DRUM_IN_CRASH
 #define MIDI_DRUM_PEDAL_4 MIDI_DRUM_IN_HIHAT
 
-#define EXPRESSION CC_MOD
-
 int normalize(int val) {
   if (val > MIDI_MAX) {
     return MIDI_MAX;
@@ -136,8 +134,6 @@ struct Configuration {
   bool air_lockeds[N_ENDPOINTS];
   double locked_airs[N_ENDPOINTS];
   bool follows_air[N_ENDPOINTS];
-
-  bool expression[N_ENDPOINTS];
 };
 
 // TODO: allow multiple of these.
@@ -350,7 +346,6 @@ void clear_endpoint() {
   c->air_lockeds[c->selected_endpoint] = false;
   c->locked_airs[c->selected_endpoint] = 0;
   c->follows_air[c->selected_endpoint] = false;
-  c->expression[c->selected_endpoint] = false;
 
   switch (c->selected_endpoint) {
   case ENDPOINT_JAWHARP: clear_jawharp(); break;
@@ -363,7 +358,6 @@ void clear_endpoint() {
   case ENDPOINT_OVERLAY: clear_overlay(); break;
   }
 
-  psend_midi(MIDI_CC, EXPRESSION, 0, c->selected_endpoint);
   psend_midi(MIDI_CC, CC_11, 100, c->selected_endpoint);
 }
 
@@ -1287,12 +1281,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
-    if (c->expression[endpoint]) {
-      psend_midi(MIDI_CC, EXPRESSION, breath, endpoint);
-    }
-
-
-
     if (endpoint != ENDPOINT_JAWHARP &&
         endpoint != ENDPOINT_FLEX) {
       continue;
