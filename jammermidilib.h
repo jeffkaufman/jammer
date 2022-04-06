@@ -1310,8 +1310,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
       flex_breath = use_val;
       use_val = flex_val();
       last_flex_val = use_val;
-      psend_midi(MIDI_CC, CC_11, use_val, endpoint);
     }
+    psend_midi(MIDI_CC, CC_11, use_val, endpoint);
   }
 }
 
