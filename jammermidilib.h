@@ -635,18 +635,36 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
 void arpeggiate_drum(int subbeat, uint64_t current_time) {
   if (!c->on[ENDPOINT_DRUM]) return;
 
+  int vel = c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90;
+
   if (downbeat(subbeat) && c->downbeat[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_KICK_2,
-               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90,
+               vel,
                ENDPOINT_DRUM);
+
+    float snare_min = 65.0;
+    float snare_max = 110.0;
+    if (c->shortish[ENDPOINT_DRUM] && last_fb_vel > snare_min) {
+      float snare_vel = vel * 0.65;
+      if (last_fb_vel < snare_max) {
+        snare_vel = ((last_fb_vel - snare_min) /
+                     (snare_max - snare_min)) * snare_vel;
+      }
+      psend_midi(MIDI_ON,
+                 c->shorter[ENDPOINT_DRUM]
+                     ? MIDI_DRUM_OUT_SNARE
+                     : MIDI_DRUM_OUT_RIM,
+                 snare_vel,
+                 ENDPOINT_DRUM);
+    }
   }
 
 
   if (downbeat(subbeat) && c->upbeat_high[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 52,
+               vel * 0.57,
                ENDPOINT_DRUM);
   }
 
@@ -654,21 +672,21 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   if (upbeat(subbeat) && c->upbeat[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 45,
+               vel * 0.5,
                ENDPOINT_DRUM);
   }
 
   if (preup(subbeat) && c->doubled[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 60,
+               vel * 0.67,
                ENDPOINT_DRUM);
   }
 
   if (predown(subbeat) && c->pre_unique[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               c->vel[ENDPOINT_DRUM] ? last_fb_vel : 45,
+               vel * 0.5,
                ENDPOINT_DRUM);
   }
 }
@@ -1326,7 +1344,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
-  if (note_in == MIDI_DRUM_IN_KICK) {
+  if (note_in == MIDI_DRUM_IN_KICK || drum_chooses_notes) {
     last_fb_vel = val;
   }
 
