@@ -267,6 +267,10 @@ void psend_midi(int action, int note, int velocity, int endpoint) {
 	c->voices[endpoint] == 18) {
       note += 12;  // organs should be up an octave
     }
+    if (c->chord[endpoint]) {
+      // chords should be higher
+      note += 24;
+    }
     note += c->octave_deltas[endpoint]*12;
   }
   send_midi(action, note, velocity, endpoint);
@@ -889,6 +893,15 @@ void count_drum_hit(int note_in) {
   }
 }
 
+void send_chord(int note_out, int vel, int endpoint) {
+  psend_midi(MIDI_ON, to_root(note_out), vel, endpoint);
+  if (drum_chooses_notes) {
+    // is_minor_chord isn't defined when reading notes from piano
+    psend_midi(MIDI_ON, to_root(note_out + (is_minor_chord ? 3 : 4)), vel, endpoint);
+  }
+  psend_midi(MIDI_ON, to_root(note_out + 7), vel, endpoint);
+}
+
 void update_bass() {
   int note_out = active_note();
 
@@ -905,12 +918,18 @@ void update_bass() {
     if (current_note[endpoint] == note_out) continue;
     if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
 
-    int vel = endpoint == ENDPOINT_JAWHARP ? MIDI_MAX : 70;
+    int vel = MIDI_MAX;
+    if (endpoint == ENDPOINT_DRONE_BASS) {
+      vel = 80;
+    } else if (endpoint == ENDPOINT_DRONE_CHORD) {
+      vel = 30;
+    }
 
     drone_endpoint_off(endpoint);
-    psend_midi(MIDI_ON, note_out, vel, endpoint);
     if (c->chord[endpoint]) {
-      psend_midi(MIDI_ON, note_out + 7, vel, endpoint);
+      send_chord(note_out, vel, endpoint);
+    } else {
+      psend_midi(MIDI_ON, note_out, vel, endpoint);
     }
     current_note[endpoint] = note_out;
   }
@@ -1335,13 +1354,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
     int use_val = normalize(val);
 
     if (endpoint == ENDPOINT_JAWHARP) {
-      if (breath < 10 &&
-          current_note[ENDPOINT_JAWHARP] != -1) {
-        psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP], 0,
-                  ENDPOINT_JAWHARP);
-        psend_midi(MIDI_OFF, current_note[ENDPOINT_JAWHARP] + 7, 0,
-                  ENDPOINT_JAWHARP);
-        current_note[ENDPOINT_JAWHARP] = -1;
+      if (breath < 10) {
+        drone_endpoint_off(ENDPOINT_JAWHARP);
       } else if (breath > 20) {
         update_bass();
       }
