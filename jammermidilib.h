@@ -655,7 +655,8 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
     float snare_min = 65.0;
     float snare_max = 110.0;
     if (c->shortish[ENDPOINT_DRUM] && last_fb_vel > snare_min) {
-      float snare_vel = vel * 0.65;
+      float snare_vel = vel * (c->drum_voice == KIT_RIM ?
+                               0.65 : 0.8);
       if (last_fb_vel < snare_max) {
         snare_vel = ((last_fb_vel - snare_min) /
                      (snare_max - snare_min)) * snare_vel;
