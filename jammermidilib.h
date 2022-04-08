@@ -98,6 +98,12 @@
 
 #define MIDI_DRUM_CHORD_INTERVAL_MAX_NS 40000000
 
+#define KIT_RIM    0
+#define KIT_RIM2   1
+#define KIT_SNARE  2
+#define KIT_CLAP   3
+#define KIT_ESNARE 4
+
 int normalize(int val) {
   if (val > MIDI_MAX) {
     return MIDI_MAX;
@@ -405,6 +411,7 @@ void clear_configuration() {
     c->selected_endpoint = i;
     clear_endpoint();
   }
+  c->drum_voice = KIT_RIM;
 }
 
 void clear_status() {
@@ -639,7 +646,9 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
 
   if (downbeat(subbeat) && c->downbeat[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
-               MIDI_DRUM_OUT_KICK_2,
+               c->drum_voice == KIT_RIM2 ?
+                   MIDI_DRUM_OUT_KICK_1 :
+                   MIDI_DRUM_OUT_KICK_2,
                vel,
                ENDPOINT_DRUM);
 
@@ -651,10 +660,18 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
         snare_vel = ((last_fb_vel - snare_min) /
                      (snare_max - snare_min)) * snare_vel;
       }
+
+      int snare_note = MIDI_DRUM_OUT_RIM;
+      if (c->drum_voice == KIT_SNARE) {
+        snare_note = MIDI_DRUM_OUT_SNARE;
+      } else if (c->drum_voice == KIT_CLAP) {
+        snare_note = MIDI_DRUM_OUT_CLAP;
+      } else if (c->drum_voice == KIT_ESNARE) {
+        snare_note = MIDI_DRUM_OUT_ESNARE;
+      }
+
       psend_midi(MIDI_ON,
-                 c->shorter[ENDPOINT_DRUM]
-                     ? MIDI_DRUM_OUT_SNARE
-                     : MIDI_DRUM_OUT_RIM,
+                 snare_note,
                  snare_vel,
                  ENDPOINT_DRUM);
     }
@@ -1163,6 +1180,16 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   printf("recv: %c\n", note_in);
 
   int selected_voice = c->voices[c->selected_endpoint];
+
+  if (c->selected_endpoint == ENDPOINT_DRUM) {
+    switch (note_in) {
+    case 'A': c->drum_voice = KIT_RIM; return;
+    case 'S': c->drum_voice = KIT_RIM2; return;
+    case 'D': c->drum_voice = KIT_SNARE; return;
+    case 'F': c->drum_voice = KIT_CLAP; return;
+    case 'G': c->drum_voice = KIT_ESNARE; return;
+    }
+  }
 
   switch (note_in) {
   case DELETE:
