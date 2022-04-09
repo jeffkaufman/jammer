@@ -933,8 +933,10 @@ void count_drum_hit(int note_in) {
 
 void send_chord(int note_out, int vel, int endpoint) {
   psend_midi(MIDI_ON, to_root(note_out), vel, endpoint);
-  if (drum_chooses_notes) {
-    // is_minor_chord isn't defined when reading notes from piano
+  if (// is_minor_chord isn't defined when reading notes from piano
+      drum_chooses_notes &&
+      // need to turn on thirds
+      c->shortish[endpoint]) {
     psend_midi(MIDI_ON, to_root(note_out + (is_minor_chord ? 3 : 4)), vel, endpoint);
   }
   psend_midi(MIDI_ON, to_root(note_out + 7), vel, endpoint);
