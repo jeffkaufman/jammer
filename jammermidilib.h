@@ -92,8 +92,8 @@
 #define MIDI_DRUM_PEDAL_4 MIDI_DRUM_IN_HIHAT
 
 // Virtual pedals made by chording
-#define MIDI_DRUM_PEDAL_5 5  // 1 and 2
-#define MIDI_DRUM_PEDAL_6 6  // 3 and 4
+#define MIDI_DRUM_PEDAL_12 5  // 1 and 2
+#define MIDI_DRUM_PEDAL_34 6  // 3 and 4
 // others are possible, but not implemented yet
 
 #define MIDI_DRUM_CHORD_INTERVAL_MAX_NS 40000000
@@ -189,66 +189,57 @@ void print_kick_times(uint64_t current_time) {
   }
 }
 
+int to_root(int note_out) {
+  // 24-35
+  return note_out % 12 + 24;
+}
+
 int current_drum_pedal_note() {
   int note = root_note;
 
   is_minor_chord = false;
-  if (musical_mode == MODE_MAJOR) {
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note + 9;  // vi
-      is_minor_chord = true;
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note + 5;  // IV
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-      note = root_note + 7;  // V
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_5) {
-      note = root_note + 2;  // ii
-      is_minor_chord = true;
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_6) {
-      note = root_note + 4;  // iii
-      is_minor_chord = true;
+  if (musical_mode == MODE_MAJOR ||
+      musical_mode == MODE_MINOR ||
+      musical_mode == MODE_MIXO) {
+
+    if (musical_mode == MODE_MINOR) {
+      // Minor is just major where the iv is the i.
+      note = to_root(note - 9);
     }
-  } else if (musical_mode == MODE_MIXO) {
+
     if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 2; // VII
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note + 5;  // IV
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-      note = root_note + 7;  // V
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_5) {
-      note = root_note - 4;  // VI
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_6) {
-      note = root_note + 4;  // iii
+      if (musical_mode == MODE_MIXO) {
+        note -= 2; // bVII
+      } else {
+        note += 9;  // vi
+        is_minor_chord = true;
+      }
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_12) {
+      note += 2;  // ii
       is_minor_chord = true;
-    }
-  } else if (musical_mode == MODE_MINOR) {
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note - 2;  // VII
     } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_2) {
-      note = root_note - 4;  // VI
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 5;  // V
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_5) {
-      note = root_note - 7;  // IV
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_6) {
-      note = root_note + 3;  // III
-    } else {
-      is_minor_chord = true;  // i
+      // pass
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note += 5;  // IV
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_34) {
+      note += 4;  // iii
+      is_minor_chord = true;
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note += 7;  // V
     }
-    note += 12;
   } else if (musical_mode == MODE_RACOON) {
     if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
-      note = root_note - 2; // VII
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
-      note = root_note + 3;  // III
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
-      note = root_note + 5;  // IV
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_5) {
-      note = root_note - 4;  // VI
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_6) {
-      note = root_note + 7;  // V
-    } else {
+      note -= 2; // VII
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_12) {
+      note -= 4;  // VI
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_2) {
       is_minor_chord = true;  // i
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+      note += 3;  // III
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_34) {
+      note += 7;  // V
+    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      note += 5;  // IV
     }
   }
 
@@ -256,11 +247,6 @@ int current_drum_pedal_note() {
 }
 
 void update_bass();
-
-int to_root(int note_out) {
-  int offset = 0;
-  return (note_out - offset) % 12 + 24 + offset;
-}
 
 // Given a note relative to root, convert it into a note relative to fifth.
 int to_fifth(int note_out) {
@@ -904,10 +890,12 @@ void count_drum_hit(int note_in) {
       current_time - most_recent_drum_ts < MIDI_DRUM_CHORD_INTERVAL_MAX_NS) {
     if ((prev_pedal == MIDI_DRUM_PEDAL_1 && note_in == MIDI_DRUM_PEDAL_2) ||
         (prev_pedal == MIDI_DRUM_PEDAL_2 && note_in == MIDI_DRUM_PEDAL_1)) {
-      most_recent_drum_pedal = MIDI_DRUM_PEDAL_5;
-    } else if ((prev_pedal == MIDI_DRUM_PEDAL_3 && note_in == MIDI_DRUM_PEDAL_4) ||
-               (prev_pedal == MIDI_DRUM_PEDAL_4 && note_in == MIDI_DRUM_PEDAL_3)) {
-      most_recent_drum_pedal = MIDI_DRUM_PEDAL_6;
+      most_recent_drum_pedal = MIDI_DRUM_PEDAL_12;
+    } else if ((prev_pedal == MIDI_DRUM_PEDAL_3 &&
+                note_in == MIDI_DRUM_PEDAL_4) ||
+               (prev_pedal == MIDI_DRUM_PEDAL_4 &&
+                note_in == MIDI_DRUM_PEDAL_3)) {
+      most_recent_drum_pedal = MIDI_DRUM_PEDAL_34;
     }
   }
   most_recent_drum_ts = current_time;
