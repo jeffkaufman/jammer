@@ -322,11 +322,13 @@ void clear_jawharp() {
 
 void clear_drone_bass() {
   select_voice(c, 18);
+  c->shorter[c->selected_endpoint] = true;
 }
 
 void clear_drone_chord() {
   select_voice(c, 18);
   c->chord[c->selected_endpoint] = true;
+  c->shorter[c->selected_endpoint] = true;
 }
 
 void clear_footbass() {
@@ -951,7 +953,8 @@ void update_bass() {
 
   for (int endpoint = ENDPOINT_JAWHARP; endpoint < N_DRONE_ENDPOINTS; endpoint++) {
     if (!c->on[endpoint]) continue;
-    if (current_note[endpoint] == note_out) continue;
+    if (current_note[endpoint] == note_out &&
+        !(drum_chooses_notes && c->shorter[endpoint])) continue;
     if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
 
     int vel = MIDI_MAX;
