@@ -86,14 +86,16 @@
 #define MODE_MINOR 3
 #define MODE_RACOON 4
 
-#define MIDI_DRUM_PEDAL_1 MIDI_DRUM_IN_SNARE
-#define MIDI_DRUM_PEDAL_2 MIDI_DRUM_IN_KICK
-#define MIDI_DRUM_PEDAL_3 MIDI_DRUM_IN_CRASH
-#define MIDI_DRUM_PEDAL_4 MIDI_DRUM_IN_HIHAT
+#define MIDI_PEDAL_1 MIDI_DRUM_IN_SNARE
+#define MIDI_PEDAL_2 MIDI_DRUM_IN_KICK
+#define MIDI_PEDAL_3 MIDI_DRUM_IN_CRASH
+#define MIDI_PEDAL_4 MIDI_DRUM_IN_HIHAT
 
 // Virtual pedals made by chording
-#define MIDI_DRUM_PEDAL_12 5  // 1 and 2
-#define MIDI_DRUM_PEDAL_34 6  // 3 and 4
+#define MIDI_PEDAL_12 5  // 1 and 2
+#define MIDI_PEDAL_23 6  // 2 and 3
+#define MIDI_PEDAL_34 7  // 3 and 4
+#define MIDI_PEDAL_41 8  // 4 and 1
 // others are possible, but not implemented yet
 
 #define MIDI_DRUM_CHORD_INTERVAL_MAX_NS 40000000
@@ -103,6 +105,10 @@
 #define KIT_SNARE  2
 #define KIT_CLAP   3
 #define KIT_ESNARE 4
+
+#define CHORD_MAJOR 0
+#define CHORD_MINOR 1
+#define CHORD_DIM   2
 
 int normalize(int val) {
   if (val > MIDI_MAX) {
@@ -178,7 +184,7 @@ bool drum_chooses_notes;
 int musical_mode;
 int most_recent_drum_pedal;
 uint64_t most_recent_drum_ts;
-bool is_minor_chord;  // only used when drum_chooses_notes
+int chord_type;  // only used when drum_chooses_notes
 
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
@@ -197,7 +203,7 @@ int to_root(int note_out) {
 int current_drum_pedal_note() {
   int note = root_note;
 
-  is_minor_chord = false;
+  chord_type = CHORD_MAJOR;
   if (musical_mode == MODE_MAJOR ||
       musical_mode == MODE_MINOR ||
       musical_mode == MODE_MIXO) {
@@ -207,38 +213,44 @@ int current_drum_pedal_note() {
       note = to_root(note - 9);
     }
 
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+    if (most_recent_drum_pedal == MIDI_PEDAL_1) {
       if (musical_mode == MODE_MIXO) {
         note -= 2; // bVII
       } else {
         note += 9;  // vi
-        is_minor_chord = true;
+        chord_type = CHORD_MINOR;
       }
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_12) {
-      note += 2;  // ii
-      is_minor_chord = true;
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_2) {
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_12) {
+      note -= 1;  // VII
+      chord_type = CHORD_DIM;
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_2) {
       // pass
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_23) {
+      note += 2;  // ii
+      chord_type = CHORD_MINOR;
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_3) {
       note += 5;  // IV
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_34) {
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_34) {
       note += 4;  // iii
-      is_minor_chord = true;
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+      chord_type = CHORD_MINOR;
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_4) {
       note += 7;  // V
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_41) {
+      note += 8;  // bVI
+      // TODO: this should only update the bass, not the current chord
     }
   } else if (musical_mode == MODE_RACOON) {
-    if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_1) {
+    if (most_recent_drum_pedal == MIDI_PEDAL_1) {
       note -= 2; // VII
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_12) {
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_12) {
       note -= 4;  // VI
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_2) {
-      is_minor_chord = true;  // i
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_3) {
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_2) {
+      chord_type = CHORD_MINOR;  // i
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_3) {
       note += 3;  // III
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_34) {
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_34) {
       note += 7;  // V
-    } else if (most_recent_drum_pedal == MIDI_DRUM_PEDAL_4) {
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_4) {
       note += 5;  // IV
     }
   }
@@ -441,9 +453,9 @@ void clear_status() {
 
   drum_chooses_notes = false;
   musical_mode = MODE_MAJOR;
-  most_recent_drum_pedal = MIDI_DRUM_PEDAL_2;
+  most_recent_drum_pedal = MIDI_PEDAL_2;
   most_recent_drum_ts = 0;
-  is_minor_chord = false;
+  chord_type = CHORD_MAJOR;
 }
 
 void voices_reset() {
@@ -888,14 +900,18 @@ void count_drum_hit(int note_in) {
   most_recent_drum_pedal = note_in;
   if (drum_chooses_notes &&
       current_time - most_recent_drum_ts < MIDI_DRUM_CHORD_INTERVAL_MAX_NS) {
-    if ((prev_pedal == MIDI_DRUM_PEDAL_1 && note_in == MIDI_DRUM_PEDAL_2) ||
-        (prev_pedal == MIDI_DRUM_PEDAL_2 && note_in == MIDI_DRUM_PEDAL_1)) {
-      most_recent_drum_pedal = MIDI_DRUM_PEDAL_12;
-    } else if ((prev_pedal == MIDI_DRUM_PEDAL_3 &&
-                note_in == MIDI_DRUM_PEDAL_4) ||
-               (prev_pedal == MIDI_DRUM_PEDAL_4 &&
-                note_in == MIDI_DRUM_PEDAL_3)) {
-      most_recent_drum_pedal = MIDI_DRUM_PEDAL_34;
+    if ((prev_pedal == MIDI_PEDAL_1 && note_in == MIDI_PEDAL_2) ||
+        (prev_pedal == MIDI_PEDAL_2 && note_in == MIDI_PEDAL_1)) {
+      most_recent_drum_pedal = MIDI_PEDAL_12;
+    } else if ((prev_pedal == MIDI_PEDAL_2 && note_in == MIDI_PEDAL_3) ||
+               (prev_pedal == MIDI_PEDAL_3 && note_in == MIDI_PEDAL_2)) {
+      most_recent_drum_pedal = MIDI_PEDAL_23;
+    } else if ((prev_pedal == MIDI_PEDAL_3 && note_in == MIDI_PEDAL_4) ||
+               (prev_pedal == MIDI_PEDAL_4 && note_in == MIDI_PEDAL_3)) {
+      most_recent_drum_pedal = MIDI_PEDAL_34;
+    } else if ((prev_pedal == MIDI_PEDAL_4 && note_in == MIDI_PEDAL_1) ||
+               (prev_pedal == MIDI_PEDAL_1 && note_in == MIDI_PEDAL_4)) {
+      most_recent_drum_pedal = MIDI_PEDAL_41;
     }
   }
   most_recent_drum_ts = current_time;
@@ -921,13 +937,21 @@ void count_drum_hit(int note_in) {
 
 void send_chord(int note_out, int vel, int endpoint) {
   psend_midi(MIDI_ON, to_root(note_out), vel, endpoint);
-  if (// is_minor_chord isn't defined when reading notes from piano
+  if (// chord_type isn't defined when reading notes from piano
       drum_chooses_notes &&
       // need to turn on thirds
       c->shortish[endpoint]) {
-    psend_midi(MIDI_ON, to_root(note_out + (is_minor_chord ? 3 : 4)), vel, endpoint);
+    psend_midi(MIDI_ON, to_root(note_out + (chord_type == CHORD_MAJOR ? 3 : 4)), vel, endpoint);
   }
-  psend_midi(MIDI_ON, to_root(note_out + 7), vel, endpoint);
+
+  int fifth = note_out + 7;
+  if (// chord_type isn't defined when reading notes from piano
+      drum_chooses_notes &&
+      chord_type == CHORD_DIM) {
+    fifth -= 1;
+  }
+
+  psend_midi(MIDI_ON, to_root(fifth), vel, endpoint);
 }
 
 void update_bass() {
