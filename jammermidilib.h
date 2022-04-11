@@ -974,6 +974,11 @@ void count_drum_hit(int note_in) {
       most_recent_drum_pedal = MIDI_PEDAL_41;
     }
   }
+  
+  if (drum_chooses_notes) {
+    update_drum_pedal_note();
+  }
+  
   most_recent_drum_ts = current_time;
   if (note_in == MIDI_DRUM_IN_KICK) {
     //printf("saving kick @ %llu\n", current_time);
@@ -1456,11 +1461,10 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (note_in == MIDI_DRUM_IN_KICK || drum_chooses_notes) {
     last_fb_vel = val;
   }
-
+  
   //printf("foot: %d %d\n", note_in, val);
   count_drum_hit(note_in);
   if (drum_chooses_notes) {
-    update_drum_pedal_note();
     update_bass();
   }
 }
