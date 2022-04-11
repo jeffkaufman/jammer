@@ -941,7 +941,7 @@ void send_chord(int note_out, int vel, int endpoint) {
       drum_chooses_notes &&
       // need to turn on thirds
       c->shortish[endpoint]) {
-    psend_midi(MIDI_ON, to_root(note_out + (chord_type == CHORD_MAJOR ? 3 : 4)), vel, endpoint);
+    psend_midi(MIDI_ON, to_root(note_out + (chord_type == CHORD_MAJOR ? 4 : 3)), vel, endpoint);
   }
 
   int fifth = note_out + 7;
