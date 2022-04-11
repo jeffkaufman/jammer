@@ -262,6 +262,8 @@ void update_drum_pedal_note() {
     }
   }
 
+  note = to_root(note); // TODO
+
   if (selected_chord_type == CHORD_NULL) {
     // Don't use note for chord_note.
 
@@ -300,7 +302,29 @@ void psend_midi(int action, int note, int velocity, int endpoint) {
       // chords should be higher
       note += 24;
     }
-    note += c->octave_deltas[endpoint]*12;
+
+    // Normally this is like:
+    //
+    //     24 25 26 27 28 29 30 31 32 33 34 35 ->
+    //      36 37 38 39 40 41 42 43 44 45 46 47
+    //
+    // but bass is different.  That goes:
+    //
+    //     24 25 26 27 28 29 30 31 32 33 34 35 ->
+    //      36 37 38 39 40 41 30 31 32 33 34 35
+    //       36 37 38 39 40 41 42 43 44 45 46 47
+    //
+
+    if (endpoint == ENDPOINT_FOOTBASS) {
+      note += (c->octave_deltas[endpoint] / 2) * 12;
+      if (c->octave_deltas[endpoint] % 2 == 1) {
+        if (to_root(note) < 30) {
+          note += 12;
+        }
+      }
+    } else {
+      note += c->octave_deltas[endpoint]*12;
+    }
   }
   send_midi(action, note, velocity, endpoint);
 }
