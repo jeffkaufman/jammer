@@ -112,6 +112,8 @@
 #define CHORD_DIM   2
 #define CHORD_NULL  3
 
+#define MAX_FADE MIDI_MAX
+
 int normalize(int val) {
   if (val > MIDI_MAX) {
     return MIDI_MAX;
@@ -193,6 +195,9 @@ int chord_note;
 int current_drum_pedal_note;
 int prev_chord_type;
 int prev_chord_note;
+
+int fade_value;
+int fade_target;
 
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
@@ -418,6 +423,22 @@ void clear_overlay() {
   select_voice(c, 18);
 }
 
+void update_fade(int endpoint) {
+  psend_midi(MIDI_CC, CC_11, fade_value, endpoint);
+}
+
+void update_fades() {
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    update_fade(endpoint);
+  }
+}
+
+void progress_fades() {
+  if (fade_target == fade_value) return;
+  fade_value += (fade_target < fade_value ? -1 : 1);
+  update_fades();
+}
+
 void clear_endpoint() {
   c->on[c->selected_endpoint] = false;
   c->downbeat[c->selected_endpoint] = true;
@@ -451,7 +472,7 @@ void clear_endpoint() {
   case ENDPOINT_DRONE_CHORD: clear_drone_chord(); break;
   }
 
-  psend_midi(MIDI_CC, CC_11, 100, c->selected_endpoint);
+  update_fade(c->selected_endpoint);
 }
 
 void clear_configuration() {
@@ -514,6 +535,9 @@ void clear_status() {
   prev_chord_type = chord_type;
   prev_chord_note = chord_note;
   current_drum_pedal_note = root_note;
+
+  fade_value = MAX_FADE;
+  fade_target = MAX_FADE;
 }
 
 void voices_reset() {
@@ -1409,6 +1433,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '.':
     c->vel[c->selected_endpoint] = !c->vel[c->selected_endpoint];
     return;
+  case '/':
+    fade_target = fade_target == 0 ? MAX_FADE : 0;
+    return;
   case F6:
     toggle_air_locked();
     return;
@@ -1671,6 +1698,11 @@ void jml_tick() {
   update_air();
   forward_air();
   trigger_subbeats();
+
+  // We fade from 100 to 0 over 4000ms, so we want to progress every 40 ticks.
+  if (tick_n % 40 == 0) {
+    progress_fades();
+  }
 
   if (++tick_n % 450 == 0) {
 #ifdef FAKE_FEET
