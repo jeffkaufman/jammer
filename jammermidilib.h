@@ -96,6 +96,7 @@
 #define MIDI_PEDAL_23 6  // 2 and 3
 #define MIDI_PEDAL_34 7  // 3 and 4
 #define MIDI_PEDAL_41 8  // 4 and 1
+#define MIDI_PEDAL_24 9  // 2 and 4
 // others are possible, but not implemented yet
 
 #define MIDI_DRUM_CHORD_INTERVAL_MAX_NS 40000000
@@ -235,6 +236,9 @@ void update_drum_pedal_note() {
     } else if (most_recent_drum_pedal == MIDI_PEDAL_23) {
       note += 2;  // ii
       selected_chord_type = CHORD_MINOR;
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_24) {
+      note += 6;  // bV
+      selected_chord_type = CHORD_NULL;
     } else if (most_recent_drum_pedal == MIDI_PEDAL_3) {
       note += 5;  // IV
     } else if (most_recent_drum_pedal == MIDI_PEDAL_34) {
@@ -269,6 +273,7 @@ void update_drum_pedal_note() {
 
     if (most_recent_drum_pedal == MIDI_PEDAL_12 ||
         most_recent_drum_pedal == MIDI_PEDAL_23 ||
+        most_recent_drum_pedal == MIDI_PEDAL_24 ||
         most_recent_drum_pedal == MIDI_PEDAL_34 ||
         most_recent_drum_pedal == MIDI_PEDAL_41) {
       // Composite (two pedal) note: roll back chord that was just started.
@@ -966,6 +971,9 @@ void count_drum_hit(int note_in) {
     } else if ((prev_pedal == MIDI_PEDAL_2 && note_in == MIDI_PEDAL_3) ||
                (prev_pedal == MIDI_PEDAL_3 && note_in == MIDI_PEDAL_2)) {
       most_recent_drum_pedal = MIDI_PEDAL_23;
+    } else if ((prev_pedal == MIDI_PEDAL_2 && note_in == MIDI_PEDAL_4) ||
+               (prev_pedal == MIDI_PEDAL_4 && note_in == MIDI_PEDAL_2)) {
+      most_recent_drum_pedal = MIDI_PEDAL_24;
     } else if ((prev_pedal == MIDI_PEDAL_3 && note_in == MIDI_PEDAL_4) ||
                (prev_pedal == MIDI_PEDAL_4 && note_in == MIDI_PEDAL_3)) {
       most_recent_drum_pedal = MIDI_PEDAL_34;
@@ -974,11 +982,11 @@ void count_drum_hit(int note_in) {
       most_recent_drum_pedal = MIDI_PEDAL_41;
     }
   }
-  
+
   if (drum_chooses_notes) {
     update_drum_pedal_note();
   }
-  
+
   most_recent_drum_ts = current_time;
   if (note_in == MIDI_DRUM_IN_KICK) {
     //printf("saving kick @ %llu\n", current_time);
@@ -1461,7 +1469,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (note_in == MIDI_DRUM_IN_KICK || drum_chooses_notes) {
     last_fb_vel = val;
   }
-  
+
   //printf("foot: %d %d\n", note_in, val);
   count_drum_hit(note_in);
   if (drum_chooses_notes) {
