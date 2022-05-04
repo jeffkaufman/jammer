@@ -494,6 +494,7 @@ void clear_status() {
     piano_notes[i] = false;
   }
   root_note = to_root(26);  // D @ 37Hz
+  fifth_note = to_root(root_note + 7);
   last_update_bass_note = 0;
 
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
@@ -1232,7 +1233,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
         }
       }
     }
-    if (root_candidate_note_in != -1) {
+    if (root_candidate_note_in != -1 && !drum_chooses_notes) {
       int new_root = to_root(root_candidate_note_in);
       if (new_root != root_note) {
         root_note = new_root;
@@ -1464,7 +1465,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     musical_mode = MODE_RACOON;
     return;
   case F8:
-    root_note = val;
+    root_note = to_root(val);
+    fifth_note = to_root(root_note + 7);
+    update_bass();
     return;
 
   // punchy
