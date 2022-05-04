@@ -1074,10 +1074,13 @@ void update_bass() {
     if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
 
     int vel = MIDI_MAX;
-    if (endpoint == ENDPOINT_DRONE_BASS) {
-      vel = 80;
-    } else if (endpoint == ENDPOINT_DRONE_CHORD) {
-      vel = 30;
+    if (endpoint == ENDPOINT_DRONE_BASS ||
+        endpoint == ENDPOINT_DRONE_CHORD) {
+      if (c->chord[endpoint]) {
+        vel = 30;
+      } else {
+        vel = 70;
+      }
     }
 
     drone_endpoint_off(endpoint);
