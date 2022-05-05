@@ -93,10 +93,11 @@
 
 // Virtual pedals made by chording
 #define MIDI_PEDAL_12 5  // 1 and 2
-#define MIDI_PEDAL_23 6  // 2 and 3
-#define MIDI_PEDAL_34 7  // 3 and 4
-#define MIDI_PEDAL_41 8  // 4 and 1
-#define MIDI_PEDAL_24 9  // 2 and 4
+#define MIDI_PEDAL_13 6  // 1 and 3
+#define MIDI_PEDAL_23 7  // 2 and 3
+#define MIDI_PEDAL_24 8  // 2 and 4
+#define MIDI_PEDAL_34 9  // 3 and 4
+#define MIDI_PEDAL_41 10 // 4 and 1
 // others are possible, but not implemented yet
 
 #define MIDI_DRUM_CHORD_INTERVAL_MAX_NS 40000000
@@ -236,6 +237,9 @@ void update_drum_pedal_note() {
     } else if (most_recent_drum_pedal == MIDI_PEDAL_12) {
       note -= 1;  // VII
       selected_chord_type = CHORD_NULL;
+    } else if (most_recent_drum_pedal == MIDI_PEDAL_13) {
+      note += 3;  // biii
+      selected_chord_type = CHORD_NULL;
     } else if (most_recent_drum_pedal == MIDI_PEDAL_2) {
       // pass
     } else if (most_recent_drum_pedal == MIDI_PEDAL_23) {
@@ -277,6 +281,7 @@ void update_drum_pedal_note() {
     // Don't use note for chord_note.
 
     if (most_recent_drum_pedal == MIDI_PEDAL_12 ||
+        most_recent_drum_pedal == MIDI_PEDAL_13 ||
         most_recent_drum_pedal == MIDI_PEDAL_23 ||
         most_recent_drum_pedal == MIDI_PEDAL_24 ||
         most_recent_drum_pedal == MIDI_PEDAL_34 ||
@@ -993,6 +998,9 @@ void count_drum_hit(int note_in) {
     if ((prev_pedal == MIDI_PEDAL_1 && note_in == MIDI_PEDAL_2) ||
         (prev_pedal == MIDI_PEDAL_2 && note_in == MIDI_PEDAL_1)) {
       most_recent_drum_pedal = MIDI_PEDAL_12;
+    } else if ((prev_pedal == MIDI_PEDAL_1 && note_in == MIDI_PEDAL_3) ||
+               (prev_pedal == MIDI_PEDAL_3 && note_in == MIDI_PEDAL_1)) {
+      most_recent_drum_pedal = MIDI_PEDAL_13;
     } else if ((prev_pedal == MIDI_PEDAL_2 && note_in == MIDI_PEDAL_3) ||
                (prev_pedal == MIDI_PEDAL_3 && note_in == MIDI_PEDAL_2)) {
       most_recent_drum_pedal = MIDI_PEDAL_23;
