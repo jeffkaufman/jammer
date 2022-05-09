@@ -190,10 +190,11 @@ int musical_mode;
 int most_recent_drum_pedal;
 uint64_t most_recent_drum_ts;
 
-// these five are only used when drum_chooses_notes
+// these six are only used when drum_chooses_notes
 int chord_type;
 int chord_note;
 int current_drum_pedal_note;
+int last_drum_pedal_note;
 int prev_chord_type;
 int prev_chord_note;
 
@@ -215,6 +216,20 @@ int to_root(int note_out) {
 }
 
 void update_drum_pedal_note() {
+  bool is_composite_note =
+    most_recent_drum_pedal == MIDI_PEDAL_12 ||
+    most_recent_drum_pedal == MIDI_PEDAL_13 ||
+    most_recent_drum_pedal == MIDI_PEDAL_23 ||
+    most_recent_drum_pedal == MIDI_PEDAL_24 ||
+    most_recent_drum_pedal == MIDI_PEDAL_34 ||
+    most_recent_drum_pedal == MIDI_PEDAL_41;
+  if (is_composite_note) {
+    // don't update last_drum_pedal_note because current_drum_pedal_note
+    // contains not a real note.
+  } else {
+    last_drum_pedal_note = current_drum_pedal_note;
+  }
+
   int note = root_note;
 
   int selected_chord_type = CHORD_MAJOR;
@@ -226,16 +241,25 @@ void update_drum_pedal_note() {
 
   if (most_recent_drum_pedal == MIDI_PEDAL_1) {
     if (musical_mode == MODE_MIXO) {
-      note -= 2; // bVII
+      note += 10; // bVII
     } else {
       note += 9;  // vi
       selected_chord_type = CHORD_MINOR;
     }
   } else if (most_recent_drum_pedal == MIDI_PEDAL_12) {
-    note -= 1;  // VII
+    note += 11;  // VII
     selected_chord_type = CHORD_NULL;
   } else if (most_recent_drum_pedal == MIDI_PEDAL_13) {
-    note += 3;  // biii
+    // This one is weird: which note it is depends on what the previous note
+    // was.
+    if (last_drum_pedal_note == to_root(note + 2) || // ii
+        last_drum_pedal_note == to_root(note + 4)) { // iii
+      note += 3;  // biii
+    } else if (last_drum_pedal_note == to_root(note)     ||   // I
+               last_drum_pedal_note == to_root(note + 9) ||   // vi
+               last_drum_pedal_note == to_root(note + 11) ) { // VII
+      note+= 10; // bVII
+    }
     selected_chord_type = CHORD_NULL;
   } else if (most_recent_drum_pedal == MIDI_PEDAL_2) {
     // pass
@@ -257,17 +281,12 @@ void update_drum_pedal_note() {
     selected_chord_type = CHORD_NULL;
   }
 
-  note = to_root(note); // TODO
+  note = to_root(note);
 
   if (selected_chord_type == CHORD_NULL) {
     // Don't use note for chord_note.
 
-    if (most_recent_drum_pedal == MIDI_PEDAL_12 ||
-        most_recent_drum_pedal == MIDI_PEDAL_13 ||
-        most_recent_drum_pedal == MIDI_PEDAL_23 ||
-        most_recent_drum_pedal == MIDI_PEDAL_24 ||
-        most_recent_drum_pedal == MIDI_PEDAL_34 ||
-        most_recent_drum_pedal == MIDI_PEDAL_41) {
+    if (is_composite_note) {
       // Composite (two pedal) note: roll back chord that was just started.
       chord_note = prev_chord_note;
       chord_type = prev_chord_type;
@@ -523,6 +542,7 @@ void clear_status() {
   prev_chord_type = chord_type;
   prev_chord_note = chord_note;
   current_drum_pedal_note = root_note;
+  last_drum_pedal_note = root_note;
 
   fade_value = MAX_FADE;
   fade_target = MAX_FADE;
