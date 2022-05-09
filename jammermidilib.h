@@ -679,12 +679,12 @@ bool should_end_note(int current_len, bool is_shortish, bool is_shorter) {
   return false;
 }
 
-void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
-  if (!c->on[ENDPOINT_FOOTBASS]) return;
-  if (drone && c->current_note[ENDPOINT_FOOTBASS] == -1) return;
+void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool drone) {
+  if (!c->on[endpoint]) return;
+  if (drone && c->current_note[endpoint] == -1) return;
 
-  if (c->current_note[ENDPOINT_FOOTBASS] != -1) {
-    c->current_len[ENDPOINT_FOOTBASS]++;
+  if (c->current_note[endpoint] != -1) {
+    c->current_len[endpoint]++;
   }
 
   int note_out = active_note();
@@ -692,43 +692,43 @@ void arpeggiate_bass(int subbeat, uint64_t current_time, bool drone) {
   int fifth = to_fifth(selected_note);
   bool send_note = false;
 
-  select_note(subbeat, c->chord[ENDPOINT_FOOTBASS], c->downbeat[ENDPOINT_FOOTBASS],
-              c->upbeat[ENDPOINT_FOOTBASS], c->upbeat_high[ENDPOINT_FOOTBASS], c->pre_unique[ENDPOINT_FOOTBASS],
-              c->doubled[ENDPOINT_FOOTBASS], &selected_note, &send_note);
-  select_note(subbeat, c->chord[ENDPOINT_FOOTBASS], c->downbeat[ENDPOINT_FOOTBASS],
-              c->upbeat[ENDPOINT_FOOTBASS], c->upbeat_high[ENDPOINT_FOOTBASS], c->pre_unique[ENDPOINT_FOOTBASS],
-              c->doubled[ENDPOINT_FOOTBASS], &fifth, &send_note);
+  select_note(subbeat, c->chord[endpoint], c->downbeat[endpoint],
+              c->upbeat[endpoint], c->upbeat_high[endpoint], c->pre_unique[endpoint],
+              c->doubled[endpoint], &selected_note, &send_note);
+  select_note(subbeat, c->chord[endpoint], c->downbeat[endpoint],
+              c->upbeat[endpoint], c->upbeat_high[endpoint], c->pre_unique[endpoint],
+              c->doubled[endpoint], &fifth, &send_note);
 
   bool end_note = send_note ||
-    should_end_note(c->current_len[ENDPOINT_FOOTBASS], c->shortish[ENDPOINT_FOOTBASS], c->shorter[ENDPOINT_FOOTBASS]);
+    should_end_note(c->current_len[endpoint], c->shortish[endpoint], c->shorter[endpoint]);
 
-  if (end_note && c->current_note[ENDPOINT_FOOTBASS] != -1) {
-    psend_midi(MIDI_OFF, c->current_note[ENDPOINT_FOOTBASS], 0, ENDPOINT_FOOTBASS);
-    if (c->current_fifth[ENDPOINT_FOOTBASS] != -1) {
-      psend_midi(MIDI_OFF, c->current_fifth[ENDPOINT_FOOTBASS], 0, ENDPOINT_FOOTBASS);
+  if (end_note && c->current_note[endpoint] != -1) {
+    psend_midi(MIDI_OFF, c->current_note[endpoint], 0, endpoint);
+    if (c->current_fifth[endpoint] != -1) {
+      psend_midi(MIDI_OFF, c->current_fifth[endpoint], 0, endpoint);
     }
 
-    c->current_note[ENDPOINT_FOOTBASS] = -1;
-    c->current_fifth[ENDPOINT_FOOTBASS] = -1;
-    c->current_len[ENDPOINT_FOOTBASS] = -1;
+    c->current_note[endpoint] = -1;
+    c->current_fifth[endpoint] = -1;
+    c->current_len[endpoint] = -1;
   }
 
   if (send_note) {
     if (selected_note != -1) {
-      c->current_note[ENDPOINT_FOOTBASS] = selected_note;
-      c->current_fifth[ENDPOINT_FOOTBASS] = fifth;
-      c->current_len[ENDPOINT_FOOTBASS] = 0;
+      c->current_note[endpoint] = selected_note;
+      c->current_fifth[endpoint] = fifth;
+      c->current_len[endpoint] = 0;
 
       psend_midi(MIDI_ON,
-                 c->current_note[ENDPOINT_FOOTBASS],
-                 c->vel[ENDPOINT_FOOTBASS] ? last_fb_vel : 90,
-                 ENDPOINT_FOOTBASS);
+                 c->current_note[endpoint],
+                 c->vel[endpoint] ? last_fb_vel : 90,
+                 endpoint);
 
-      if (c->chord[ENDPOINT_FOOTBASS]) {
+      if (c->chord[endpoint]) {
         psend_midi(MIDI_ON,
-                   c->current_fifth[ENDPOINT_FOOTBASS],
-                   c->vel[ENDPOINT_FOOTBASS] ? last_fb_vel : 90,
-                   ENDPOINT_FOOTBASS);
+                   c->current_fifth[endpoint],
+                   c->vel[endpoint] ? last_fb_vel : 90,
+                   endpoint);
       }
     }
   }
@@ -804,67 +804,10 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   }
 }
 
-void arpeggiate_arp(int subbeat, uint64_t current_time, bool drone) {
-  if (!c->on[ENDPOINT_ARP]) return;
-  if (drone && c->current_note[ENDPOINT_FOOTBASS] == -1) return;
-
-  if (c->current_note[ENDPOINT_ARP] != -1) {
-    c->current_len[ENDPOINT_ARP]++;
-  }
-
-  int note_out = active_note();
-  int selected_note = note_out;
-  int fifth = to_fifth(selected_note);
-  bool send_note = false;
-
-  select_note(subbeat, c->chord[ENDPOINT_ARP], c->downbeat[ENDPOINT_ARP],
-              c->upbeat[ENDPOINT_ARP], c->upbeat_high[ENDPOINT_ARP], c->pre_unique[ENDPOINT_ARP],
-              c->doubled[ENDPOINT_ARP], &selected_note, &send_note);
-  select_note(subbeat, c->chord[ENDPOINT_ARP], c->downbeat[ENDPOINT_ARP],
-              c->upbeat[ENDPOINT_ARP], c->upbeat_high[ENDPOINT_ARP], c->pre_unique[ENDPOINT_ARP],
-              c->doubled[ENDPOINT_ARP], &fifth, &send_note);
-
-  bool end_note = send_note ||
-    should_end_note(c->current_len[ENDPOINT_ARP], c->shortish[ENDPOINT_ARP], c->shorter[ENDPOINT_ARP]);
-
-  if (end_note && c->current_note[ENDPOINT_ARP] != -1) {
-    psend_midi(MIDI_OFF, c->current_note[ENDPOINT_ARP], 0, ENDPOINT_ARP);
-    if (c->current_fifth[ENDPOINT_ARP] != -1) {
-      psend_midi(MIDI_OFF, c->current_fifth[ENDPOINT_ARP], 0, ENDPOINT_ARP);
-    }
-
-    c->current_note[ENDPOINT_ARP] = -1;
-    c->current_fifth[ENDPOINT_ARP] = -1;
-    c->current_len[ENDPOINT_ARP] = -1;
-  }
-
-  if (send_note) {
-    if (selected_note != -1) {
-      c->current_note[ENDPOINT_ARP] = selected_note;
-      c->current_fifth[ENDPOINT_ARP] = fifth;
-      c->current_len[ENDPOINT_ARP] = 0;
-
-      psend_midi(MIDI_ON,
-                c->current_note[ENDPOINT_ARP],
-                90,
-                ENDPOINT_ARP);
-
-      if (c->chord[ENDPOINT_ARP]) {
-        psend_midi(MIDI_ON,
-                  c->current_fifth[ENDPOINT_ARP],
-                  90,
-                  ENDPOINT_ARP);
-      }
-
-      //printf("footbass start note %d\n", current_note[ENDPOINT_FOOTBASS]);
-    }
-  }
-}
-
 void arpeggiate(int subbeat, uint64_t current_time, bool drone) {
-  arpeggiate_bass(subbeat, current_time, drone);
+  arpeggiate_endpoint(ENDPOINT_FOOTBASS, subbeat, current_time, drone);
   arpeggiate_drum(subbeat, current_time);
-  arpeggiate_arp(subbeat, current_time, drone);
+  arpeggiate_endpoint(ENDPOINT_ARP, subbeat, current_time, drone);
 }
 
 uint64_t delta(uint64_t a, uint64_t b) {
