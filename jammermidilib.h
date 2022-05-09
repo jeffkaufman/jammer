@@ -715,19 +715,21 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
 
   if (send_note) {
     if (selected_note != -1) {
+      int vel = c->vel[endpoint] ? last_fb_vel : 90;
+
       c->current_note[endpoint] = selected_note;
       c->current_fifth[endpoint] = fifth;
       c->current_len[endpoint] = 0;
 
       psend_midi(MIDI_ON,
                  c->current_note[endpoint],
-                 c->vel[endpoint] ? last_fb_vel : 90,
+                 vel,
                  endpoint);
 
       if (c->chord[endpoint]) {
         psend_midi(MIDI_ON,
                    c->current_fifth[endpoint],
-                   c->vel[endpoint] ? last_fb_vel : 90,
+                   vel,
                    endpoint);
       }
     }
