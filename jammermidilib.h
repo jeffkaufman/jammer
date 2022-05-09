@@ -1244,7 +1244,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
         }
       }
     }
-    if (root_candidate_note_in != -1 && !drum_chooses_notes) {
+    if (root_candidate_note_in != -1) {
       int new_root = to_root(root_candidate_note_in);
       if (new_root != root_note) {
         root_note = new_root;
