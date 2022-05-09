@@ -716,6 +716,11 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
   if (send_note) {
     if (selected_note != -1) {
       int vel = c->vel[endpoint] ? last_fb_vel : 90;
+      if (selected_note > note_out &&
+          c->voices[endpoint] == 32) {
+        vel -= 20;
+      }
+
 
       c->current_note[endpoint] = selected_note;
       c->current_fifth[endpoint] = fifth;
