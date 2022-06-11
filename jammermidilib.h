@@ -141,6 +141,7 @@ struct Configuration {
   int current_note[N_ENDPOINTS];
   int current_fifth[N_ENDPOINTS];
   int current_len[N_ENDPOINTS];
+  uint64_t last_arpeggiation[N_ENDPOINTS];
   bool shortish[N_ENDPOINTS];
   bool shorter[N_ENDPOINTS];
   bool pre_unique[N_ENDPOINTS];
@@ -455,6 +456,7 @@ void clear_endpoint() {
   c->current_note[c->selected_endpoint] = -1;
   c->current_fifth[c->selected_endpoint] = -1;
   c->current_len[c->selected_endpoint] = 0;
+  c->last_arpeggiation[c->selected_endpoint] = 0;
   c->shortish[c->selected_endpoint] = false;
   c->shorter[c->selected_endpoint] = false;
   c->pre_unique[c->selected_endpoint] = false;
@@ -703,7 +705,9 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
               c->doubled[endpoint], &fifth, &send_note);
 
   bool end_note = send_note ||
-    should_end_note(c->current_len[endpoint], c->shortish[endpoint], c->shorter[endpoint]);
+    (!(endpoint == ENDPOINT_FOOTBASS && drum_chooses_notes) &&
+     should_end_note(c->current_len[endpoint], c->shortish[endpoint],
+                     c->shorter[endpoint]));
 
   if (end_note && c->current_note[endpoint] != -1) {
     psend_midi(MIDI_OFF, c->current_note[endpoint], 0, endpoint);
@@ -740,6 +744,8 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
                    vel,
                    endpoint);
       }
+
+      c->last_arpeggiation[endpoint] = current_time;
     }
   }
 }
@@ -1651,6 +1657,28 @@ void trigger_subbeats() {
   }
 }
 
+void maybe_end_notes() {
+  if (!drum_chooses_notes) return;
+  if (!c->shortish[ENDPOINT_FOOTBASS] && !c->shorter[ENDPOINT_FOOTBASS]) return;
+
+  int threshold = NS_PER_SEC;
+  if (c->shortish[ENDPOINT_FOOTBASS]) {
+    threshold /= 2;
+  }
+  if (c->shorter[ENDPOINT_FOOTBASS]) {
+    threshold /= 4;
+  }
+
+  uint64_t current_time = now();
+  //printf("%lld %lld %lld %d\n",
+  //       current_time, c->last_arpeggiation[ENDPOINT_FOOTBASS],
+  //       current_time - c->last_arpeggiation[ENDPOINT_FOOTBASS],
+  //       threshold);
+  if (current_time - c->last_arpeggiation[ENDPOINT_FOOTBASS] > threshold) {
+    endpoint_notes_off(ENDPOINT_FOOTBASS);
+  }
+}
+
 uint64_t tick_n = 0;
 uint64_t subtick_n = 0;
 void jml_tick() {
@@ -1669,6 +1697,7 @@ void jml_tick() {
   update_air();
   forward_air();
   trigger_subbeats();
+  maybe_end_notes();
 
   // We fade from 100 to 0 over 4000ms, so we want to progress every 40 ticks.
   if (tick_n % 40 == 0) {
