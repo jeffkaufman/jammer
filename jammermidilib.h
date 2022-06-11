@@ -331,7 +331,8 @@ void psend_midi(int action, int note, int velocity, int endpoint) {
     //       36 37 38 39 40 41 42 43 44 45 46 47
     //
 
-    if (endpoint == ENDPOINT_FOOTBASS) {
+    if (endpoint == ENDPOINT_FOOTBASS ||
+        endpoint == ENDPOINT_JAWHARP) {
       note += (c->octave_deltas[endpoint] / 2) * 12;
       if (c->octave_deltas[endpoint] % 2 == 1) {
         if (to_root(note) < 30) {
