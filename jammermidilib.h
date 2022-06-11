@@ -1437,7 +1437,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
   case 'D': select_voice(c, 32); return;
-  case 'F': select_voice(c, 35 /* 128*8 + 38 */); return;
+  case 'F': select_voice(c, 12); return;
+  case 'M': select_voice(c, 15); return;
+  case 'N': select_voice(c, 8); return;
   case 'G': select_voice(c,  0); return;
   case 'H': select_voice(c, 18); return;
   // continuous
