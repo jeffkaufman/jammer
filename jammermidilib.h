@@ -813,9 +813,11 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   }
 }
 
-void arpeggiate(int subbeat, uint64_t current_time, bool drone) {
+void arpeggiate(int subbeat, uint64_t current_time, bool drone, bool running) {
   arpeggiate_endpoint(ENDPOINT_FOOTBASS, subbeat, current_time, drone);
-  arpeggiate_drum(subbeat, current_time);
+  if (running || c->shorter[ENDPOINT_DRUM]) {
+    arpeggiate_drum(subbeat, current_time);
+  }
   arpeggiate_endpoint(ENDPOINT_ARP, subbeat, current_time, drone);
 }
 
@@ -923,7 +925,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 
   if (best_bpm <= 0) {
     if (drum_chooses_notes) {
-      arpeggiate(0, current_time, /*drone=*/false);
+      arpeggiate(0, current_time, /*drone=*/false, /*running=*/false);
     }
     return;
   }
@@ -931,7 +933,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
   current_beat_ns = whole_beat;
 
-  arpeggiate(0, current_time, /*drone=*/false);
+  arpeggiate(0, current_time, /*drone=*/false, /*running=*/true);
   last_downbeat_ns = current_time;
 
   next_ns[0] = current_time;
@@ -1019,7 +1021,7 @@ void update_bass() {
   uint64_t current_time = now();
   if (current_time - last_downbeat_ns > NS_PER_SEC &&
       bass_out != last_update_bass_note) {
-    arpeggiate(0, current_time, /*drone=*/true);
+    arpeggiate(0, current_time, /*drone=*/true, /*running=*/false);
   }
 
   last_update_bass_note = bass_out;
@@ -1642,7 +1644,7 @@ void trigger_subbeats() {
 
   for (int i = 1 /* 0 is triggered by kick directly */; i < N_SUBBEATS; i++) {
     if (next_ns[i] > 0 && current_time > next_ns[i]) {
-      arpeggiate(i, current_time, /*drone=*/false);
+      arpeggiate(i, current_time, /*drone=*/false, /*running=*/true);
       next_ns[i] = 0;
     }
   }
