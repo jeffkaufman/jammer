@@ -17,6 +17,7 @@
 #define BREATH_CONTROLLER_PORT_NAME "Breath Controller 5.0-15260BA7 "
 #define FEET_PORT_NAME "mio MIDI 1"
 #define KEYPAD_PORT_NAME "mido-keypad"  // pitch-detect:kbd.py
+#define MIDI_THROUGH_PORT_NAME "Midi Through Port-0"
 
 int fluidsynth_port;
 int axis49_port;
@@ -66,6 +67,8 @@ void setup_ports() {
   snd_seq_client_info_malloc(&client_info);
   snd_seq_port_info_malloc(&port_info);
 
+  bool seen_keyboard = false;
+
   for (int iterations = 0; true; iterations++) {
     snd_seq_client_info_set_client(client_info, -1);
     while (snd_seq_query_next_client(seq, client_info) >= 0) {
@@ -78,9 +81,18 @@ void setup_ports() {
       snd_seq_port_info_set_client(port_info, client);
       snd_seq_port_info_set_port(port_info, -1);
       while (snd_seq_query_next_port(seq, port_info) >= 0) {
+        if (strcmp(snd_seq_port_info_get_name(port_info),
+                   MIDI_THROUGH_PORT_NAME) == 0) {
+          continue;
+        }
+
+
         if (iterations == 0) {
           printf("Device: %s\n", snd_seq_port_info_get_name(port_info));
         }
+
+        bool is_keyboard_port = strcmp(snd_seq_port_info_get_name(port_info),
+                                       KEYBOARD_PORT_NAME) == 0;
 
         // Input ports: we need reading.
         if ((snd_seq_port_info_get_capability(port_info)
@@ -90,10 +102,6 @@ void setup_ports() {
                      AXIS49_PORT_NAME) == 0) {
             axis49_client = snd_seq_port_info_get_client(port_info);
             axis49_port = snd_seq_port_info_get_port(port_info);
-          } else if (strcmp(snd_seq_port_info_get_name(port_info),
-                            KEYBOARD_PORT_NAME) == 0) {
-            keyboard_client = snd_seq_port_info_get_client(port_info);
-            keyboard_port = snd_seq_port_info_get_port(port_info);
           } else if (strcmp(snd_seq_port_info_get_name(port_info),
                             BREATH_CONTROLLER_PORT_NAME) == 0) {
             breath_controller_client = snd_seq_port_info_get_client(port_info);
@@ -106,6 +114,14 @@ void setup_ports() {
                             KEYPAD_PORT_NAME) == 0) {
             keypad_client = snd_seq_port_info_get_client(port_info);
             keypad_port = snd_seq_port_info_get_port(port_info);
+          } else if (is_keyboard_port || !seen_keyboard) {
+            // Prefer to us what we know is the keyboard, but if we don't see a
+            // keyboard and do see a random midi device assume it's a keyboard.
+            if (is_keyboard_port) {
+              seen_keyboard = true;
+            }
+            keyboard_client = snd_seq_port_info_get_client(port_info);
+            keyboard_port = snd_seq_port_info_get_port(port_info);
           }
         }
 
