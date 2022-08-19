@@ -302,7 +302,7 @@ void update_drum_pedal_note() {
   current_drum_pedal_note = note;
 }
 
-void update_bass();
+void update_bass(bool force_refresh);
 
 // Given a note relative to root, convert it into a note relative to fifth.
 int to_fifth(int note_out) {
@@ -377,7 +377,7 @@ void select_voice(struct Configuration* c, int voice) {
   if (c->selected_endpoint == ENDPOINT_FOOTBASS ||
       c->selected_endpoint == ENDPOINT_ARP ||
       c->selected_endpoint < N_DRONE_ENDPOINTS) {
-    update_bass();
+    update_bass(/*force_refresh=*/true);
   }
 }
 
@@ -1021,13 +1021,14 @@ void send_chord(int note_out, int vel, int endpoint) {
   psend_midi(MIDI_ON, to_root(fifth), vel, endpoint);
 }
 
-void update_bass() {
+void update_bass(bool force_refresh) {
   int bass_out = active_note();
   int chord_out = active_chord();
 
+  bool note_changed = force_refresh || bass_out != last_update_bass_note;
+
   uint64_t current_time = now();
-  if (current_time - last_downbeat_ns > NS_PER_SEC &&
-      bass_out != last_update_bass_note) {
+  if (current_time - last_downbeat_ns > NS_PER_SEC && note_changed) {
     arpeggiate(0, current_time, /*drone=*/true, /*running=*/false);
   }
 
@@ -1041,6 +1042,7 @@ void update_bass() {
     if (current_note[endpoint] == note_out &&
         !(drum_chooses_notes && c->shorter[endpoint])) continue;
     if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
+    if (!note_changed) continue;
 
     int vel = MIDI_MAX;
     if (endpoint == ENDPOINT_DRONE_BASS ||
@@ -1210,7 +1212,7 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
       if (new_root != root_note) {
         root_note = new_root;
         fifth_note = to_root(new_root + 7);
-        update_bass();
+        update_bass(/*force_refresh=*/false);
       }
     }
   }
@@ -1259,7 +1261,7 @@ void toggle_endpoint(int endpoint) {
 
   if (endpoint < N_DRONE_ENDPOINTS) {
     if (c->on[endpoint]) {
-      update_bass();
+      update_bass(/*force_refresh=*/true);
     } else {
       drone_endpoint_off(endpoint);
     }
@@ -1324,14 +1326,14 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'W':
     toggle_endpoint(ENDPOINT_FOOTBASS);
-    update_bass();
+    update_bass(/*force_refresh=*/true);
     return;
   case '3':
     c->selected_endpoint = ENDPOINT_ARP;
     return;
   case 'E':
     toggle_endpoint(ENDPOINT_ARP);
-    update_bass();
+    update_bass(/*force_refresh=*/true);
     return;
   case '4':
     c->selected_endpoint = ENDPOINT_FLEX;
@@ -1439,7 +1441,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case F8:
     root_note = to_root(val);
     fifth_note = to_root(root_note + 7);
-    update_bass();
+    update_bass(/*force_refresh=*/false);
     return;
 
   // punchy
@@ -1477,7 +1479,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   //printf("foot: %d %d\n", note_in, val);
   count_drum_hit(note_in);
   if (drum_chooses_notes) {
-    update_bass();
+    update_bass(/*force_refresh=*/false);
   }
 }
 
@@ -1501,7 +1503,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
       if (breath < 10) {
         drone_endpoint_off(ENDPOINT_JAWHARP);
       } else if (breath > 20) {
-        update_bass();
+        update_bass(/*force_refresh=*/false);
       }
     }
 
@@ -1712,7 +1714,7 @@ void jml_tick() {
 #ifdef FAKE_CHANGE_PITCH
     if (++subtick_n % 2 == 0) {
       root_note = to_root(root_note + 1);
-      update_bass();
+      update_bass(/*force_refresh=*/false);
     }
 #endif
   }
