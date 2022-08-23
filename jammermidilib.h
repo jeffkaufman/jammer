@@ -1025,7 +1025,7 @@ void update_bass(bool force_refresh) {
   int bass_out = active_note();
   int chord_out = active_chord();
 
-  bool note_changed = force_refresh || bass_out != last_update_bass_note;
+  bool note_changed = bass_out != last_update_bass_note;
 
   uint64_t current_time = now();
   if (current_time - last_downbeat_ns > NS_PER_SEC && note_changed) {
@@ -1042,7 +1042,9 @@ void update_bass(bool force_refresh) {
     if (current_note[endpoint] == note_out &&
         !(drum_chooses_notes && c->shorter[endpoint])) continue;
     if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
-    if (!note_changed) continue;
+    if (endpoint != ENDPOINT_JAWHARP && !note_changed && !force_refresh) {
+      continue;
+    }
 
     int vel = MIDI_MAX;
     if (endpoint == ENDPOINT_DRONE_BASS ||
