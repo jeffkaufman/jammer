@@ -119,10 +119,11 @@ FILE* tempo_file = NULL;
 
 void set_tempo_fname(const char* fname) {
   tempo_file = fopen(fname, "w");
-  if (tempo_file == NULL) {
-    perror("can't set_tempo_fname");
-    printf("tried to use '%s'\n", fname);
-    exit(1);
+  while (tempo_file == NULL) {
+    // wait for tmpfs to come up
+    perror("can't set_tempo_fname, waiting...");
+    sleep(1);
+    tempo_file = fopen(fname, "w");
   }
 }
 
