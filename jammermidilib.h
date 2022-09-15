@@ -213,6 +213,9 @@ int prev_chord_note;
 int fade_value;
 int fade_target;
 
+bool delay_on;
+float current_tempo_bpm;
+
 void print_kick_times(uint64_t current_time) {
   printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
   for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
@@ -560,6 +563,9 @@ void clear_status() {
 
   fade_value = MAX_FADE;
   fade_target = MAX_FADE;
+
+  delay_on = false;
+  current_tempo_bpm = 118.0;
 }
 
 void voices_reset() {
@@ -931,6 +937,14 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
   return best_bpm;
 }
 
+void write_tempo() {
+  rewind(tempo_file);
+  fprintf(tempo_file,
+	  "%.0f\n\n\n\n\n\n",
+	  delay_on ? current_tempo_bpm*100 : 0);
+  fflush(tempo_file);
+}
+
 void estimate_tempo(uint64_t current_time, int note_in) {
   //print_kick_times(current_time);
 
@@ -950,10 +964,8 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 
   // We have a tempo: best_bpm
   printf("Tempo selected: %f\n", best_bpm);
-
-  rewind(tempo_file);
-  fprintf(tempo_file, "%.0f\n", best_bpm*100);
-  fflush(tempo_file);
+  current_tempo_bpm = best_bpm;
+  write_tempo();
   
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
   current_beat_ns = whole_beat;
@@ -1262,6 +1274,11 @@ void full_reset() {
   all_notes_off();
 }
 
+void toggle_delay() {
+  delay_on = !delay_on;
+  write_tempo();
+}
+
 void toggle_air_locked() {
   c->air_lockeds[c->selected_endpoint] = !c->air_lockeds[c->selected_endpoint];
   c->locked_airs[c->selected_endpoint] = air;
@@ -1430,6 +1447,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case '/':
     fade_target = fade_target == 0 ? MAX_FADE : 0;
+    return;
+  case F5:
+    toggle_delay();
     return;
   case F6:
     toggle_air_locked();
