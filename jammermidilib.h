@@ -569,9 +569,18 @@ void clear_status() {
   current_tempo_bpm = 118.0;
 }
 
+void write_tempo() {
+  rewind(tempo_file);
+  fprintf(tempo_file,
+	  "%.0f\n\n\n\n\n\n",
+	  delay_on ? current_tempo_bpm*100 : 0);
+  fflush(tempo_file);
+}
+
 void voices_reset() {
   clear_configuration();
   clear_status();
+  write_tempo();
 }
 
 
@@ -938,13 +947,6 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
   return best_bpm;
 }
 
-void write_tempo() {
-  rewind(tempo_file);
-  fprintf(tempo_file,
-	  "%.0f\n\n\n\n\n\n",
-	  delay_on ? current_tempo_bpm*100 : 0);
-  fflush(tempo_file);
-}
 
 void estimate_tempo(uint64_t current_time, int note_in) {
   //print_kick_times(current_time);
