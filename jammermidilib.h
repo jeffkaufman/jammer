@@ -115,6 +115,17 @@
 
 #define MAX_FADE MIDI_MAX
 
+FILE* tempo_file = NULL;
+
+void set_tempo_fname(const char* fname) {
+  tempo_file = fopen(fname, "w");
+  if (tempo_file == NULL) {
+    perror("can't set_tempo_fname");
+    printf("tried to use '%s'\n", fname);
+    exit(1);
+  }
+}
+
 int normalize(int val) {
   if (val > MIDI_MAX) {
     return MIDI_MAX;
@@ -937,6 +948,13 @@ void estimate_tempo(uint64_t current_time, int note_in) {
     return;
   }
 
+  // We have a tempo: best_bpm
+  printf("Tempo selected: %f\n", best_bpm);
+
+  rewind(tempo_file);
+  fprintf(tempo_file, "%.0f\n", best_bpm*100);
+  fflush(tempo_file);
+  
   uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
   current_beat_ns = whole_beat;
 

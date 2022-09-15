@@ -56,7 +56,7 @@ Description=Remap MIDI
 After=fluidsynth.service
 
 [Service]
-ExecStart=/home/pi/jammer/jammer
+ExecStart=/home/pi/jammer/jammer /run/user/1000/current-tempo
 Restart=always
 KillSignal=SIGQUIT
 Type=simple
