@@ -359,7 +359,7 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     volume = 100;
     break;
   case 18:
-    volume = 75;
+    volume = 65;
     break;
   case 5:
     volume = 90;
