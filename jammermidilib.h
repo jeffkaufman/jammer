@@ -417,6 +417,10 @@ void clear_footbass() {
 
 void clear_drum() {
   // select_voice ??
+  c->downbeat[ENDPOINT_DRUM] = false;
+  c->upbeat[ENDPOINT_DRUM] = true;
+  c->upbeat_high[ENDPOINT_DRUM] = false;
+  c->doubled[ENDPOINT_DRUM] = false;
 }
 
 void clear_arp() {
@@ -1352,7 +1356,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '`':
     c->selected_endpoint = ENDPOINT_DRUM;
     return;
-  case 'r':
+  case 'r': // tab
     toggle_endpoint(ENDPOINT_DRUM);
     return;
   case '1':
