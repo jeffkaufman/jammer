@@ -888,8 +888,8 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
 
   int n_downbeats_to_consider = 4;
 
-  for (float candidate_bpm = 80;
-       candidate_bpm <= 160;
+  for (float candidate_bpm = 70;
+       candidate_bpm < 140;
        candidate_bpm += 0.25) {
 
     uint64_t whole_note_ns = 60L * NS_PER_SEC / candidate_bpm;
