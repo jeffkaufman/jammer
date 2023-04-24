@@ -25,7 +25,10 @@
 // voice.  Then each combination also has a dynamic modifier, adjusted by +/-.
 
 #define MIDI_DRUM_IN_SNARE 46
+#define MIDI_DRUM_IN_SNARE_2 100
 #define MIDI_DRUM_IN_KICK 38
+#define MIDI_DRUM_IN_KICK_2 42
+#define MIDI_DRUM_IN_KICK_3 85
 #define MIDI_DRUM_IN_CRASH 59
 #define MIDI_DRUM_IN_HIHAT 51
 
@@ -1529,6 +1532,13 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
     return;
   }
 
+  if (note_in == MIDI_DRUM_IN_KICK_2 ||
+      note_in == MIDI_DRUM_IN_KICK_3) {
+    note_in = MIDI_DRUM_IN_KICK;
+  } else if (note_in == MIDI_DRUM_IN_SNARE_2) {
+    note_in = MIDI_DRUM_IN_SNARE;
+  }
+  
   if (note_in == MIDI_DRUM_IN_KICK || drum_chooses_notes) {
     last_fb_vel = val;
   }
