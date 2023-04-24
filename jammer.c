@@ -417,12 +417,11 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 }
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    printf("usage: %s /path/to/tempo/file\n", argv[0]);
+  if (argc != 1 && argc != 2) {
+    // For now ignore arg1 which used to be the tempo fname.
+    printf("usage: %s\n", argv[0]);
     return 1;
   }
-
-  set_tempo_fname(argv[1]);
   
   attempt(snd_seq_open(&seq, "default", SND_SEQ_OPEN_DUPLEX, 0),
           "open seq");
