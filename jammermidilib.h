@@ -413,6 +413,10 @@ void clear_drone_chord() {
 
 void clear_footbass() {
   select_voice(c, 39);
+  c->downbeat[ENDPOINT_FOOTBASS] = true;
+  c->upbeat[ENDPOINT_FOOTBASS] = true;
+  c->upbeat_high[ENDPOINT_FOOTBASS] = true;
+  c->doubled[ENDPOINT_FOOTBASS] = false;
 }
 
 void clear_drum() {
