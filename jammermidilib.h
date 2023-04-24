@@ -828,29 +828,35 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   if (downbeat(subbeat) && c->upbeat_high[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 0.57,
+               vel * 1.0,
                ENDPOINT_DRUM);
   }
 
 
   if (upbeat(subbeat) && c->upbeat[ENDPOINT_DRUM]) {
+    if (!c->upbeat_high[ENDPOINT_DRUM] &&
+	!c->doubled[ENDPOINT_DRUM] &&
+	!c->pre_unique[ENDPOINT_DRUM]) {
+      vel *= 1.4;
+    }	
+	
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 0.5,
+               vel * 0.88,
                ENDPOINT_DRUM);
   }
 
   if (preup(subbeat) && c->doubled[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 0.67,
+               vel * 0.74,
                ENDPOINT_DRUM);
   }
 
   if (predown(subbeat) && c->pre_unique[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
                MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 0.5,
+               vel * 0.88,
                ENDPOINT_DRUM);
   }
 }

@@ -372,6 +372,10 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     break;
   }
 
+  if (endpoint == ENDPOINT_DRUM) {
+    volume = MIDI_MAX;
+  }
+  
   if (manual_volume != -1) {
     volume = manual_volume;
   }
@@ -386,7 +390,7 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     volume -= 40;
   } else if (endpoint == ENDPOINT_LOW) {
     volume += 10;
-  }
+  } 
 
   if (endpoint == ENDPOINT_OVERLAY ||
       endpoint == ENDPOINT_FLEX ||
