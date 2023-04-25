@@ -161,6 +161,7 @@ struct Configuration {
   bool air_lockeds[N_ENDPOINTS];
   double locked_airs[N_ENDPOINTS];
   bool follows_air[N_ENDPOINTS];
+  bool ducked[N_ENDPOINTS];
 };
 
 // TODO: allow multiple of these.
@@ -186,6 +187,7 @@ int hihat_times_index;
 uint64_t next_ns[N_SUBBEATS];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
+uint64_t next_upbeat_ns;
 int last_fb_vel;
 bool jig_time;
 bool allow_all_drums_downbeat;
@@ -506,6 +508,7 @@ void clear_endpoint() {
   c->air_lockeds[c->selected_endpoint] = false;
   c->locked_airs[c->selected_endpoint] = 0;
   c->follows_air[c->selected_endpoint] = false;
+  c->ducked[c->selected_endpoint] = false;
 
   switch (c->selected_endpoint) {
   case ENDPOINT_JAWHARP: clear_jawharp(); break;
@@ -571,6 +574,7 @@ void clear_status() {
 
   current_beat_ns = 0;
   last_downbeat_ns = 0;
+  next_upbeat_ns = 0;
 
   jig_time = false;
   allow_all_drums_downbeat = false;
@@ -996,6 +1000,9 @@ void estimate_tempo(uint64_t current_time, int note_in) {
   next_ns[0] = current_time;
   for (int i = 1; i < N_SUBBEATS; i++) {
     next_ns[i] = next_ns[i-1] + (whole_beat)/72;
+    if (upbeat(i)) {
+      next_upbeat_ns = next_ns[i];
+    }
   }
 }
 
@@ -1310,8 +1317,13 @@ void toggle_air_locked() {
 void toggle_follows_air() {
   c->follows_air[c->selected_endpoint] = !c->follows_air[c->selected_endpoint];
   psend_midi(MIDI_CC, CC_11,
-	     c->follows_air[c->selected_endpoint] ? 0 : 100,
+	     c->follows_air[c->selected_endpoint] ? 0 : MIDI_MAX,
 	     c->selected_endpoint);
+}
+
+void toggle_ducked() {
+  c->ducked[c->selected_endpoint] = !c->ducked[c->selected_endpoint];
+  psend_midi(MIDI_CC, CC_11, MIDI_MAX, c->selected_endpoint);
 }
 
 void toggle_endpoint(int endpoint) {
@@ -1470,6 +1482,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case '/':
     fade_target = fade_target == 0 ? MAX_FADE : 0;
+    return;
+  case F4:
+    toggle_ducked();
     return;
   case F5:
     drum_chooses_some_notes = !drum_chooses_some_notes;
@@ -1724,6 +1739,33 @@ void forward_air() {
   }
 }
 
+int last_duck_val = 0;
+void duck() {
+  int duck_val = -1;
+  uint64_t current_time;
+
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    if (c->ducked[endpoint]) {
+      if (duck_val == -1) {
+	current_time = now();
+	// Volume ranges from 0 at last_downbeat_ns to 100 starting
+	// with next_upbeat_ns.
+ 	if (current_time >= next_upbeat_ns) {
+	  duck_val = MIDI_MAX;
+	} else {
+	  uint64_t swell_time = next_upbeat_ns - last_downbeat_ns;
+	  uint64_t progress = current_time - last_downbeat_ns;
+	  duck_val = MIDI_MAX * progress / swell_time;
+	}	
+      }
+      if (last_duck_val != duck_val) {
+	psend_midi(MIDI_CC, CC_11, duck_val, endpoint);
+	last_duck_val = duck_val;
+      }
+    }
+  }  
+}
+
 void trigger_subbeats() {
   uint64_t current_time = now();
 
@@ -1774,6 +1816,7 @@ void jml_tick() {
   // Called every TICK_MS
   update_air();
   forward_air();
+  duck();
   trigger_subbeats();
   maybe_end_notes();
 
