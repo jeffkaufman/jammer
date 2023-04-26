@@ -400,6 +400,9 @@ void reload_voice_setting(struct Configuration* c) {
   int manual_volume = c->manual_volumes[voice];
   bool pan = c->pans[endpoint];
 
+  if (endpoint != ENDPOINT_JAWHARP && c->ducked[endpoint]) {
+    volume_delta += 20;
+  }
   select_endpoint_voice(endpoint,
                         voice % 128, voice / 128,
                         volume_delta, manual_volume, pan);
@@ -1335,6 +1338,7 @@ void toggle_ducked() {
 	     (c->ducked[c->selected_endpoint] ||
 	      c->selected_endpoint == ENDPOINT_JAWHARP) ? 0 : MIDI_MAX,
 	     c->selected_endpoint);
+  reload_voice_setting(c);
   update_bass(/*force_refresh=*/true);
 }
 
