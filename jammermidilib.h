@@ -1335,6 +1335,7 @@ void toggle_ducked() {
 	     (c->ducked[c->selected_endpoint] ||
 	      c->selected_endpoint == ENDPOINT_JAWHARP) ? 0 : MIDI_MAX,
 	     c->selected_endpoint);
+  update_bass(/*force_refresh=*/true);
 }
 
 void toggle_endpoint(int endpoint) {
