@@ -1807,6 +1807,13 @@ void duck() {
 	psend_midi(MIDI_CC, CC_11,
 		   endpoint == ENDPOINT_JAWHARP ? duck_val * 0.8 : duck_val,
 		   endpoint);
+	if (endpoint < N_DRONE_ENDPOINTS) {
+	  if (duck_val < 3 && current_note[endpoint] != -1) {
+	    drone_endpoint_off(endpoint);
+	  } else if (current_note[endpoint] == -1) {
+	    update_bass(/*force_refresh=*/true);
+	  }
+	}
       }
     }
     last_duck_val = duck_val;
