@@ -414,6 +414,7 @@ void select_voice(struct Configuration* c, int voice) {
   reload_voice_setting(c);
   if (c->selected_endpoint == ENDPOINT_FOOTBASS ||
       c->selected_endpoint == ENDPOINT_ARP ||
+      c->selected_endpoint == ENDPOINT_JAWHARP || 
       c->selected_endpoint < N_DRONE_ENDPOINTS) {
     update_bass(/*force_refresh=*/true);
   }
