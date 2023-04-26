@@ -188,6 +188,7 @@ uint64_t next_ns[N_SUBBEATS];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
 uint64_t next_upbeat_ns;
+uint64_t next_downbeat_ns;
 int last_fb_vel;
 bool jig_time;
 bool allow_all_drums_downbeat;
@@ -1002,6 +1003,8 @@ void estimate_tempo(uint64_t current_time, int note_in) {
     next_ns[i] = next_ns[i-1] + (whole_beat)/72;
     if (upbeat(i)) {
       next_upbeat_ns = next_ns[i];
+    } else if (i == N_SUBBEATS - 1) {
+      next_downbeat_ns = next_ns[i];
     }
   }
 }
@@ -1325,7 +1328,8 @@ void toggle_follows_air() {
 void toggle_ducked() {
   c->ducked[c->selected_endpoint] = !c->ducked[c->selected_endpoint];
   psend_midi(MIDI_CC, CC_11,
-	     c->ducked[c->selected_endpoint] ? 0 : MIDI_MAX,
+	     (c->ducked[c->selected_endpoint] ||
+	      c->selected_endpoint == ENDPOINT_JAWHARP) ? 0 : MIDI_MAX,
 	     c->selected_endpoint);
 }
 
@@ -1759,7 +1763,9 @@ void duck() {
 	  target = 90;
 	}
 	  
- 	if (current_time >= next_upbeat_ns) {
+ 	if (current_time >= next_downbeat_ns) {
+	  duck_val = 0;
+	} else if (current_time >= next_upbeat_ns) {
 	  duck_val = target;
 	} else {
 	  uint64_t swell_time = next_upbeat_ns - last_downbeat_ns;
