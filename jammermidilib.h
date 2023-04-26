@@ -1604,7 +1604,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
         endpoint != ENDPOINT_FLEX) {
       continue;
     }
-    if (endpoint == ENDPOINT_JAWHARP && c->ducked[endpoint]) continue;
+    if (c->ducked[endpoint]) continue;
     int use_val = normalize(val);
 
     if (endpoint == ENDPOINT_JAWHARP) {
