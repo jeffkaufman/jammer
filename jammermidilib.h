@@ -1324,7 +1324,9 @@ void toggle_follows_air() {
 
 void toggle_ducked() {
   c->ducked[c->selected_endpoint] = !c->ducked[c->selected_endpoint];
-  psend_midi(MIDI_CC, CC_11, MIDI_MAX, c->selected_endpoint);
+  psend_midi(MIDI_CC, CC_11,
+	     c->ducked[c->selected_endpoint] ? 0 : MIDI_MAX,
+	     c->selected_endpoint);
 }
 
 void toggle_endpoint(int endpoint) {
@@ -1589,12 +1591,13 @@ void handle_cc(unsigned int cc, unsigned int val) {
         endpoint != ENDPOINT_FLEX) {
       continue;
     }
+    if (endpoint == ENDPOINT_JAWHARP && c->ducked[endpoint]) continue;
     int use_val = normalize(val);
 
     if (endpoint == ENDPOINT_JAWHARP) {
-      if (breath < 10 && !c->ducked[endpoint]) {
+      if (breath < 10) {
         drone_endpoint_off(ENDPOINT_JAWHARP);
-      } else if (breath > 20 || c->ducked[endpoint]) {
+      } else if (breath > 20) {
         update_bass(/*force_refresh=*/false);
       }
     }
@@ -1603,8 +1606,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
       flex_breath = use_val;
       use_val = flex_val();
       last_flex_val = use_val;
-    } else if (endpoint == ENDPOINT_JAWHARP && c->ducked[endpoint]) {
-      use_val = MIDI_MAX;
     }
     psend_midi(MIDI_CC, CC_11, use_val, endpoint);
   }
@@ -1753,12 +1754,17 @@ void duck() {
 	current_time = now();
 	// Volume ranges from 0 at last_downbeat_ns to 100 starting
 	// with next_upbeat_ns.
+	int target = MIDI_MAX;
+	if (endpoint == ENDPOINT_JAWHARP) {
+	  target = 90;
+	}
+	  
  	if (current_time >= next_upbeat_ns) {
-	  duck_val = MIDI_MAX;
+	  duck_val = target;
 	} else {
 	  uint64_t swell_time = next_upbeat_ns - last_downbeat_ns;
 	  uint64_t progress = current_time - last_downbeat_ns;
-	  duck_val = MIDI_MAX * progress / swell_time;
+	  duck_val = target * progress / swell_time;
 	}	
       }
       if (last_duck_val != duck_val) {
