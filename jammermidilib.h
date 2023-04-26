@@ -1106,7 +1106,8 @@ void update_bass(bool force_refresh) {
     if (!c->on[endpoint]) continue;
     if (current_note[endpoint] == note_out &&
         !(drum_chooses_notes && c->shorter[endpoint])) continue;
-    if (endpoint == ENDPOINT_JAWHARP && breath < 3) continue;
+    if (endpoint == ENDPOINT_JAWHARP &&
+	(breath < 3 && !c->ducked[endpoint])) continue;
     if (endpoint != ENDPOINT_JAWHARP && !note_changed && !force_refresh) {
       continue;
     }
@@ -1591,9 +1592,9 @@ void handle_cc(unsigned int cc, unsigned int val) {
     int use_val = normalize(val);
 
     if (endpoint == ENDPOINT_JAWHARP) {
-      if (breath < 10) {
+      if (breath < 10 && !c->ducked[endpoint]) {
         drone_endpoint_off(ENDPOINT_JAWHARP);
-      } else if (breath > 20) {
+      } else if (breath > 20 || c->ducked[endpoint]) {
         update_bass(/*force_refresh=*/false);
       }
     }
@@ -1602,6 +1603,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
       flex_breath = use_val;
       use_val = flex_val();
       last_flex_val = use_val;
+    } else if (endpoint == ENDPOINT_JAWHARP && c->ducked[endpoint]) {
+      use_val = MIDI_MAX;
     }
     psend_midi(MIDI_CC, CC_11, use_val, endpoint);
   }
