@@ -187,7 +187,8 @@ int hihat_times_index;
 uint64_t next_ns[N_SUBBEATS];
 uint64_t current_beat_ns;
 uint64_t last_downbeat_ns;
-uint64_t next_upbeat_ns;
+uint64_t next_duck_trough_ns;
+uint64_t next_duck_peak_ns;
 uint64_t next_downbeat_ns;
 int last_fb_vel;
 bool jig_time;
@@ -575,7 +576,8 @@ void clear_status() {
 
   current_beat_ns = 0;
   last_downbeat_ns = 0;
-  next_upbeat_ns = 0;
+  next_duck_trough_ns = 0;
+  next_duck_peak_ns = 0;
 
   jig_time = false;
   allow_all_drums_downbeat = false;
@@ -1001,8 +1003,10 @@ void estimate_tempo(uint64_t current_time, int note_in) {
   next_ns[0] = current_time;
   for (int i = 1; i < N_SUBBEATS; i++) {
     next_ns[i] = next_ns[i-1] + (whole_beat)/72;
-    if (upbeat(i)) {
-      next_upbeat_ns = next_ns[i];
+    if (i == (jig_time ? 60 : 50)) {
+      next_duck_peak_ns = next_ns[i];
+    } else if (i == (jig_time ? 30 : 20)) {
+      next_duck_trough_ns = next_ns[i];
     } else if (i == N_SUBBEATS - 1) {
       next_downbeat_ns = next_ns[i];
     }
@@ -1587,6 +1591,10 @@ void handle_cc(unsigned int cc, unsigned int val) {
     return;
   }
 
+  //printf("V %d %.0f%%\n", val,
+  //       100.0 * (now() - last_downbeat_ns) / 
+  //       (next_downbeat_ns - last_downbeat_ns));
+  
   breath = val;
 
   // pass other control change to all synths that care about it:
@@ -1749,35 +1757,53 @@ void forward_air() {
 
 int last_duck_val = 0;
 void duck() {
-  int duck_val = -1;
-  uint64_t current_time;
-
+  bool any_ducked = false;
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     if (c->ducked[endpoint]) {
-      if (duck_val == -1) {
-	current_time = now();
-	// Volume ranges from 0 at last_downbeat_ns to 100 starting
-	// with next_upbeat_ns.
-	int target = MIDI_MAX;
-	if (endpoint == ENDPOINT_JAWHARP) {
-	  target = 90;
-	}
-	  
- 	if (current_time >= next_downbeat_ns) {
-	  duck_val = 0;
-	} else if (current_time >= next_upbeat_ns) {
-	  duck_val = target;
-	} else {
-	  uint64_t swell_time = next_upbeat_ns - last_downbeat_ns;
-	  uint64_t progress = current_time - last_downbeat_ns;
-	  duck_val = target * progress / swell_time;
-	}	
-      }
-      if (last_duck_val != duck_val) {
-	psend_midi(MIDI_CC, CC_11, duck_val, endpoint);
-	last_duck_val = duck_val;
+      any_ducked = true;
+    }
+  }
+  if (!any_ducked) return;
+
+  uint64_t current_time = now();
+
+  // Curve ramps down to 0 at next_duck_trough_ns, then up
+  // to target_peak at next_duck_peak_ns, and back.  All linear.
+  int target_peak = MIDI_MAX;
+  
+  uint64_t peak_to_peak = next_downbeat_ns - last_downbeat_ns;
+  uint64_t future_trough_ns = next_duck_trough_ns + peak_to_peak;
+  uint64_t past_peak_ns = next_duck_peak_ns - peak_to_peak;
+  
+  int duck_val;
+  if (current_time >= future_trough_ns) {
+    duck_val = 0;
+  } else if (current_time >= next_duck_peak_ns) {
+    // Ramping down to 0 at future_trough_ns
+    uint64_t swell_time = future_trough_ns - next_duck_peak_ns;
+    uint64_t progress = current_time - next_duck_peak_ns;
+    duck_val = target_peak * (swell_time - progress) / swell_time;
+  } else if (current_time >= next_duck_trough_ns) {
+    // Ramping up to target_peak  at next_duck_peak_ns
+    uint64_t swell_time = next_duck_peak_ns - next_duck_trough_ns;
+    uint64_t progress = current_time - next_duck_trough_ns;
+    duck_val = target_peak * progress / swell_time;
+  } else {
+    // Ramping down to 0 at next_duck_trough_ns
+    uint64_t swell_time = next_duck_trough_ns - past_peak_ns;
+    uint64_t progress = current_time - past_peak_ns;
+    duck_val = target_peak * (swell_time - progress) / swell_time;	  
+  }
+
+  if (last_duck_val != duck_val) {
+    for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+      if (c->ducked[endpoint]) {
+	psend_midi(MIDI_CC, CC_11,
+		   endpoint == ENDPOINT_JAWHARP ? duck_val * 0.8 : duck_val,
+		   endpoint);
       }
     }
+    last_duck_val = duck_val;
   }  
 }
 
