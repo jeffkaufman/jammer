@@ -365,7 +365,7 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     volume = 90;
     break;
   case 16:
-    volume = 80;
+    volume = 110;
     break;
   case 32:
     volume = 115;
@@ -431,14 +431,34 @@ int main(int argc, char** argv) {
   setup_ports();
 
   if (false) {
-    int demo_note = 60;
-    int demo_voice = 97;
+    int demo_note = 60 - 24;
     send_midi(MIDI_CC, CC_07, 127, 1);
     send_midi(MIDI_CC, CC_11, 127, 1);
-    choose_voice(0, 1, demo_voice);
-    send_midi(MIDI_ON, demo_note, 100, 1);
-    sleep(2);
+    for (int demo_voice = 0 ; demo_voice < 127; demo_voice++) {;
+      if (demo_voice != 5 &&
+	  demo_voice != 12 &&
+	  demo_voice != 16 &&
+	  demo_voice != 26 &&
+	  demo_voice != 32 &&
+	  demo_voice != 45 &&
+	  demo_voice != 87 &&
+	  demo_voice != 99 &&
+	  demo_voice != 103) {
+	continue;
+      }
+      
+      printf("Demo %d\n", demo_voice);
+      choose_voice(1, 2, demo_voice);
+      for (int i = 0; i < 4; i++) {
+	send_midi(MIDI_ON, demo_note, 100, 1);
+	usleep(300000);
+	send_midi(MIDI_ON, demo_note + 12, 100, 1);
+	usleep(300000);
+      }
+      usleep(400000);
+    }
     send_midi(MIDI_OFF, demo_note, 100, 1);
+    send_midi(MIDI_OFF, demo_note + 12, 100, 1);
     exit(0);
   }
   if (false) { // demo voices

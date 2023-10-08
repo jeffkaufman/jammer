@@ -294,7 +294,7 @@ void update_drum_pedal_note() {
       if (musical_mode == MODE_MAJOR || musical_mode == MODE_MIXO) {
 	note += 7;  // V
       } else if (musical_mode == MODE_MINOR) {
-	note -= 4;  // VI
+	note -= 4;  // bVI
       }
     } else {
       note += 4;  // iii
@@ -1546,10 +1546,11 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
   case 'D': select_voice(c, 32); return;
-  case 'F': select_voice(c, 12); return;
+    // rejected 12, 0, 8, 45, 33, 5, 12
+  case 'N': select_voice(c, 87); return;
+  case 'F': select_voice(c, 16); return;
   case 'M': select_voice(c, 15); return;
-  case 'N': select_voice(c, 8); return;
-  case 'G': select_voice(c,  0); return;
+  case 'G': select_voice(c, 35); return;
   case 'H': select_voice(c, 18); return;
   // continuous
   case 'Z': select_voice(c, 75); return;
