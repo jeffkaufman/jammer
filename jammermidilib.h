@@ -87,7 +87,7 @@
 #define MODE_MAJOR 1
 #define MODE_MIXO 2
 #define MODE_MINOR 3
-#define MODE_RACOON 4
+#define MODE_BETH_COHENS 4
 
 #define MIDI_PEDAL_1 MIDI_DRUM_IN_SNARE
 #define MIDI_PEDAL_2 MIDI_DRUM_IN_KICK
@@ -281,7 +281,8 @@ void update_drum_pedal_note() {
     selected_chord_type = CHORD_NULL;
   } else if (most_recent_drum_pedal == MIDI_PEDAL_3) {
     if (drum_chooses_some_notes) {
-      if (musical_mode == MODE_MAJOR || musical_mode == MODE_MIXO) {
+      if (musical_mode == MODE_MAJOR || musical_mode == MODE_MIXO ||
+	  musical_mode == MODE_BETH_COHENS) {
 	// pass  I
       } else if (musical_mode == MODE_MINOR) {
 	selected_chord_type = CHORD_MINOR;  // i
@@ -295,6 +296,8 @@ void update_drum_pedal_note() {
 	note += 7;  // V
       } else if (musical_mode == MODE_MINOR) {
 	note -= 4;  // bVI
+      } else if (musical_mode == MODE_BETH_COHENS) {
+	note -= 2;  // bVII
       }
     } else {
       note += 4;  // iii
@@ -308,6 +311,8 @@ void update_drum_pedal_note() {
 	note -= 2;  // bVII
       } else if (musical_mode == MODE_MINOR) {
 	note -= 2;  // bVII
+      } else if (musical_mode == MODE_BETH_COHENS) {
+	note += 1;  // bII
       }
     } else {
       note += 7;  // V
@@ -1534,7 +1539,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     musical_mode = MODE_MINOR;
     return;
   case RIGHT:
-    musical_mode = MODE_RACOON;
+    musical_mode = MODE_BETH_COHENS;
     return;
   case F8:
     root_note = to_root(val);
