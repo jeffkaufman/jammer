@@ -25,7 +25,7 @@ sudo apt install fluidsynth fluid-soundfont-gm alsa-utils jackd2 libasound2-dev
 
 (When JACK asks if it can have realtime priority, say yes)
 
-Check out this repo and put it at `/home/pi/jammer/`.
+Use a deploy key to check out this repo and put it at `/home/jeffkaufman/jammer/`.
 
 ```
 $ cd ~/jammer
@@ -39,7 +39,7 @@ To run on boot, `/etc/systemd/system/fluidsynth.service` should have:
 Description=Fluidsynth Synthesizer
 
 [Service]
-ExecStart=sudo /home/pi/jammer/run-fluidsynth.sh
+ExecStart=sudo /home/jeffkaufman/jammer/run-fluidsynth.sh
 Restart=always
 KillSignal=SIGQUIT
 Type=simple
@@ -56,7 +56,7 @@ Description=Remap MIDI
 After=fluidsynth.service
 
 [Service]
-ExecStart=/home/pi/jammer/jammer /run/user/1000/current-tempo
+ExecStart=/home/jeffkaufman/jammer/jammer
 Restart=always
 KillSignal=SIGQUIT
 Type=simple
@@ -65,13 +65,23 @@ Type=simple
 WantedBy=multi-user.target
 ```
 
-If this box will only ever run jammer then:
+Run:
 
 ```
 sudo systemctl enable fluidsynth
 sudo systemctl enable jammer
 sudo systemctl daemon-reload
 ```
+
+Set levels for consistency:
+
+```
+$ alsamixer
+> F6 select "USB Audio Device"
+> F5 [All]
+> Speaker: 83
+```
+
 
 Continue with setting up at least the keyboard listener portion of
 https://github.com/jeffkaufman/whistle-synth
@@ -86,11 +96,10 @@ https://github.com/jeffkaufman/whistle-synth
 
 4. Install Raspberry PI OS Lite
 
-5. Connect a keyboard and monitor and log in: pi/raspberry
+5. Connect a keyboard and monitor and log in.  It will ask you to create a
+   password: use 'jeffkaufman' with something secure.
 
-6. Change the password to something more secure
-
-7. Use the automated setup tool:
+6. Use the automated setup tool: `sudo raspi-config`
 
    i. Set the country to US
 
@@ -98,22 +107,9 @@ https://github.com/jeffkaufman/whistle-synth
 
    iii. Enable SSH
 
-8. `sudo apt install emacs mosh git`
+7. Log back in over ssh.
 
-### Fluidsynth from source
+8. `sudo apt update && sudo apt upgrade`
 
-```
-$ sudo emacs /etc/apt/sources.list
-     uncomment deb-src line
-$ sudo apt-get update
-$ sudo apt-get build-dep fluidsynth --no-install-recommends
-$ git clone git@github.com:FluidSynth/fluidsynth.git
-$ cd fluidsynth
-$ emacs src/drivers/fluid_adriver.c
-     find fluid_settings_register_int(settings, "audio.periods", 16, ...)
-     repl fluid_settings_register_int(settings, "audio.periods", 2, ...)
-$ mkdir build
-$ cd build
-$ cmake ..
-$ make
-```
+9. `sudo apt install emacs mosh git`
+
