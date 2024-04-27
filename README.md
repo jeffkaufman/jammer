@@ -113,3 +113,16 @@ https://github.com/jeffkaufman/whistle-synth
 
 9. `sudo apt install emacs mosh git`
 
+
+## Mac Version
+
+There's also a minimal version that runs on a mac and is a MIDI mapper for an
+electronic harp mandolin.  Run `make runmac` to build and run.
+
+It will look for two midi devices:
+
+* TE-Control breath controller
+* Electronic Harp Mandolin, presenting as "Teensy "
+
+and presents a virtual midi output intended for a wind instrument synth.  I've
+been using it with The Trombones 3.0.
