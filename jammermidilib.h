@@ -250,27 +250,45 @@ void update_drum_pedal_note() {
   }
 
   if (most_recent_drum_pedal == MIDI_PEDAL_1) {
-    if (musical_mode == MODE_MIXO) {
-      note += 10; // bVII
+    if (drum_chooses_some_notes) {
+      if (musical_mode == MODE_MAJOR) {
+	note += 9;  // vi
+	selected_chord_type = CHORD_MINOR;
+      } else if (musical_mode == MODE_MINOR || musical_mode == MODE_MIXO) {
+	note += 7;  // V
+      }
     } else {
-      note += 9;  // vi
-      selected_chord_type = CHORD_MINOR;
+      if (musical_mode == MODE_MIXO) {
+	note += 10; // bVII
+      } else {
+	note += 9;  // vi
+	selected_chord_type = CHORD_MINOR;
+      }
     }
   } else if (most_recent_drum_pedal == MIDI_PEDAL_12) {
     note += 11;  // VII
     selected_chord_type = CHORD_NULL;
   } else if (most_recent_drum_pedal == MIDI_PEDAL_13) {
-    // This one is weird: which note it is depends on what the previous note
-    // was.
-    if (last_drum_pedal_note == to_root(note + 2) || // ii
-        last_drum_pedal_note == to_root(note + 4)) { // iii
-      note += 3;  // biii
-    } else if (last_drum_pedal_note == to_root(note)     ||   // I
-               last_drum_pedal_note == to_root(note + 9) ||   // vi
-               last_drum_pedal_note == to_root(note + 11) ) { // VII
-      note+= 10; // bVII
+    if (drum_chooses_some_notes) {
+      if (musical_mode == MODE_MAJOR) {
+	note += 4;  // iii
+	selected_chord_type = CHORD_MINOR;
+      } else if (musical_mode == MODE_MINOR || musical_mode == MODE_MIXO) {
+	note += 5;  // IV
+      }
+    } else {
+      // This one is weird: which note it is depends on what the
+      // previous note was.
+      if (last_drum_pedal_note == to_root(note + 2) || // ii
+	  last_drum_pedal_note == to_root(note + 4)) { // iii
+	note += 3;  // biii
+      } else if (last_drum_pedal_note == to_root(note)     ||   // I
+		 last_drum_pedal_note == to_root(note + 9) ||   // vi
+		 last_drum_pedal_note == to_root(note + 11) ) { // VII
+	note+= 10; // bVII
+      }
+      selected_chord_type = CHORD_NULL;
     }
-    selected_chord_type = CHORD_NULL;
   } else if (most_recent_drum_pedal == MIDI_PEDAL_2) {
     // pass
   } else if (most_recent_drum_pedal == MIDI_PEDAL_23) {
@@ -284,17 +302,21 @@ void update_drum_pedal_note() {
       if (musical_mode == MODE_MAJOR || musical_mode == MODE_MIXO ||
 	  musical_mode == MODE_BETH_COHENS) {
 	// pass  I
-      } else if (musical_mode == MODE_MINOR) {
-	selected_chord_type = CHORD_MINOR;  // i
+      } else if (musical_mode == MODE_MINOR || musical_mode == MODE_MIXO) {
+	if (musical_mode == MODE_MINOR) {
+	  selected_chord_type = CHORD_MINOR;  // i
+	} else {
+	  // I
+	}
       }
     } else {
       note += 5;  // IV
     }
   } else if (most_recent_drum_pedal == MIDI_PEDAL_34) {
     if (drum_chooses_some_notes) {
-      if (musical_mode == MODE_MAJOR || musical_mode == MODE_MIXO) {
+      if (musical_mode == MODE_MAJOR) {
 	note += 7;  // V
-      } else if (musical_mode == MODE_MINOR) {
+      } else if (musical_mode == MODE_MINOR || musical_mode == MODE_MIXO) {
 	note -= 4;  // bVI
       } else if (musical_mode == MODE_BETH_COHENS) {
 	note -= 2;  // bVII
@@ -307,9 +329,7 @@ void update_drum_pedal_note() {
     if (drum_chooses_some_notes) {
       if (musical_mode == MODE_MAJOR) {
 	note += 5;  // IV
-      } else if (musical_mode == MODE_MIXO) {
-	note -= 2;  // bVII
-      } else if (musical_mode == MODE_MINOR) {
+      } else if (musical_mode == MODE_MINOR || musical_mode == MODE_MIXO) {
 	note -= 2;  // bVII
       } else if (musical_mode == MODE_BETH_COHENS) {
 	note += 1;  // bII
@@ -318,8 +338,17 @@ void update_drum_pedal_note() {
       note += 7;  // V
     }
   } else if (most_recent_drum_pedal == MIDI_PEDAL_41) {
-    note += 8;  // bVI
-    selected_chord_type = CHORD_NULL;
+    if (drum_chooses_some_notes) {
+      if (musical_mode == MODE_MAJOR) {
+	note += 2;  // ii
+	selected_chord_type = CHORD_MINOR;
+      } else if (musical_mode == MODE_MINOR || musical_mode == MODE_MIXO) {
+	note += 4;  // III
+      }
+    } else {
+      note += 8;  // bVI
+      selected_chord_type = CHORD_NULL;
+    }
   }
 
   note = to_root(note);
@@ -1027,10 +1056,12 @@ void count_drum_hit(int note_in) {
 
   int prev_pedal = most_recent_drum_pedal;
   if (!drum_chooses_some_notes ||
+      note_in == MIDI_PEDAL_1 ||
       note_in == MIDI_PEDAL_3 ||
       note_in == MIDI_PEDAL_4) {
-    // When drum_chooses_some_notes only pedals 3 and 4 should affect
-    // the most recent pedal; otherwise we want to use all pedals.
+    // When drum_chooses_some_notes only pedals 1, 3, and 4 should
+    // affect the most recent pedal; otherwise we want to use all
+    // pedals.
     most_recent_drum_pedal = note_in;    
 
     if ((drum_chooses_notes || drum_chooses_some_notes) &&
