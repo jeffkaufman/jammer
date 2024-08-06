@@ -1620,8 +1620,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   count_drum_hit(note_in);
   if (drum_chooses_notes ||
       (drum_chooses_some_notes &&
-       note_in != MIDI_DRUM_IN_KICK &&
-       note_in != MIDI_DRUM_IN_SNARE)) {
+       note_in != MIDI_DRUM_IN_KICK)) {
     update_bass(/*force_refresh=*/false);
   }
 }
