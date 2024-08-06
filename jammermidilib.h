@@ -1054,18 +1054,19 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 void count_drum_hit(int note_in) {
   uint64_t current_time = now();
 
-  int prev_pedal = most_recent_drum_pedal;
-  if (!drum_chooses_some_notes ||
-      note_in == MIDI_PEDAL_1 ||
-      note_in == MIDI_PEDAL_3 ||
-      note_in == MIDI_PEDAL_4) {
-    // When drum_chooses_some_notes only pedals 1, 3, and 4 should
-    // affect the most recent pedal; otherwise we want to use all
-    // pedals.
+  // When drum_chooses_some_notes only pedals 1, 3, and 4 should
+  // affect the most recent pedal; otherwise we want to use all
+  // pedals.
+  if (drum_chooses_notes ||
+      (drum_chooses_some_notes &&
+       (note_in == MIDI_PEDAL_1 ||
+	note_in == MIDI_PEDAL_3 ||
+	note_in == MIDI_PEDAL_4))) {
+    int prev_pedal = most_recent_drum_pedal;
     most_recent_drum_pedal = note_in;    
 
-    if ((drum_chooses_notes || drum_chooses_some_notes) &&
-	current_time - most_recent_choosy_drum_ts < MIDI_DRUM_CHORD_INTERVAL_MAX_NS) {
+    if (current_time - most_recent_choosy_drum_ts <
+	MIDI_DRUM_CHORD_INTERVAL_MAX_NS) {
       if ((prev_pedal == MIDI_PEDAL_1 && note_in == MIDI_PEDAL_2) ||
 	  (prev_pedal == MIDI_PEDAL_2 && note_in == MIDI_PEDAL_1)) {
 	most_recent_drum_pedal = MIDI_PEDAL_12;
@@ -1087,10 +1088,7 @@ void count_drum_hit(int note_in) {
       }
     }    
   
-    if (drum_chooses_notes || drum_chooses_some_notes) {
-      update_drum_pedal_note();
-    }
-  
+    update_drum_pedal_note();
     most_recent_choosy_drum_ts = current_time;
   }
 
