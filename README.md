@@ -99,10 +99,6 @@ $ alsamixer
 > Speaker: 100
 ```
 
-
-Continue with setting up at least the keyboard listener portion of
-https://github.com/jeffkaufman/whistle-synth
-
 ## Raspberry PI Setup
 
 1. Put the micro SD card into an adapter and attach to laptop
