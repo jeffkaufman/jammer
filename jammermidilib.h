@@ -211,15 +211,6 @@ int prev_chord_note;
 int fade_value;
 int fade_target;
 
-void print_kick_times(uint64_t current_time) {
-  printf("kick times index=%d (@%lld):\n", kick_times_index, current_time);
-  for (int i = 0; i < KICK_TIMES_LENGTH; i++) {
-    uint64_t kick_time = kick_times[(KICK_TIMES_LENGTH + kick_times_index - i) %
-                                   KICK_TIMES_LENGTH];
-    printf("  %llu   %llu\n", kick_time, current_time - kick_time);
-  }
-}
-
 int to_root(int note_out) {
   // 24-35
   return note_out % 12 + 24;
@@ -994,16 +985,6 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
 
   bool acceptable_error = best_error < max_allowed_error;
 
-  if (false) {
-    printf("%c BPM: %.0f (%lld) (err: %llu / %llu, frac: %.2f%%)\n",
-           acceptable_error ? ' ' : '!',
-           best_bpm,
-           whole_beat,
-           best_error,
-           max_allowed_error,
-           100 * (float)best_error / (float)max_allowed_error);
-  }
-
   if (!acceptable_error) {
     return -1;
   }
@@ -1013,8 +994,6 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
 
 
 void estimate_tempo(uint64_t current_time, int note_in) {
-  //print_kick_times(current_time);
-
   current_beat_ns = 0;
 
   float best_bpm = estimate_tempo_helper(current_time, /*consider_high=*/ false);
@@ -1093,7 +1072,6 @@ void count_drum_hit(int note_in) {
   }
 
   if (note_in == MIDI_DRUM_IN_KICK) {
-    //printf("saving kick @ %llu\n", current_time);
     kick_times[kick_times_index] = current_time;
     estimate_tempo(current_time, note_in);
     kick_times_index = (kick_times_index+1) % KICK_TIMES_LENGTH;
