@@ -9,7 +9,7 @@ midi devices:
 
 * MIO USB-MIDI representing a Yamaha DTX 500 used as foot pedals
 * TE-Control breath controller
-* Piano as "USB MIDI Interface"
+* Piano as "USB MIDI Interface" or any other unknown interface
 
 And send audio to fluidsynth.
 
@@ -43,7 +43,7 @@ ExecStart=sudo /home/jeffkaufman/jammer/run-fluidsynth.sh
 Restart=always
 KillSignal=SIGQUIT
 Type=simple
-
+[A
 [Install]
 WantedBy=multi-user.target
 ```
@@ -65,11 +65,28 @@ Type=simple
 WantedBy=multi-user.target
 ```
 
+And `/etc/systemd/system/jammer-kbd.service` should have:
+
+```
+[Unit]
+Description=Keyboard Control for Jammer
+
+[Service]
+ExecStart=/home/jeffkaufman/jammer/kbd.py
+Restart=always
+KillSignal=SIGQUIT
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
+```
+
 Run:
 
 ```
 sudo systemctl enable fluidsynth
 sudo systemctl enable jammer
+sudo systemctl enable jammer-kbd
 sudo systemctl daemon-reload
 ```
 
@@ -79,7 +96,7 @@ Set levels for consistency:
 $ alsamixer
 > F6 select "USB Audio Device"
 > F5 [All]
-> Speaker: 83
+> Speaker: 100
 ```
 
 
@@ -94,24 +111,15 @@ https://github.com/jeffkaufman/whistle-synth
 
 3. Run imager
 
-4. Install Raspberry PI OS Lite
+4. Install Raspberry PI OS Lite. Give it jeffkaufman for the user, ssh
+   public key for login, and tell it about the WiFi
 
-5. Connect a keyboard and monitor and log in.  It will ask you to create a
-   password: use 'jeffkaufman' with something secure.
+5. After booting the image, run `sudo nmap -sn 192.168.0.0/24` to learn what
+   IP it came up under.
 
-6. Use the automated setup tool: `sudo raspi-config`
+6. `sudo apt update && sudo apt upgrade`
 
-   i. Set the country to US
-
-   ii. Configure Wi-Fi
-
-   iii. Enable SSH
-
-7. Log back in over ssh.
-
-8. `sudo apt update && sudo apt upgrade`
-
-9. `sudo apt install emacs mosh git`
+7. `sudo apt install git`
 
 
 ## Mac Version
