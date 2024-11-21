@@ -14,7 +14,9 @@
 #define FLUIDSYNTH_PORT_PREFIX "Synth input port"
 #define AXIS49_PORT_NAME "AXIS-49 2A MIDI 1"
 #define KEYBOARD_PORT_NAME "USB MIDI Interface MIDI 1"
-#define BREATH_CONTROLLER_PORT_NAME "Breath Controller 5.0-15260BA7 "
+#define KEYBOARD_PORT_SUBSTR_1 "Piano"
+#define KEYBOARD_PORT_SUBSTR_2 "Roland"
+#define BREATH_CONTROLLER_PORT_SUBSTR "Breath Controller"
 #define FEET_PORT_NAME "mio MIDI 1"
 #define KEYPAD_PORT_NAME "mido-keypad"  // pitch-detect:kbd.py
 #define MIDI_THROUGH_PORT_NAME "Midi Through Port-0"
@@ -91,8 +93,13 @@ void setup_ports() {
           printf("Device: %s\n", snd_seq_port_info_get_name(port_info));
         }
 
-        bool is_keyboard_port = strcmp(snd_seq_port_info_get_name(port_info),
-                                       KEYBOARD_PORT_NAME) == 0;
+        bool is_keyboard_port =
+	  strcmp(snd_seq_port_info_get_name(port_info),
+		 KEYBOARD_PORT_NAME) == 0 ||
+	  strstr(snd_seq_port_info_get_name(port_info),
+		 KEYBOARD_PORT_SUBSTR_1) != NULL ||
+	  strstr(snd_seq_port_info_get_name(port_info),
+		 KEYBOARD_PORT_SUBSTR_2) != NULL;
 
         // Input ports: we need reading.
         if ((snd_seq_port_info_get_capability(port_info)
@@ -102,8 +109,8 @@ void setup_ports() {
                      AXIS49_PORT_NAME) == 0) {
             axis49_client = snd_seq_port_info_get_client(port_info);
             axis49_port = snd_seq_port_info_get_port(port_info);
-          } else if (strcmp(snd_seq_port_info_get_name(port_info),
-                            BREATH_CONTROLLER_PORT_NAME) == 0) {
+          } else if (strstr(snd_seq_port_info_get_name(port_info),
+                            BREATH_CONTROLLER_PORT_SUBSTR) != NULL) {
             breath_controller_client = snd_seq_port_info_get_client(port_info);
             breath_controller_port = snd_seq_port_info_get_port(port_info);
           } else if (strcmp(snd_seq_port_info_get_name(port_info),
