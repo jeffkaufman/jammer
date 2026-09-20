@@ -29,6 +29,7 @@ typedef enum {
   LIT_MODE,         // musical_mode == arg
   LIT_OCTAVE,       // octave_deltas[selected] is nonzero, sign matches arg
   LIT_VOLUME,       // volume_deltas[selected] is nonzero, sign matches arg
+  LIT_WHISTLE_ON,   // the whistle bass is switched on
 } LitKind;
 
 // Per-endpoint flags in struct Configuration.
@@ -51,6 +52,7 @@ typedef enum {
   GROUP_VOICE,     // pick the instrument for the selected endpoint
   GROUP_MODIFIER,  // per-endpoint behaviour flags
   GROUP_GLOBAL,    // whole-rig settings
+  GROUP_WHISTLE,   // the whistle bass, which is its own synthesis engine
 } KeyGroup;
 
 typedef struct {
@@ -109,7 +111,12 @@ static const Key KEYS[] = {
   // ` and 1-9 used to select which endpoint the modifiers act on; that's
   // shift + the endpoint's toggle key now.
   {-1, 0, 0, "`", FILLER, 1, 0, 1},
-  {-1, 0, 0, "1", FILLER, 1, 1, 1},
+  // The whistle bass.  Unlike everything else on this keyboard it sends
+  // nothing to handle_keypad -- it makes its own sound rather than playing a
+  // fluidsynth channel -- so its note is 0 and keypad.h dispatches it by its
+  // LIT_WHISTLE_ON marker instead.  Shift selects it, as with an endpoint.
+  {kVK_ANSI_1, 0, 0, "1", "WH", "Whistle", GROUP_WHISTLE, LIT_WHISTLE_ON, 0,
+   NOLABEL, 1, 1, 1},
   {-1, 0, 0, "2", FILLER, 1, 2, 1},
   {-1, 0, 0, "3", FILLER, 1, 3, 1},
   {-1, 0, 0, "4", FILLER, 1, 4, 1},

@@ -52,10 +52,45 @@ char audio_device[256] = "default";
 // actually playing".
 static volatile uint64_t audio_frames_rendered = 0;
 
+// Anything else that wants to be heard through jammer's output device, summed
+// into fluidsynth's buffers after it has filled them.  This is how the whistle
+// bass gets out without a second audio device -- see whistle.h.  NULL in the
+// tools that include this header for the synth alone.
+//
+// Called on the audio thread, so whatever is behind it must not lock or
+// allocate.
+static void (*audio_mix_hook)(float** out, int nout, int len,
+                              double sample_rate) = NULL;
+
+// What the synth is running at, which is also what any mixed-in engine has to
+// run at.  Set before start_synth to ask for something other than fluidsynth's
+// own default.
+double synth_sample_rate = 44100;
+
+// How big a block fluidsynth's driver asks for.  Read by the whistle, which
+// has to keep at least one of these buffered to hand it -- see
+// whistle_input_start.  Set here because this is the only place that knows.
+static volatile int audio_block_frames = 0;
+
 static int jammer_audio_render(void* data, int len, int nfx, float** fx,
                                int nout, float** out) {
   audio_frames_rendered += len;
-  return fluid_synth_process((fluid_synth_t*)data, len, nfx, fx, nout, out);
+  if (len > audio_block_frames) audio_block_frames = len;
+  // Cleared before the synth writes into them rather than trusted to arrive
+  // clean: fluidsynth's docs don't promise either way, and a mix hook that
+  // added into a buffer still holding its own last block would run away.
+  for (int i = 0; i < nout; i++) {
+    memset(out[i], 0, (size_t)len * sizeof(float));
+  }
+  for (int i = 0; i < nfx; i++) {
+    memset(fx[i], 0, (size_t)len * sizeof(float));
+  }
+  int result = fluid_synth_process((fluid_synth_t*)data, len, nfx, fx, nout,
+                                   out);
+  if (audio_mix_hook) {
+    audio_mix_hook(out, nout, len, synth_sample_rate);
+  }
+  return result;
 }
 
 // True if the driver has pulled audio from us recently.  Opening a device
@@ -248,6 +283,7 @@ void start_synth(const char* soundfont_path, const char* device) {
   if (period_env) {
     fluid_settings_setint(fl_settings, "audio.period-size", atoi(period_env));
   }
+  fluid_settings_setnum(fl_settings, "synth.sample-rate", synth_sample_rate);
   fluid_settings_setnum(fl_settings, "synth.gain", 1.0);
   fluid_settings_setint(fl_settings, "synth.audio-channels", 1);
   fluid_settings_setint(fl_settings, "synth.midi-channels", 16);

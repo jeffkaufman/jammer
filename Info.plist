@@ -13,5 +13,10 @@
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <!-- The whistle bass listens to the microphone.  Without this key macOS
+       kills the app the moment it first asks for input, rather than showing a
+       prompt. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Jammer listens to your whistling and plays it as a bass line.</string>
 </dict>
 </plist>

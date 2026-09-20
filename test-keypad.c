@@ -10,6 +10,7 @@
 #include "macapi.h"
 #include "jammermidilib.h"
 #include "voices.h"
+#include "whistle.h"
 #include "keylayout.h"
 #include "keypad.h"
 
@@ -31,10 +32,30 @@ static const Key* key_for_cap(const char* cap) {
   return NULL;
 }
 
+static const Key* key_for_cap_note(int note) {
+  for (int i = 0; i < N_KEYS; i++) {
+    if (KEYS[i].label && KEYS[i].note == note) return &KEYS[i];
+  }
+  return NULL;
+}
+
 static void press(const char* cap) {
   const Key* key = key_for_cap(cap);
   assert(key && "no such key in the layout");
   keypad_key(key->note);
+}
+
+// The whole dispatch the window does, whistle included, so the tests exercise
+// the routing rather than just the half below it.  Mirrors
+// -[JammerView strikeKeyAtIndex:selecting:].
+static void strike(const char* cap, bool selecting) {
+  const Key* key = key_for_cap(cap);
+  assert(key && "no such key in the layout");
+  int note = (selecting && key->select_note) ? key->select_note : key->note;
+  if (!whistle_key(key, selecting)) {
+    if (note == ESCAPE) whistle_reset();
+    keypad_key(note);
+  }
 }
 
 // Shift + an endpoint's on/off key, which is how you pick which endpoint the
@@ -63,13 +84,19 @@ static void test_layout_is_sane() {
             "unbound key %s still has a note", k->cap);
       continue;
     }
-    CHECK(k->note != 0, "bound key %s sends nothing", k->cap);
+    // The whistle isn't a fluidsynth channel and doesn't go through
+    // handle_keypad, so its keys deliberately send nothing.
+    bool whistle_key_entry = (k->lit == LIT_WHISTLE_ON);
+    CHECK(whistle_key_entry || k->note != 0,
+          "bound key %s sends nothing", k->cap);
+    CHECK(!whistle_key_entry || k->note == 0,
+          "whistle key %s shouldn't reach handle_keypad", k->cap);
     CHECK(k->vk >= 0, "bound key %s has no virtual keycode", k->cap);
     CHECK(!k->select_note || k->lit == LIT_EP_ON,
           "key %s shift-selects but isn't an endpoint toggle", k->cap);
     for (int j = i + 1; j < N_KEYS; j++) {
       if (!KEYS[j].label) continue;
-      CHECK(KEYS[j].note != k->note,
+      CHECK(k->note == 0 || KEYS[j].note != k->note,
             "keys %s and %s both send %d", k->cap, KEYS[j].cap, k->note);
       CHECK(KEYS[j].vk != k->vk,
             "keys %s and %s share keycode %d", k->cap, KEYS[j].cap, k->vk);
@@ -364,8 +391,139 @@ static void test_percussion_bank_reaches_the_synth() {
   fl_settings = NULL;
 }
 
+// The whistle is an instrument on this keyboard but not an endpoint, so the
+// thing to check is that the selection actually redirects the shared keys --
+// and, just as much, that it puts them back.
+static void test_whistle() {
+  full_reset();
+  whistle_reset();
+
+  const Key* one = key_for_cap("1");
+  CHECK(one != NULL && one->lit == LIT_WHISTLE_ON,
+        "the 1 key should be the whistle");
+
+  // Every voice key resolves to a preset that exists.
+  for (int i = 0; i < N_WHISTLE_VOICES; i++) {
+    CHECK(whistle_engine_voice[i] > 0,
+          "no preset for whistle voice %s", WHISTLE_VOICES[i].preset);
+    const Key* key = key_for_cap_note(WHISTLE_VOICES[i].note);
+    CHECK(key != NULL, "no key sends %d for %s", WHISTLE_VOICES[i].note,
+          WHISTLE_VOICES[i].preset);
+    CHECK(key == NULL || key->group == GROUP_VOICE,
+          "%s isn't a voice key", key ? key->cap : "?");
+  }
+
+  // Toggling, and selecting without toggling.
+  strike("1", false);
+  CHECK(whistle_on, "1 didn't switch the whistle on");
+  CHECK(lit("1"), "1 should be lit once the whistle is on");
+  CHECK(!whistle_selected, "toggling shouldn't select");
+  strike("1", true);
+  CHECK(whistle_selected, "shift-1 didn't select the whistle");
+  CHECK(whistle_on, "selecting shouldn't switch it off");
+  CHECK(key_is_selected_endpoint(one), "1 should show as selected");
+
+  // While it is selected the voice keys are its, and no endpoint's voice
+  // changes underneath.
+  select_ep("R");                      // flex, and it keeps the selection
+  strike("1", true);                   // back to the whistle
+  int flex_voice = c->voices[ENDPOINT_FLEX];
+  strike("D", false);                  // reese
+  CHECK(whistle_voice == 2, "D didn't pick the third whistle voice");
+  CHECK(c->voices[ENDPOINT_FLEX] == flex_voice,
+        "a whistle voice key changed an endpoint's voice");
+  CHECK(lit("D"), "D should be lit for the whistle voice it picked");
+  CHECK(!lit("A"), "A shouldn't be lit for a voice that isn't picked");
+  CHECK(!key_is_selected_endpoint(key_for_cap("R")),
+        "no endpoint is selected while the whistle is");
+
+  // The three voice keys the whistle doesn't use do nothing, and say so.
+  strike("B", false);
+  CHECK(whistle_voice == 2, "B should have done nothing");
+  CHECK(c->voices[ENDPOINT_FLEX] == flex_voice, "B reached the endpoint");
+  CHECK(whistle_key_is_dead(key_for_cap("B")), "B should draw as dead");
+  CHECK(!whistle_key_is_dead(key_for_cap("D")), "D shouldn't");
+
+  // Octave and volume act on the whistle, within the engine's limits.
+  int flex_octave = c->octave_deltas[ENDPOINT_FLEX];
+  strike("]", false);
+  strike("]", false);
+  CHECK(whistle_octave == 2, "] didn't move the whistle octave");
+  CHECK(c->octave_deltas[ENDPOINT_FLEX] == flex_octave,
+        "] moved an endpoint's octave while the whistle was selected");
+  CHECK(lit("]"), "] should be lit once the octave has moved");
+  for (int i = 0; i < 10; i++) strike("]", false);
+  CHECK(whistle_octave == SYNTH_OCTAVE_SHIFT,
+        "the octave should stop at the engine's limit");
+  for (int i = 0; i < 20; i++) strike("\\", false);
+  CHECK(whistle_octave == -SYNTH_OCTAVE_SHIFT,
+        "and at the other one");
+
+  // The trim starts at the top -- see WHISTLE_VOLUME_DEFAULT -- so it moves
+  // down first and back up after.
+  CHECK(whistle_volume == WHISTLE_VOLUME_DEFAULT,
+        "the whistle volume should start at its default");
+  strike("-", false);
+  CHECK(whistle_volume == WHISTLE_VOLUME_DEFAULT - 1,
+        "- didn't move the whistle volume");
+  CHECK(lit("-"), "- should be lit once the volume has moved");
+  strike("=", false);
+  CHECK(whistle_volume == WHISTLE_VOLUME_DEFAULT, "= didn't move it back");
+  CHECK(!lit("-"), "- shouldn't be lit once it's back at the default");
+  for (int i = 0; i < 20; i++) strike("=", false);
+  CHECK(whistle_volume == 9, "the volume should stop at 9");
+  for (int i = 0; i < 20; i++) strike("-", false);
+  CHECK(whistle_volume == 0, "and at 0");
+
+  // Per-endpoint flags are swallowed rather than applied to whoever was
+  // selected last.
+  bool flex_chord = c->chord[ENDPOINT_FLEX];
+  strike(",", false);
+  CHECK(c->chord[ENDPOINT_FLEX] == flex_chord,
+        "a modifier key reached an endpoint while the whistle was selected");
+  CHECK(whistle_key_is_dead(key_for_cap(",")), ", should draw as dead");
+
+  // Toggles still toggle, and shift-selecting an endpoint hands the keys back.
+  bool low_was_on = c->on[ENDPOINT_LOW];
+  strike("T", false);
+  CHECK(c->on[ENDPOINT_LOW] != low_was_on,
+        "an endpoint toggle stopped working while the whistle was selected");
+  CHECK(whistle_selected, "a plain toggle shouldn't move the selection");
+
+  strike("T", true);
+  CHECK(!whistle_selected, "shift on an endpoint didn't leave the whistle");
+  CHECK(c->selected_endpoint == ENDPOINT_LOW, "...or didn't select it");
+  CHECK(!whistle_key_is_dead(key_for_cap(",")),
+        ", should be live again once an endpoint is selected");
+
+  // And now the same keys mean what they always meant.
+  int whistle_was = whistle_voice;
+  press("C");
+  CHECK(c->voices[ENDPOINT_LOW] == 4, "C didn't pick voice 4 for the endpoint");
+  CHECK(whistle_voice == whistle_was, "C moved the whistle voice too");
+
+  // esc resets the instrument but not the setup knobs.
+  strike("1", true);
+  strike("G", false);
+  whistle_gate = 7;
+  whistle_level_full = 2;
+  strike("esc", false);
+  CHECK(!whistle_on && !whistle_selected, "esc didn't reset the whistle");
+  CHECK(whistle_voice == 0 && whistle_octave == 0, "...or its voice/octave");
+  CHECK(whistle_volume == WHISTLE_VOLUME_DEFAULT, "...or its volume");
+  CHECK(whistle_gate == 7 && whistle_level_full == 2,
+        "esc shouldn't touch the setup knobs");
+  whistle_gate = 5;
+  whistle_level_full = 5;
+}
+
 int main() {
   jml_setup();
+  // The whistle's key handling needs its state and its voice table, but no
+  // audio: whistle_resolve_voices only reads the presets table, which is
+  // compiled in.
+  whistle_init_state();
+  whistle_resolve_voices();
 
   test_layout_is_sane();
   test_select_and_toggle();
@@ -376,6 +534,7 @@ int main() {
   test_drum_picks_notes_defaults();
   test_globals();
   test_percussion_bank_reaches_the_synth();
+  test_whistle();
 
   if (failures) {
     printf("\n%d failure(s)\n", failures);

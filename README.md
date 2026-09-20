@@ -139,6 +139,8 @@ the physical keyboard in the middle, and what it actually does underneath:
   so switching endpoints switches what's lit.
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.
+* **`1`** (pink) is the whistle bass, which is its own synthesis engine rather
+  than a fluidsynth channel -- see below.
 
 Click the key signature at the top left to play in another key.  You can click
 keyboard keys with the mouse too, shift-clicking to select.
@@ -161,7 +163,184 @@ runs on a Mac without homebrew.
 
 `make test-mac` checks the on-screen keyboard against `handle_keypad`: that
 every key is bound to something real, that no two keys collide or overlap, and
-that the lit state follows the configuration.
+that the lit state follows the configuration.  For the whistle it also checks
+that selecting it actually redirects the shared keys -- and, just as much,
+that leaving it puts them back.
+
+`make whistlelevels && ./whistlelevels` measures whether the whistle can
+reach the endpoints it plays beside, A-weighted, the way `kitlevels` does for
+the drum kits.  See below: the answer turns on the microphone, not on any
+volume control.
+
+### The whistle bass
+
+`1` is a whistle-controlled bass synth: whistle into the microphone and it
+plays the note you whistled, an octave or three down, through one of ten
+voices.  The engine is [whistle-synth](../whistle-synth)'s -- `pitch.c`,
+`synth.c` and `engine.c` compiled unchanged from that repo, which makes jammer
+the third front end onto them after its own command-line build and its Mac
+app.  `make` expects it at `../whistle-synth`; set `WHISTLE_DIR` if it's
+somewhere else.  None of this exists on the Pi, which runs whistle-synth as a
+service of its own.
+
+It's an instrument on the keyboard but **not an endpoint**: endpoints are
+fluidsynth MIDI channels and this one makes its own sound, so `jammermidilib.h`
+doesn't know about it and neither does the Pi.
+
+* `1` switches it on and off.  Shift-`1` selects it, the same way shift over
+  an endpoint's key selects that endpoint.
+* **While it's selected** the voice keys pick its ten voices -- Bass,
+  Octaveless, Reese, 808, FM, FM Sub, Square, Drawbar, Drawbar Hi, Accordion
+  on `A S D F G H` and `Z X C V` -- and `]`/`\` and `-`/`=` move its octave
+  and its volume.  The per-endpoint flags go dark, because the endpoint they'd
+  act on isn't what's on screen.  Shift over any endpoint's key hands the keys
+  back.
+* The voices are looked up **by name** in whistle-synth's presets table at
+  startup, not by index: presets there have come and gone, and an index that
+  shifted would put a different instrument under every key.
+
+The status row under the audio row shows whether it's running, what it's
+listening to, the level the detector is hearing while you play, and the note
+it's currently finding.  A dot fills while the gate is open, so you can see it
+trigger without listening for it.
+
+### The Whistle menu
+
+**Which input.**  Left to itself it takes the Scarlett, not the system
+default, for the same reason `run-fluidsynth.sh` names the USB interface on
+the way out: the system default on a laptop is the built-in microphone, which
+is a foot from the speakers and pointed at them.  Matched the same way
+`resolve_audio_device` matches an output -- an exact name or any substring, so
+"Scarlett" finds "Scarlett 2i2 USB" -- and `$JAMMER_WHISTLE_INPUT` names a
+different one.  Picking a device from the menu pins it for good; **Automatic**
+at the top of the menu goes back to taking whatever the rig has today, which
+is also what happens if the device you pinned isn't plugged in.
+
+Everything else here describes the microphone and the room rather than the
+tune, so none of it is on a key: the gate (how many times the
+room noise a note has to be -- the same number on any microphone), the
+full-blow level (set it a bit above the level the status row shows while you
+whistle hard), and the range of notes to believe.  Plus "Raw input", which
+passes the microphone straight through for checking that it's live at all.
+
+The whistle's volume is **separate from the global one**, deliberately: it's a
+second synthesis engine, and the balance between it and fluidsynth is
+something you set once against a rig and then leave alone while the global
+knob moves everything.  `-`/`=` are the per-instrument trim on top of it, the
+same way the endpoint volume keys sit on top of the global slider.
+
+That trim starts at the **top** of the engine's 0-9 knob rather than the
+middle, which is the opposite of what whistle-synth's own app does.  There the
+knob is the master and you turn it up; here the whistle has to sit against
+fluidsynth, and that app's default of 5 is `0.198` -- 14dB down before it
+reaches the mix, which is audibly buried under the rest of the rig.  There's
+nothing above the top to default to either: the engine clips at ±1 *after* its
+own volume, so step 9 is its full scale, and the only way to be louder than
+that is the slider, which would be clipping to do it.
+
+#### Getting the level right
+
+The control that sets the whistle's level is **not** its volume knob -- it's
+the full-blow level in the Whistle menu.  The voice spends the player's breath
+on loudness and brightness, so a full-blow level set above what the microphone
+actually delivers leaves it permanently dark and quiet however far up the
+volume goes.  `./whistlelevels` measures it, A-weighted, against the foot bass
+as `jml_setup` leaves it:
+
+| input peak | step 0 | step 2 | step 5 | step 9 |
+|---|---|---|---|---|
+| 0.300 | +1.9 | +1.8 | +1.4 | −9.4 |
+| 0.100 | +1.8 | +0.9 | −7.1 | −18.5 |
+| 0.030 | −3.0 | −8.5 | −17.0 | −28.0 |
+| 0.010 | −11.8 | −17.5 | −25.8 | −36.1 |
+
+dB relative to the foot bass; 0 is matched.  Two things fall out of it:
+
+* **The engine has plenty of level** -- it beats the foot bass by about 2dB --
+  but only if the input reaches it.  Every 10dB of input lost costs very
+  nearly 10dB of output, and no volume control gets it back.
+* **The input level is the thing to fix first.**  The status row shows what
+  the detector is hearing while you play, peak-held for a second and a half so
+  you can whistle at it and then go and type the number in.  A strong whistle
+  into a working input reads somewhere around 0.03-0.3.  If it reads 0.001,
+  that's a microphone or an input-gain problem and nothing in here will
+  rescue it.
+
+The default full-blow step is **2**, not whistle-synth's own 5: that app's 5
+is 0.22, a vocal mic at the lip, and against fluidsynth it costs 7dB even with
+a good microphone.  The bottom of the knob isn't free either -- full-blow is
+what the voice's dynamics are measured against, so setting it under what you
+actually deliver leaves you permanently maxed out with nothing left to play
+with.  It's a per-rig number: set it just above what the status row shows
+while you whistle hard.
+
+#### How it gets out
+
+There's no second audio device and no second output stream.  fluidsynth
+already hands jammer a render callback; the whistle is summed into those same
+buffers after fluidsynth has filled them, so it comes out of whatever the
+Audio Output menu picked.  The microphone is one AUHAL input unit of its own,
+reaching the output thread through a lock-free ring -- which is only tolerable
+because of how the engine is built: the synth free-runs and never reads the
+input, so a resynced sample perturbs the pitch detector for one analysis
+window and never reaches the output directly.
+
+#### Latency
+
+The whistle adds, on top of whatever fluidsynth's output is already doing, the
+microphone's own block plus what the ring holds between the two threads.  The
+status row shows it as `+N.Nms`, and the console prints the breakdown at
+startup.
+
+Three things set it, and the third was by far the biggest:
+
+* **The microphone's block size**, which the device picks unless asked.  512
+  frames on the Mac's built-in microphone, which is 10.7ms before the detector
+  has even seen the sound.  Jammer asks for 64.
+* **The ring** between the microphone's thread and fluidsynth's, which has to
+  hold at least one output block (the consumer takes a whole one at once) plus
+  one input block.
+* **fluidsynth's output block**, which is what makes the ring big.  Its
+  CoreAudio driver never asks for a block size, so its client inherits the
+  device's -- and a 512-frame default costs 10.7ms on the way out *and* forces
+  the ring to hold another 10.7ms on the way in.  So jammer sets the output
+  device to 64 frames before fluidsynth opens it.
+
+Setting `audio.period-size` instead does not work: the driver opens happily
+and then never asks for a sample.  That was already written down here, and it
+was re-measured rather than taken on trust -- it is still true.  Going in
+through the device is the way that works.
+
+Measured on a Scarlett 2i2 at 48kHz, whistle-added latency:
+
+| | input block | ring | added |
+|---|---|---|---|
+| before | 512 | 1024 | 32.0ms |
+| microphone asked for 64 | 64 | 576 | 13.3ms |
+| output device asked for 64 too | 64 | 128 | **4.0ms** |
+
+Plus 4.0ms of detection lag, which is the analysis window rather than
+buffering -- the synth free-runs, so that is how late it hears about a pitch
+change, not something held up on the way through.  It moves with the note
+range: reaching further down costs a longer window.
+
+Because a small block is exactly the setting `macapi.h` warns can leave a
+device open but silent, jammer checks that audio is actually flowing after the
+synth starts, and puts the device's block size back and reopens if it isn't.
+`$JAMMER_OUTPUT_BUFFER` overrides the 64, and `0` leaves the device alone.
+Both devices are restored on the way out.
+
+**The microphone picks the sample rate.**  The detector works out how fast the
+signal is wiggling in samples, so it has to agree with the rest of the rig:
+hand it 48kHz audio while it believes it's at 44.1kHz and every note comes out
+a semitone and a half sharp, and resampling would be latency on the one path
+where latency is the whole point.  So jammer reads the microphone's rate at
+startup and runs fluidsynth at that -- which means the ordinary case changes
+no device settings at all.  Switching to a microphone that runs at a different
+rate asks that device to change; if it won't, the whistle doesn't start and
+the status row says which rate it wanted.  (Note that this is a change for the
+rest of the rig too: fluidsynth used to always run at its own default of
+44100.)
 
 ### Audio output
 

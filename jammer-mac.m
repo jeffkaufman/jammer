@@ -25,6 +25,8 @@
 #include "macapi.h"
 #include "jammermidilib.h"
 #include "voices.h"
+#include "whistle.h"
+#include "whistleinput.h"
 #include "keylayout.h"
 #include "keypad.h"
 #include "fkeys.h"
@@ -91,6 +93,23 @@ typedef struct {
   uint64_t now_ns;
   char audio_device[256];
   double gain;
+
+  // The whistle bass, which is an instrument here but not an endpoint.
+  bool whistle_available;
+  bool whistle_on;
+  bool whistle_selected;
+  bool whistle_dead[N_KEYS];
+  int whistle_voice;
+  int whistle_octave;
+  int whistle_volume;
+  double whistle_gain;
+  float whistle_level;
+  float whistle_freq;
+  bool whistle_voiced;
+  int whistle_dropouts;
+  double whistle_latency_ms;
+  char whistle_device[WHISTLE_DEVICE_NAME_MAX];
+  char whistle_error[256];
 } Snapshot;
 
 static void take_snapshot(Snapshot* s) {
@@ -98,6 +117,7 @@ static void take_snapshot(Snapshot* s) {
   for (int i = 0; i < N_KEYS; i++) {
     s->lit[i] = KEYS[i].label ? key_is_lit(&KEYS[i]) : false;
     s->selected[i] = key_is_selected_endpoint(&KEYS[i]);
+    s->whistle_dead[i] = whistle_key_is_dead(&KEYS[i]);
   }
   int sel = c->selected_endpoint;
   s->selected_endpoint = sel;
@@ -113,6 +133,41 @@ static void take_snapshot(Snapshot* s) {
   s->now_ns = now();
   s->gain = synth_gain;
   snprintf(s->audio_device, sizeof(s->audio_device), "%s", audio_device);
+
+  s->whistle_available = whistle_available;
+  s->whistle_on = whistle_on;
+  s->whistle_selected = whistle_selected;
+  s->whistle_voice = whistle_voice;
+  s->whistle_octave = whistle_octave;
+  s->whistle_volume = whistle_volume;
+  s->whistle_gain = whistle_gain;
+  // Peak-hold for a second and a half.  The audio thread reports the loudest
+  // it heard since the last read, which at 60Hz is a 16ms window: read raw it
+  // flickers far too fast to set the full-blow knob against, and it drops to
+  // zero between notes.  Holding the highest recent value is what makes it a
+  // number you can whistle at and then go and type in.
+  float level =
+    atomic_exchange_explicit(&whistle_meter_level, 0, memory_order_relaxed)
+      / 10000.0f;
+  static float peak_hold;
+  static uint64_t peak_hold_ns;
+  uint64_t now_ns = now();
+  if (level >= peak_hold || now_ns - peak_hold_ns > 1500000000ULL) {
+    peak_hold = level;
+    peak_hold_ns = now_ns;
+  }
+  s->whistle_level = peak_hold;
+  s->whistle_freq =
+    atomic_load_explicit(&whistle_meter_freq, memory_order_relaxed) / 100.0f;
+  s->whistle_voiced =
+    atomic_load_explicit(&whistle_meter_voiced, memory_order_relaxed) != 0;
+  s->whistle_dropouts =
+    atomic_load_explicit(&whistle_dropouts, memory_order_relaxed);
+  s->whistle_latency_ms = whistle_latency_ms;
+  snprintf(s->whistle_device, sizeof(s->whistle_device), "%s",
+           whistle_input_name);
+  snprintf(s->whistle_error, sizeof(s->whistle_error), "%s",
+           whistle_input_error);
   UNLOCK();
 }
 
@@ -122,7 +177,7 @@ static void take_snapshot(Snapshot* s) {
 
 // Sized so the whole status block stays readable from a few feet back with
 // the window maximized on a laptop screen.
-#define STATUS_HEIGHT 152.0
+#define STATUS_HEIGHT 182.0
 #define KEY_GAP 4.0
 #define VIEW_PAD 14.0
 
@@ -152,6 +207,10 @@ static NSColor* group_color(KeyGroup group) {
                                                    blue:1.00 alpha:1];
   case GROUP_GLOBAL:   return [NSColor colorWithSRGBRed:0.25 green:0.82
                                                    blue:0.85 alpha:1];
+  // Its own colour because it is its own synthesis engine: nothing it does
+  // goes through fluidsynth, so it shouldn't read as one of the endpoints.
+  case GROUP_WHISTLE:  return [NSColor colorWithSRGBRed:1.00 green:0.42
+                                                   blue:0.66 alpha:1];
   case GROUP_NONE:     break;
   }
   return [NSColor colorWithSRGBRed:0.35 green:0.36 blue:0.40 alpha:1];
@@ -194,7 +253,17 @@ static NSString* note_name(int note) {
   int note = (selecting && key->select_note) ? key->select_note : key->note;
 
   LOCK();
-  keypad_key(note);
+  // The whistle gets first refusal: while it is selected the voice, octave
+  // and volume keys are its, and its own on/off key never reaches
+  // handle_keypad at all.
+  if (!whistle_key(key, selecting)) {
+    if (note == ESCAPE) {
+      // A reset is a reset.  The whistle's setup knobs are left alone -- see
+      // whistle_reset.
+      whistle_reset();
+    }
+    keypad_key(note);
+  }
   UNLOCK();
 
   flash_time[index] = [NSDate timeIntervalSinceReferenceDate];
@@ -269,7 +338,8 @@ static NSString* note_name(int note) {
   // empty does nothing while the drum is selected.  Both draw as dead keys.
   bool blank_on_drum = snapshot.selected_endpoint == ENDPOINT_DRUM &&
                        key->drum_label && key->drum_label[0] == '\0';
-  bool unbound = (key->label == NULL) || blank_on_drum;
+  bool unbound = (key->label == NULL) || blank_on_drum ||
+                 snapshot.whistle_dead[i];
   bool selected = snapshot.selected[i];
 
   NSTimeInterval since_flash =
@@ -316,16 +386,34 @@ static NSString* note_name(int note) {
 
   // What it does, under the cap letter.
   const char* label = key->label;
+  const char* shortname = key->shortname;
   if (snapshot.selected_endpoint == ENDPOINT_DRUM && key->drum_label) {
     label = key->drum_label;
   }
+  // The whistle's ten voices take over the voice keys while it is selected,
+  // the same way the drum kits do.  They have no paper tab on the real
+  // keyboard, so the name gets the whole key.
+  int whistle_voice_index = -1;
+  if (snapshot.whistle_selected && key->group == GROUP_VOICE) {
+    whistle_voice_index = whistle_voice_for_note(key->note);
+    if (whistle_voice_index >= 0) {
+      label = WHISTLE_VOICES[whistle_voice_index].label;
+      shortname = NULL;
+    }
+  }
   NSString* text = @(label);  // embedded \n in the table splits lines
 
-  // Keys that carry a running value show it instead of a static label.
-  if (key->lit == LIT_OCTAVE && snapshot.octave_delta != 0) {
-    text = [NSString stringWithFormat:@"OCT\n%+d", snapshot.octave_delta];
-  } else if (key->lit == LIT_VOLUME && snapshot.volume_delta != 0) {
-    text = [NSString stringWithFormat:@"VOL\n%+d", snapshot.volume_delta];
+  // Keys that carry a running value show it instead of a static label -- the
+  // whistle's own when it is what they are moving.
+  int octave_delta = snapshot.whistle_selected ? snapshot.whistle_octave
+                                               : snapshot.octave_delta;
+  int volume_delta = snapshot.whistle_selected
+    ? snapshot.whistle_volume - WHISTLE_VOLUME_DEFAULT
+    : snapshot.volume_delta;
+  if (key->lit == LIT_OCTAVE && octave_delta != 0) {
+    text = [NSString stringWithFormat:@"OCT\n%+d", octave_delta];
+  } else if (key->lit == LIT_VOLUME && volume_delta != 0) {
+    text = [NSString stringWithFormat:@"VOL\n%+d", volume_delta];
   }
 
   NSColor* text_color = lit ? [NSColor colorWithWhite:0.06 alpha:1]
@@ -336,7 +424,7 @@ static NSString* note_name(int note) {
                            r.size.width - 4, r.size.height - cap_room - 4);
   if (body.size.height < 10) return;
 
-  if (!key->shortname) {
+  if (!shortname) {
     [self drawCentered:text
                 inRect:body
                   font:[NSFont systemFontOfSize:
@@ -351,7 +439,7 @@ static NSString* note_name(int note) {
   // name fills what's left.
   CGFloat short_size = clamped(r.size.height * 0.27, 11, 32);
   CGFloat short_h = MIN(short_size * 1.25, body.size.height * 0.55);
-  [self drawCentered:@(key->shortname)
+  [self drawCentered:@(shortname)
               inRect:NSMakeRect(body.origin.x, body.origin.y,
                                 body.size.width, short_h)
                 font:[NSFont systemFontOfSize:short_size
@@ -418,6 +506,10 @@ static NSString* note_name(int note) {
       any = true;
     }
   }
+  if (snapshot.whistle_on) {
+    [playing appendFormat:@"%sWhistle", any ? "   " : ""];
+    any = true;
+  }
   if (!any) [playing appendString:@"—"];
 
   [self drawString:playing
@@ -430,6 +522,7 @@ static NSString* note_name(int note) {
 
   [self drawMidiRow];
   [self drawAudioRow];
+  [self drawWhistleRow];
 }
 
 // One entry per MIDI source, with a dot that lights when something arrives and
@@ -500,6 +593,72 @@ static NSString* note_name(int note) {
               font:font
              color:[NSColor colorWithSRGBRed:1.00 green:0.63
                                         blue:0.20 alpha:1]
+          centered:NO];
+}
+
+// The whistle bass: whether it can run at all, what it's listening to, and
+// what it's hearing.  A microphone that isn't working looks exactly like "the
+// whistle is broken" otherwise, and a level meter is how you set the gate and
+// the full-blow level from the menu without guessing.
+- (void)drawWhistleRow {
+  NSFont* font = [NSFont monospacedSystemFontOfSize:17
+                                             weight:NSFontWeightRegular];
+  CGFloat y = 150;
+  NSColor* whistle_color = [NSColor colorWithSRGBRed:1.00 green:0.42
+                                                blue:0.66 alpha:1];
+
+  if (!snapshot.whistle_available) {
+    NSString* text = snapshot.whistle_error[0]
+      ? [NSString stringWithFormat:@"whistle: %s", snapshot.whistle_error]
+      : @"whistle: no microphone";
+    [self drawString:text
+              inRect:NSMakeRect(VIEW_PAD, y,
+                                self.bounds.size.width - 2 * VIEW_PAD, 24)
+                font:font
+               color:[NSColor colorWithSRGBRed:0.80 green:0.45
+                                          blue:0.45 alpha:1]
+            centered:NO];
+    return;
+  }
+
+  CGFloat x = VIEW_PAD;
+
+  // A dot that fills while a note is actually being detected, so you can see
+  // the gate opening and closing without listening for it.
+  NSColor* dot = snapshot.whistle_voiced
+    ? whistle_color
+    : [NSColor colorWithWhite:snapshot.whistle_on ? 0.32 : 0.22 alpha:1];
+  [dot setFill];
+  [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 6, 12, 12)] fill];
+  x += 18;
+
+  NSMutableString* text = [NSMutableString stringWithString:@"whistle "];
+  [text appendFormat:@"%s", snapshot.whistle_on ? "on " : "off"];
+  [text appendFormat:@"  %s",
+        WHISTLE_VOICES[snapshot.whistle_voice].preset];
+  if (snapshot.whistle_octave != 0) {
+    [text appendFormat:@" %+doct", snapshot.whistle_octave];
+  }
+  // The level the detector heard while a note was sounding, which is the
+  // number the full-blow knob is set against.
+  [text appendFormat:@"   lvl %.3f", snapshot.whistle_level];
+  if (snapshot.whistle_voiced && snapshot.whistle_freq > 0) {
+    int midi = whistle_hz_to_note(snapshot.whistle_freq);
+    [text appendFormat:@"   %s%d", note_str(midi), midi / 12 - 1];
+  }
+  [text appendFormat:@"   ♪ %s  vol %d%%", snapshot.whistle_device,
+        (int)(snapshot.whistle_gain * 100 + 0.5)];
+  // What the whistle adds on top of fluidsynth's own output latency.
+  [text appendFormat:@"  +%.1fms", snapshot.whistle_latency_ms];
+  if (snapshot.whistle_dropouts > 0) {
+    [text appendFormat:@"   %d dropouts", snapshot.whistle_dropouts];
+  }
+
+  [self drawString:text
+            inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
+              font:font
+             color:[whistle_color colorWithAlphaComponent:
+                      snapshot.whistle_on ? 1.0 : 0.6]
           centered:NO];
 }
 
@@ -788,7 +947,11 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
 @property(strong) NSMenu* audioMenu;
 @property(strong) NSMenuItem* volumeItem;
 @property(strong) NSSlider* volumeSlider;
+@property(strong) NSMenu* whistleMenu;
+@property(strong) NSMenuItem* whistleVolumeItem;
+@property(strong) NSSlider* whistleVolumeSlider;
 - (void)rebuildAudioMenu;
+- (void)rebuildWhistleMenu;
 @end
 
 @implementation JammerAppDelegate
@@ -829,6 +992,7 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   }];
 
   [self rebuildAudioMenu];
+  [self rebuildWhistleMenu];
 
   [NSTimer scheduledTimerWithTimeInterval:1.0 / 60
                                   repeats:YES
@@ -912,6 +1076,265 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   [menu addItem:[self volumeMenuItem]];
 }
 
+// ---------------------------------------------------------------------------
+// The Whistle menu
+//
+// Everything here describes the microphone and the room rather than the tune:
+// which input to listen to, how far above the room noise a note has to stand,
+// what counts as blowing full tilt, and what range to believe.  You set them
+// once against a rig and then leave them alone, which is why none of them is
+// on a key.
+// ---------------------------------------------------------------------------
+
+- (void)chooseWhistleDevice:(NSMenuItem*)item {
+  NSString* uid = item.representedObject ?: @"";
+  [NSUserDefaults.standardUserDefaults setObject:uid forKey:@"whistleInput"];
+  // Deliberately not under the lock.  Opening a device waits -- for the
+  // device to settle on a rate, for the audio thread to come out of the mix,
+  // for the ring to prime -- and a second of that with jammer_lock held would
+  // stall the tick thread and every MIDI message with it, which you would
+  // hear.  Nothing here needs the lock: what makes the swap safe is
+  // whistle_engine_silence, not jammer_lock.  The status strings it writes
+  // are read by take_snapshot, so a device change can garble that line for
+  // one frame of a 60Hz redraw; that is the whole of the cost.
+  whistle_input_start(uid.UTF8String, synth_sample_rate);
+  [self rebuildWhistleMenu];
+}
+
+- (void)chooseWhistleGate:(NSMenuItem*)item {
+  LOCK();
+  whistle_gate = (int)item.tag;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:item.tag
+                                           forKey:@"whistleGate"];
+  [self rebuildWhistleMenu];
+}
+
+- (void)chooseWhistleLevel:(NSMenuItem*)item {
+  LOCK();
+  whistle_level_full = (int)item.tag;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:item.tag
+                                           forKey:@"whistleLevel"];
+  [self rebuildWhistleMenu];
+}
+
+- (void)chooseWhistleLowNote:(NSMenuItem*)item {
+  LOCK();
+  whistle_low_note = (int)item.tag;
+  if (whistle_high_note < whistle_low_note) whistle_high_note = whistle_low_note;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:whistle_low_note
+                                           forKey:@"whistleLowNote"];
+  [self rebuildWhistleMenu];
+}
+
+- (void)chooseWhistleHighNote:(NSMenuItem*)item {
+  LOCK();
+  whistle_high_note = (int)item.tag;
+  if (whistle_low_note > whistle_high_note) whistle_low_note = whistle_high_note;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:whistle_high_note
+                                           forKey:@"whistleHighNote"];
+  [self rebuildWhistleMenu];
+}
+
+- (void)toggleWhistlePassthrough:(NSMenuItem*)item {
+  LOCK();
+  whistle_passthrough = !whistle_passthrough;
+  whistle_publish();
+  UNLOCK();
+  [self rebuildWhistleMenu];
+}
+
+// Deliberately not folded into the global volume: this is a second synthesis
+// engine, and the balance between it and fluidsynth is something you set once
+// and then leave alone while the global knob moves the whole rig.
+- (void)whistleVolumeChanged:(NSSlider*)slider {
+  LOCK();
+  whistle_gain = slider.doubleValue;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setDouble:whistle_gain
+                                          forKey:@"whistleGain"];
+  [self.view setNeedsDisplay:YES];
+}
+
+- (NSMenuItem*)whistleVolumeMenuItem {
+  if (self.whistleVolumeItem) return self.whistleVolumeItem;
+
+  NSView* holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 54)];
+
+  NSTextField* caption = [NSTextField labelWithString:@"Whistle volume"];
+  caption.font = [NSFont menuFontOfSize:0];
+  caption.textColor = NSColor.labelColor;
+  caption.frame = NSMakeRect(20, 30, 200, 18);
+  [holder addSubview:caption];
+
+  self.whistleVolumeSlider =
+    [NSSlider sliderWithValue:whistle_gain
+                     minValue:0
+                     maxValue:MAX_WHISTLE_GAIN
+                       target:self
+                       action:@selector(whistleVolumeChanged:)];
+  self.whistleVolumeSlider.frame = NSMakeRect(20, 6, 220, 20);
+  self.whistleVolumeSlider.continuous = YES;
+  [holder addSubview:self.whistleVolumeSlider];
+
+  self.whistleVolumeItem = [[NSMenuItem alloc] init];
+  self.whistleVolumeItem.view = holder;
+  return self.whistleVolumeItem;
+}
+
+// A 0-9 knob as a submenu, with what each step actually means beside it where
+// there's a number worth showing.
+- (NSMenuItem*)knobMenu:(NSString*)title
+                current:(int)current
+                 action:(SEL)action
+                 detail:(NSString* (^)(int))detail {
+  NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
+                                                action:NULL
+                                         keyEquivalent:@""];
+  NSMenu* submenu = [[NSMenu alloc] initWithTitle:title];
+  for (int step = 0; step <= 9; step++) {
+    NSString* label = detail ? detail(step)
+                             : [NSString stringWithFormat:@"%d", step];
+    NSMenuItem* entry = [submenu addItemWithTitle:label
+                                           action:action
+                                    keyEquivalent:@""];
+    entry.target = self;
+    entry.tag = step;
+    entry.state = (step == current) ? NSControlStateValueOn
+                                    : NSControlStateValueOff;
+  }
+  item.submenu = submenu;
+  return item;
+}
+
+- (NSMenuItem*)noteMenu:(NSString*)title
+                current:(int)current
+                 action:(SEL)action {
+  NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
+                                                action:NULL
+                                         keyEquivalent:@""];
+  NSMenu* submenu = [[NSMenu alloc] initWithTitle:title];
+  submenu.font = [NSFont monospacedSystemFontOfSize:13
+                                             weight:NSFontWeightRegular];
+  for (int note = whistle_lowest_note(); note <= whistle_highest_note();
+       note++) {
+    NSString* label = [NSString stringWithFormat:@"%@%d",
+                       note_name(note), note / 12 - 1];
+    NSMenuItem* entry = [submenu addItemWithTitle:label
+                                           action:action
+                                    keyEquivalent:@""];
+    entry.target = self;
+    entry.tag = note;
+    entry.state = (note == current) ? NSControlStateValueOn
+                                    : NSControlStateValueOff;
+  }
+  item.submenu = submenu;
+  return item;
+}
+
+- (void)rebuildWhistleMenu {
+  NSMenu* menu = self.whistleMenu;
+  [menu removeAllItems];
+
+  if (whistle_input_error[0]) {
+    NSMenuItem* problem =
+      [menu addItemWithTitle:@(whistle_input_error) action:NULL
+               keyEquivalent:@""];
+    problem.enabled = NO;
+    [menu addItem:[NSMenuItem separatorItem]];
+  }
+
+  // Picking a device by hand saves its UID for good, so there has to be a way
+  // back to "whatever the rig has today".
+  char preferred[WHISTLE_DEVICE_NAME_MAX] = "";
+  bool have_preferred =
+    whistle_preferred_input(preferred, sizeof(preferred)) !=
+      kAudioObjectUnknown;
+  NSString* automatic = have_preferred
+    ? [NSString stringWithFormat:@"Automatic (%s)", preferred]
+    : @"Automatic (system default)";
+  NSMenuItem* auto_item =
+    [menu addItemWithTitle:automatic
+                    action:@selector(chooseWhistleDevice:)
+             keyEquivalent:@""];
+  auto_item.target = self;
+  auto_item.representedObject = @"";
+  NSString* saved_input =
+    [NSUserDefaults.standardUserDefaults stringForKey:@"whistleInput"] ?: @"";
+  auto_item.state = saved_input.length == 0 ? NSControlStateValueOn
+                                            : NSControlStateValueOff;
+  [menu addItem:[NSMenuItem separatorItem]];
+
+  WhistleInputDevice devices[WHISTLE_MAX_INPUT_DEVICES];
+  int n = whistle_list_input_devices(devices, WHISTLE_MAX_INPUT_DEVICES);
+  for (int i = 0; i < n; i++) {
+    NSString* label = devices[i].is_default
+      ? [NSString stringWithFormat:@"%s (system default)", devices[i].name]
+      : @(devices[i].name);
+    NSMenuItem* item = [menu addItemWithTitle:label
+                                       action:@selector(chooseWhistleDevice:)
+                                keyEquivalent:@""];
+    item.target = self;
+    item.representedObject = @(devices[i].uid);
+    // Matched on the name we are actually listening to rather than on the
+    // saved UID, so an unplugged interface shows the fallback as the live one.
+    item.state = (strcmp(devices[i].name, whistle_input_name) == 0)
+      ? NSControlStateValueOn : NSControlStateValueOff;
+  }
+
+  [menu addItem:[NSMenuItem separatorItem]];
+
+  // Higher numbers gate less; the number means "how many times the room
+  // noise a note has to be", so it means the same on any microphone.
+  [menu addItem:[self knobMenu:@"Gate"
+                       current:whistle_gate
+                        action:@selector(chooseWhistleGate:)
+                        detail:^NSString*(int step) {
+    return [NSString stringWithFormat:@"%d — %.1f× the room", step,
+            1.5 * pow(10.0, 0.1 * (9 - step))];
+  }]];
+
+  // Set this a bit above the level the status row shows while you whistle
+  // hard.  Too high and every voice sits dark and quiet; too low and it is
+  // permanently maxed out with no dynamics left.
+  [menu addItem:[self knobMenu:@"Full blow level"
+                       current:whistle_level_full
+                        action:@selector(chooseWhistleLevel:)
+                        detail:^NSString*(int step) {
+    return [NSString stringWithFormat:@"%d — %.3f", step,
+            engine_level_full_for_step(step)];
+  }]];
+
+  [menu addItem:[self noteMenu:@"Lowest note"
+                       current:whistle_low_note
+                        action:@selector(chooseWhistleLowNote:)]];
+  [menu addItem:[self noteMenu:@"Highest note"
+                       current:whistle_high_note
+                        action:@selector(chooseWhistleHighNote:)]];
+
+  [menu addItem:[NSMenuItem separatorItem]];
+
+  NSMenuItem* raw =
+    [menu addItemWithTitle:@"Raw input (check the microphone)"
+                    action:@selector(toggleWhistlePassthrough:)
+             keyEquivalent:@""];
+  raw.target = self;
+  raw.state = whistle_passthrough ? NSControlStateValueOn
+                                  : NSControlStateValueOff;
+
+  [menu addItem:[NSMenuItem separatorItem]];
+  self.whistleVolumeSlider.doubleValue = whistle_gain;
+  [menu addItem:[self whistleVolumeMenuItem]];
+}
+
 // Jammer only reads the keyboard while it's frontmost, so that's exactly how
 // long it should hold onto the F-keys.  Switch away and they go back to
 // controlling brightness and volume.
@@ -928,7 +1351,15 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   LOCK();
   all_notes_off();
   UNLOCK();
+  // The microphone first: it puts the input device's sample rate back, and it
+  // has to be done while there is still an audio thread to wait for.  Not
+  // under the lock, for the reason in chooseWhistleDevice.
+  whistle_input_stop();
+  audio_mix_hook = NULL;
   stop_synth();
+  // The synth has let go of the output device, so its block size can go back
+  // to whatever the rest of the machine was using.
+  whistle_restore_buffer_frames(kAudioObjectUnknown);
 }
 
 @end
@@ -949,6 +1380,11 @@ static void setup_menu(JammerAppDelegate* delegate) {
   [menubar addItem:audio_item];
   delegate.audioMenu = [[NSMenu alloc] initWithTitle:@"Audio Output"];
   audio_item.submenu = delegate.audioMenu;
+
+  NSMenuItem* whistle_item = [NSMenuItem new];
+  [menubar addItem:whistle_item];
+  delegate.whistleMenu = [[NSMenu alloc] initWithTitle:@"Whistle"];
+  whistle_item.submenu = delegate.whistleMenu;
 }
 
 int main(int argc, const char** argv) {
@@ -980,7 +1416,74 @@ int main(int argc, const char** argv) {
         [NSUserDefaults.standardUserDefaults stringForKey:@"audioDevice"];
       if (saved) device = saved.UTF8String;
     }
-    start_synth(soundfont, device ? device : "default");
+    // The whistle before the synth, because the two have to agree on a sample
+    // rate and it is the microphone that gets to pick.  The detector works out
+    // how fast the signal is wiggling in samples: hand it 48kHz audio while it
+    // believes it is at 44.1kHz and every note comes out a semitone and a half
+    // sharp.  Taking the rate *from* the microphone means the common case --
+    // one interface doing both ends of the rig -- changes no device settings
+    // at all.  See whistle_request_rate for the other case.
+    whistle_init_state();
+    NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+    NSString* whistle_input =
+      [defaults stringForKey:@"whistleInput"] ?: @"";
+    if ([defaults objectForKey:@"whistleGate"]) {
+      whistle_gate = (int)[defaults integerForKey:@"whistleGate"];
+    }
+    if ([defaults objectForKey:@"whistleLevel"]) {
+      whistle_level_full = (int)[defaults integerForKey:@"whistleLevel"];
+    }
+    if ([defaults objectForKey:@"whistleLowNote"]) {
+      whistle_low_note = (int)[defaults integerForKey:@"whistleLowNote"];
+    }
+    if ([defaults objectForKey:@"whistleHighNote"]) {
+      whistle_high_note = (int)[defaults integerForKey:@"whistleHighNote"];
+    }
+    if ([defaults objectForKey:@"whistleGain"]) {
+      whistle_gain = [defaults doubleForKey:@"whistleGain"];
+    }
+
+    AudioDeviceID mic = whistle_device_for_uid(whistle_input.UTF8String);
+    double mic_rate = mic != kAudioObjectUnknown ? whistle_device_rate(mic) : 0;
+    if (mic_rate > 0) synth_sample_rate = mic_rate;
+
+    // Before the synth opens it: fluidsynth's CoreAudio driver never asks for
+    // a block size, so its client inherits the device's -- and that block is
+    // what sets the pace for the whole rig, the whistle's ring included.  A
+    // 512-frame default costs 10.7ms on the way out and forces the ring to
+    // hold another 10.7ms on the way in.  Measured, asking for 64 takes the
+    // whistle from 13.3ms of added latency to 4.0ms and cuts the synth's own
+    // output latency with it.
+    //
+    // This is the way in because the other one doesn't work: setting
+    // audio.period-size makes the driver open happily and never pull a sample
+    // (see macapi.h; still true, re-measured).  $JAMMER_OUTPUT_BUFFER
+    // overrides it, and 0 leaves the device alone.
+    const char* out_buffer = getenv("JAMMER_OUTPUT_BUFFER");
+    const char* out_device = device ? device : "default";
+    whistle_prepare_output_device(out_device, out_buffer ? atoi(out_buffer)
+                                                         : 64);
+
+    start_synth(soundfont, out_device);
+
+    // The failure this is guarding against is a device that opens and then
+    // never asks for a sample, which is how the buffering settings misbehave
+    // on CoreAudio and would be silence on stage.  set_audio_device already
+    // checks for it and backs off fluidsynth's own settings, but it cannot
+    // undo a block size that belongs to the device, so that is checked here.
+    if (!audio_is_flowing()) {
+      printf("no audio with a %s-frame output block; putting the device back\n",
+             out_buffer ? out_buffer : "64");
+      whistle_restore_buffer_frames(whistle_output_device);
+      set_audio_device(out_device);
+    }
+
+    // Which preset each voice key plays, looked up by name -- see
+    // whistle_resolve_voices.  Then the microphone, then the mix: the hook is
+    // safe to install before there is an engine, since it checks.
+    whistle_resolve_voices();
+    audio_mix_hook = whistle_mix;
+    whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
 
     setup_midi_input();
 
