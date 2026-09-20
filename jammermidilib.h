@@ -568,6 +568,9 @@ void clear_configuration() {
     c->selected_endpoint = i;
     clear_endpoint();
   }
+  // The loop above leaves the selection on whatever it cleared last, so say
+  // what we actually want to start on.
+  c->selected_endpoint = ENDPOINT_FOOTBASS;
   c->drum_voice = KIT_RIM;
 }
 
@@ -1543,6 +1546,20 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case F9:
     drum_chooses_notes = !drum_chooses_notes;
+    if (drum_chooses_notes) {
+      // The drum picking notes is only useful with a foot bass to play them,
+      // so switching it on brings up the setup that goes with it.  Set rather
+      // than toggle, so it lands the same way however things were left.
+      c->selected_endpoint = ENDPOINT_FOOTBASS;
+      c->upbeat[ENDPOINT_FOOTBASS] = false;  // on by default for foot bass
+      c->vel[ENDPOINT_FOOTBASS] = true;
+      c->octave_deltas[ENDPOINT_FOOTBASS] = 1;
+      c->volume_deltas[ENDPOINT_FOOTBASS] = 35;
+      if (!c->on[ENDPOINT_FOOTBASS]) {
+        toggle_endpoint(ENDPOINT_FOOTBASS);
+      }
+      select_voice(c, 32);  // acoustic bass; refreshes the bass note for us
+    }
     return;
   case UP:
     musical_mode = MODE_MAJOR;

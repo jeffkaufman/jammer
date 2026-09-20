@@ -196,6 +196,50 @@ static void test_musical_mode() {
   CHECK(lit("↓") && !lit("↑"), "lit mode didn't move");
 }
 
+// Turning the drum's note-picking on should leave the foot bass set up to
+// play what it picks, however things happened to be beforehand.
+static void test_drum_picks_notes_defaults() {
+  full_reset();
+
+  press("F9");
+  CHECK(drum_chooses_notes, "F9 didn't turn drum-picks-notes on");
+  CHECK(c->on[ENDPOINT_FOOTBASS], "F9 didn't turn the foot bass on");
+  CHECK(c->selected_endpoint == ENDPOINT_FOOTBASS,
+        "F9 didn't select the foot bass");
+  CHECK(c->voices[ENDPOINT_FOOTBASS] == 32, "F9 didn't pick acoustic bass");
+  CHECK(!c->upbeat[ENDPOINT_FOOTBASS], "F9 didn't clear upbeat");
+  CHECK(c->vel[ENDPOINT_FOOTBASS], "F9 didn't set vel");
+  CHECK(c->octave_deltas[ENDPOINT_FOOTBASS] == 1, "F9 didn't set oct+");
+  CHECK(c->volume_deltas[ENDPOINT_FOOTBASS] == 35, "F9 didn't set vol+35");
+
+  // Off and on again lands in the same place rather than toggling back.
+  press("F9");
+  CHECK(!drum_chooses_notes, "F9 didn't turn drum-picks-notes off");
+  CHECK(c->on[ENDPOINT_FOOTBASS], "turning it off shouldn't stop the bass");
+  press("F9");
+  CHECK(c->on[ENDPOINT_FOOTBASS] && c->voices[ENDPOINT_FOOTBASS] == 32 &&
+        !c->upbeat[ENDPOINT_FOOTBASS] && c->vel[ENDPOINT_FOOTBASS] &&
+        c->octave_deltas[ENDPOINT_FOOTBASS] == 1 &&
+        c->volume_deltas[ENDPOINT_FOOTBASS] == 35,
+        "a second F9 didn't leave the same setup");
+
+  // And it overrides whatever the foot bass was doing before.
+  full_reset();
+  select_ep("W");
+  press("Z");  // pan flute
+  press("\\");  // octave down
+  press("-");   // and quieter
+  CHECK(c->upbeat[ENDPOINT_FOOTBASS], "upbeat is on by default for foot bass");
+  CHECK(c->octave_deltas[ENDPOINT_FOOTBASS] == -1, "octave should be down");
+  CHECK(c->volume_deltas[ENDPOINT_FOOTBASS] == -5, "volume should be down");
+  press("F9");
+  CHECK(c->voices[ENDPOINT_FOOTBASS] == 32 && !c->upbeat[ENDPOINT_FOOTBASS] &&
+        c->vel[ENDPOINT_FOOTBASS] &&
+        c->octave_deltas[ENDPOINT_FOOTBASS] == 1 &&
+        c->volume_deltas[ENDPOINT_FOOTBASS] == 35,
+        "F9 didn't override the earlier setup");
+}
+
 static void test_globals() {
   full_reset();
   press("0");
@@ -220,6 +264,7 @@ int main() {
   test_modifier_flags();
   test_octave_and_volume();
   test_musical_mode();
+  test_drum_picks_notes_defaults();
   test_globals();
 
   if (failures) {
