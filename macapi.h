@@ -66,6 +66,12 @@ bool audio_is_flowing(void) {
   return audio_frames_rendered > before;
 }
 
+// Global output volume, on top of the per-voice levels in voices.h.  1.0 is
+// what the Pi's run-fluidsynth.sh uses; the Audio Output menu's slider moves
+// it when a room or a PA wants more or less.
+#define MAX_SYNTH_GAIN 2.0
+double synth_gain = 1.0;
+
 fluid_settings_t* fl_settings = NULL;
 fluid_synth_t* fl_synth = NULL;
 fluid_audio_driver_t* fl_driver = NULL;
@@ -220,6 +226,13 @@ bool set_audio_device(const char* wanted) {
   return true;
 }
 
+void set_synth_gain(double gain) {
+  if (gain < 0) gain = 0;
+  if (gain > MAX_SYNTH_GAIN) gain = MAX_SYNTH_GAIN;
+  synth_gain = gain;
+  if (fl_synth) fluid_synth_set_gain(fl_synth, (float)gain);
+}
+
 // Mirrors run-fluidsynth.sh: -c 2 -z 64 -g 1.0, stereo, reverb/chorus off.
 void start_synth(const char* soundfont_path, const char* device) {
   fl_settings = new_fluid_settings();
@@ -253,6 +266,7 @@ void start_synth(const char* soundfont_path, const char* device) {
   }
   printf("loaded soundfont %s\n", soundfont_path);
 
+  set_synth_gain(synth_gain);
   set_audio_device(device);
 }
 

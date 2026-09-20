@@ -90,6 +90,7 @@ typedef struct {
   MidiActivity midi[N_SOURCE_KINDS];
   uint64_t now_ns;
   char audio_device[256];
+  double gain;
 } Snapshot;
 
 static void take_snapshot(Snapshot* s) {
@@ -110,6 +111,7 @@ static void take_snapshot(Snapshot* s) {
   }
   memcpy(s->midi, midi_activity, sizeof(s->midi));
   s->now_ns = now();
+  s->gain = synth_gain;
   snprintf(s->audio_device, sizeof(s->audio_device), "%s", audio_device);
   UNLOCK();
 }
@@ -486,8 +488,8 @@ static NSString* note_name(int note) {
                                              weight:NSFontWeightRegular];
   CGFloat y = 120;
 
-  NSString* audio = [NSString stringWithFormat:@"♪ %s",
-                     snapshot.audio_device];
+  NSString* audio = [NSString stringWithFormat:@"♪ %s   vol %d%%",
+                     snapshot.audio_device, (int)(snapshot.gain * 100 + 0.5)];
   [self drawString:audio
             inRect:NSMakeRect(VIEW_PAD, y,
                               self.bounds.size.width - 2 * VIEW_PAD, 24)
@@ -780,6 +782,8 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
 @property(strong) NSWindow* window;
 @property(strong) JammerView* view;
 @property(strong) NSMenu* audioMenu;
+@property(strong) NSMenuItem* volumeItem;
+@property(strong) NSSlider* volumeSlider;
 - (void)rebuildAudioMenu;
 @end
 
@@ -846,6 +850,42 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   [self rebuildAudioMenu];
 }
 
+// One volume for the whole rig, on top of the per-voice levels -- the knob to
+// reach for when the room or the PA wants more, without retuning anything.
+- (void)volumeChanged:(NSSlider*)slider {
+  LOCK();
+  set_synth_gain(slider.doubleValue);
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setDouble:synth_gain
+                                          forKey:@"synthGain"];
+  [self.view setNeedsDisplay:YES];
+}
+
+- (NSMenuItem*)volumeMenuItem {
+  if (self.volumeItem) return self.volumeItem;
+
+  NSView* holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 54)];
+
+  NSTextField* caption = [NSTextField labelWithString:@"Global volume"];
+  caption.font = [NSFont menuFontOfSize:0];
+  caption.textColor = NSColor.labelColor;
+  caption.frame = NSMakeRect(20, 30, 200, 18);
+  [holder addSubview:caption];
+
+  self.volumeSlider = [NSSlider sliderWithValue:synth_gain
+                                       minValue:0
+                                       maxValue:MAX_SYNTH_GAIN
+                                         target:self
+                                         action:@selector(volumeChanged:)];
+  self.volumeSlider.frame = NSMakeRect(20, 6, 220, 20);
+  self.volumeSlider.continuous = YES;
+  [holder addSubview:self.volumeSlider];
+
+  self.volumeItem = [[NSMenuItem alloc] init];
+  self.volumeItem.view = holder;
+  return self.volumeItem;
+}
+
 - (void)rebuildAudioMenu {
   NSMenu* menu = self.audioMenu;
   [menu removeAllItems];
@@ -862,6 +902,10 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
     item.state = (strcmp(names[i], audio_device) == 0)
       ? NSControlStateValueOn : NSControlStateValueOff;
   }
+
+  [menu addItem:[NSMenuItem separatorItem]];
+  self.volumeSlider.doubleValue = synth_gain;  // in case it changed elsewhere
+  [menu addItem:[self volumeMenuItem]];
 }
 
 // Jammer only reads the keyboard while it's frontmost, so that's exactly how
@@ -918,6 +962,12 @@ int main(int argc, const char** argv) {
              "Run `make soundfont`, or set $JAMMER_SOUNDFONT.\n");
       return 1;
     }
+    // Volume and output device are both remembered, so a rig that's set up
+    // once stays set up.
+    NSNumber* saved_gain =
+      [NSUserDefaults.standardUserDefaults objectForKey:@"synthGain"];
+    if (saved_gain) synth_gain = saved_gain.doubleValue;
+
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.
     const char* device = getenv("JAMMER_AUDIO_DEVICE");

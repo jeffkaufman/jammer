@@ -165,7 +165,8 @@ that the lit state follows the configuration.
 
 ### Audio output
 
-The Audio Output menu lists the CoreAudio devices and remembers the choice
+The Audio Output menu lists the CoreAudio devices and carries a global volume
+slider on top of the per-voice levels in `voices.h`.  Both are remembered
 across launches; `$JAMMER_AUDIO_DEVICE` overrides it (exact name or any
 substring, so "Scarlett" finds "Scarlett 2i2 USB").  Without a choice it
 follows the system default, which on a laptop is the built-in speakers.
