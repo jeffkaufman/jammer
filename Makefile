@@ -75,7 +75,16 @@ app: jammer-mac $(SOUNDFONT)
 	@echo "built $(APP)"
 
 clean-mac:
-	rm -rf jammer-mac $(APP)
+	rm -rf jammer-mac $(APP) audition
+
+# Hear the soundfont's drum sounds one at a time; see the top of audition.c.
+audition: audition.c macapi.h common.h
+	@test -n "$(FLUIDSYNTH)" || \
+	  { echo "fluidsynth not found; run: brew install fluid-synth"; exit 1; }
+	clang audition.c -o audition \
+	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
+	  -framework CoreFoundation \
+	  -std=gnu11 -Wall -O2
 
 .PHONY: run run-fakeinput runmac soundfont run-mac app clean-mac test-mac
 
