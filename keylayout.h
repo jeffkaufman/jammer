@@ -63,8 +63,8 @@ typedef struct {
   KeyGroup group;
   LitKind lit;
   int arg;
-  // When the drum endpoint is selected, A-G pick drum sounds instead of
-  // voices.  NULL label means "no different when drums are selected".
+  // When the drum endpoint is selected, the voice keys pick drum kits
+  // instead.  NULL label means "no different when drums are selected".
   const char* drum_label;
   LitKind drum_lit;
   int drum_arg;
@@ -75,6 +75,9 @@ typedef struct {
 } Key;
 
 #define NOLABEL NULL, LIT_NEVER, 0
+// A voice key that does nothing while the drum is selected.  Distinct from
+// NOLABEL, which means "this key is the same whatever is selected".
+#define BLANK_ON_DRUM "", LIT_NEVER, 0
 #define FILLER NULL, NULL, GROUP_NONE, LIT_NEVER, 0, NOLABEL
 
 static const Key KEYS[] = {
@@ -159,15 +162,15 @@ static const Key KEYS[] = {
   {kVK_ANSI_A, 'A', 0, "A", NULL, "SynBass\n2", GROUP_VOICE, LIT_VOICE, 39,
    "Rim", LIT_DRUM_VOICE, KIT_RIM, 3, 1.75, 1},
   {kVK_ANSI_S, 'S', 0, "S", NULL, "SynBass\n1", GROUP_VOICE, LIT_VOICE, 38,
-   "Rim 2", LIT_DRUM_VOICE, KIT_RIM2, 3, 2.75, 1},
+   BLANK_ON_DRUM, 3, 2.75, 1},
   {kVK_ANSI_D, 'D', 0, "D", NULL, "Acou\nBass", GROUP_VOICE, LIT_VOICE, 32,
-   "Snare", LIT_DRUM_VOICE, KIT_SNARE, 3, 3.75, 1},
+   BLANK_ON_DRUM, 3, 3.75, 1},
   {kVK_ANSI_F, 'F', 0, "F", NULL, "Draw\nbar", GROUP_VOICE, LIT_VOICE, 16,
-   "Clap", LIT_DRUM_VOICE, KIT_CLAP, 3, 4.75, 1},
+   BLANK_ON_DRUM, 3, 4.75, 1},
   {kVK_ANSI_G, 'G', 0, "G", NULL, "Fret\nless", GROUP_VOICE, LIT_VOICE, 35,
-   "E.Snare", LIT_DRUM_VOICE, KIT_ESNARE, 3, 5.75, 1},
+   BLANK_ON_DRUM, 3, 5.75, 1},
   {kVK_ANSI_H, 'H', 0, "H", NULL, "Rock\nOrgan", GROUP_VOICE, LIT_VOICE, 18,
-   NOLABEL, 3, 6.75, 1},
+   BLANK_ON_DRUM, 3, 6.75, 1},
   {kVK_ANSI_J, 'J', 0, "J", "DB", "DOWN\nBEAT", GROUP_MODIFIER, LIT_EP_FLAG,
    FLAG_DOWNBEAT, NOLABEL, 3, 7.75, 1},
   {kVK_ANSI_K, 'K', 0, "K", "UB", "UP\nBEAT", GROUP_MODIFIER, LIT_EP_FLAG,
@@ -183,19 +186,19 @@ static const Key KEYS[] = {
   // ---- bottom row: more voices, then note modifiers -----------------------
   {-1, 0, 0, "shift", FILLER, 4, 0, 2.25},
   {kVK_ANSI_Z, 'Z', 0, "Z", NULL, "Pan\nFlute", GROUP_VOICE, LIT_VOICE, 75,
-   NOLABEL, 4, 2.25, 1},
+   "808 A", LIT_DRUM_VOICE, KIT_808_A, 4, 2.25, 1},
   {kVK_ANSI_X, 'X', 0, "X", NULL, "Vox\nLead", GROUP_VOICE, LIT_VOICE, 85,
-   NOLABEL, 4, 3.25, 1},
+   "808 B", LIT_DRUM_VOICE, KIT_808_B, 4, 3.25, 1},
   {kVK_ANSI_C, 'C', 0, "C", NULL, "E.\nPiano", GROUP_VOICE, LIT_VOICE, 4,
-   NOLABEL, 4, 4.25, 1},
+   "Room 2", LIT_DRUM_VOICE, KIT_ROOM2, 4, 4.25, 1},
   {kVK_ANSI_V, 'V', 0, "V", NULL, "Bari\nSax", GROUP_VOICE, LIT_VOICE, 67,
-   NOLABEL, 4, 5.25, 1},
+   "Room 6", LIT_DRUM_VOICE, KIT_ROOM6, 4, 5.25, 1},
   {kVK_ANSI_B, 'B', 0, "B", NULL, "Saw\nLead", GROUP_VOICE, LIT_VOICE, 81,
-   NOLABEL, 4, 6.25, 1},
+   BLANK_ON_DRUM, 4, 6.25, 1},
   {kVK_ANSI_N, 'N', 0, "N", NULL, "Bass\nLead", GROUP_VOICE, LIT_VOICE, 87,
-   NOLABEL, 4, 7.25, 1},
+   BLANK_ON_DRUM, 4, 7.25, 1},
   {kVK_ANSI_M, 'M', 0, "M", NULL, "Tub\nBells", GROUP_VOICE, LIT_VOICE, 15,
-   NOLABEL, 4, 8.25, 1},
+   BLANK_ON_DRUM, 4, 8.25, 1},
   {kVK_ANSI_Comma, ',', 0, ",", "C", "CHORD", GROUP_MODIFIER, LIT_EP_FLAG,
    FLAG_CHORD, NOLABEL, 4, 9.25, 1},
   {kVK_ANSI_Period, '.', 0, ".", "V", "VEL", GROUP_MODIFIER, LIT_EP_FLAG,

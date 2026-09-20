@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "macapi.h"
 #include "jammermidilib.h"
@@ -141,10 +142,66 @@ static void test_voices() {
   // With drums selected the same keys pick drum sounds instead.
   select_ep("tab");
   CHECK(c->selected_endpoint == ENDPOINT_DRUM, "shift-tab didn't select drums");
-  press("D");
-  CHECK(c->drum_voice == KIT_SNARE, "D didn't pick the snare");
-  CHECK(lit("D"), "D should be lit for the snare");
+  press("A");
+  CHECK(c->drum_voice == KIT_RIM, "A didn't pick the rim kit");
+  CHECK(lit("A"), "A should be lit for the rim kit");
   CHECK(c->voices[ENDPOINT_FLEX] == 75, "picking a drum changed a voice");
+
+  press("Z");
+  CHECK(c->drum_voice == KIT_808_A, "Z didn't pick the first 808 kit");
+  CHECK(lit("Z"), "Z should be lit for the 808 kit");
+  CHECK(c->voices[ENDPOINT_FLEX] == 75, "picking a kit changed a voice");
+
+  // The voice keys with no kit on them do nothing at all with the drum
+  // selected -- in particular they must not fall through and set a melodic
+  // voice on a channel that's playing a percussion set.
+  const char* blank[] = {"S", "D", "F", "G", "H", "B", "N", "M"};
+  for (int i = 0; i < (int)(sizeof(blank) / sizeof(blank[0])); i++) {
+    int was_kit = c->drum_voice;
+    int was_voice = c->voices[ENDPOINT_DRUM];
+    press(blank[i]);
+    CHECK(c->drum_voice == was_kit, "%s changed the kit; it should be blank",
+          blank[i]);
+    CHECK(c->voices[ENDPOINT_DRUM] == was_voice,
+          "%s set a melodic voice on the drum channel", blank[i]);
+    CHECK(!lit(blank[i]), "%s should not light up with the drum selected",
+          blank[i]);
+  }
+
+  // Each kit names sounds the drum channel can actually play.
+  for (int kit = 0; kit < N_KITS; kit++) {
+    CHECK(KITS[kit].kick > 0 && KITS[kit].snare > 0 && KITS[kit].hihat > 0,
+          "a kit is missing a sound");
+  }
+
+  // No kit on the keyboard uses a pitched kick at the moment, but the
+  // support is still there and still has to work: selecting such a kit sets
+  // its own channel up, the gate releases the note, and silencing the drum
+  // beats the gate to it.  A held melodic note doesn't decay on its own.
+  select_drum_kit(KIT_SYNTH);
+  CHECK(KITS[c->drum_voice].kick_program != NO_PITCHED_KICK,
+        "KIT_SYNTH should have a pitched kick");
+  CHECK(KITS[c->drum_voice].kick_gate_ms > 0,
+        "a pitched kick needs a gate or it drones");
+
+  pitched_kick_note = KITS[c->drum_voice].kick;
+  pitched_kick_off_at = now() + NS_PER_SEC;
+  maybe_end_pitched_kick();
+  CHECK(pitched_kick_note != -1, "the gate ended the kick early");
+  pitched_kick_off_at = now();
+  maybe_end_pitched_kick();
+  CHECK(pitched_kick_note == -1, "the gate never ended the kick");
+
+  pitched_kick_note = KITS[c->drum_voice].kick;
+  endpoint_notes_off(ENDPOINT_DRUM);
+  CHECK(pitched_kick_note == -1,
+        "silencing the drum left the pitched kick ringing");
+
+  press("A");
+  CHECK(KITS[c->drum_voice].kick_program == NO_PITCHED_KICK,
+        "the Rim kit shouldn't have a pitched kick");
+  CHECK(pitched_kick_note == -1,
+        "switching off a pitched-kick kit left a note sounding");
 }
 
 static void test_modifier_flags() {
@@ -255,6 +312,58 @@ static void test_globals() {
   CHECK(!jig_time && !drum_chooses_notes, "escape didn't reset");
 }
 
+// The kit table asks for bank 128, but it's the platform's choose_voice that
+// has to pass it through, and the rest of the tests stub or skip that.  When
+// it clamped the bank to 127 every kit silently became a grand piano on the
+// drum channel, and nothing here noticed.  So: a real synth, and read the
+// program back off the channel.
+static void test_percussion_bank_reaches_the_synth() {
+  if (access("FluidR3_GM.sf2", R_OK) != 0) {
+    printf("no soundfont here, skipping the percussion bank check\n");
+    return;
+  }
+
+  // A synth with no audio driver: we only want to ask it what it's set to.
+  fl_settings = new_fluid_settings();
+  fluid_settings_setint(fl_settings, "synth.midi-channels", 16);
+  fluid_settings_setstr(fl_settings, "synth.midi-bank-select", "gm");
+  fl_synth = new_fluid_synth(fl_settings);
+  fl_sfont_id = fluid_synth_sfload(fl_synth, "FluidR3_GM.sf2", 1);
+  CHECK(fl_sfont_id != FLUID_FAILED, "couldn't load the soundfont");
+  if (fl_sfont_id == FLUID_FAILED) return;
+
+  int sfont, bank, program;
+
+  select_drum_kit(KIT_808_A);
+  fluid_synth_get_program(fl_synth, CHANNEL_DRUM, &sfont, &bank, &program);
+  CHECK(bank == PERCUSSION_BANK,
+        "drum channel is on bank %d, want the percussion bank %d",
+        bank, PERCUSSION_BANK);
+  CHECK(program == KITS[KIT_808_A].program,
+        "drum channel is on set %d, want %d", program,
+        KITS[KIT_808_A].program);
+
+  select_drum_kit(KIT_SYNTH);
+  fluid_synth_get_program(fl_synth, CHANNEL_PITCHED_KICK, &sfont, &bank,
+                          &program);
+  CHECK(bank == 0, "a pitched kick is a melodic program, so bank 0, not %d",
+        bank);
+  CHECK(program == KITS[KIT_SYNTH].kick_program,
+        "pitched-kick channel is on program %d, want %d", program,
+        KITS[KIT_SYNTH].kick_program);
+
+  select_drum_kit(KIT_RIM);
+  fluid_synth_get_program(fl_synth, CHANNEL_DRUM, &sfont, &bank, &program);
+  CHECK(bank == PERCUSSION_BANK && program == KITS[KIT_RIM].program,
+        "going back to a Standard kit left the drum channel on %d-%d",
+        bank, program);
+
+  delete_fluid_synth(fl_synth);
+  delete_fluid_settings(fl_settings);
+  fl_synth = NULL;
+  fl_settings = NULL;
+}
+
 int main() {
   jml_setup();
 
@@ -266,6 +375,7 @@ int main() {
   test_musical_mode();
   test_drum_picks_notes_defaults();
   test_globals();
+  test_percussion_bank_reaches_the_synth();
 
   if (failures) {
     printf("\n%d failure(s)\n", failures);

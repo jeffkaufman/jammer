@@ -69,13 +69,18 @@ void send_midi(int action, int note, int velocity, int endpoint) {
 
 void choose_voice(int channel, int bank, int voice) {
   if (bank < 0) bank = 0;
-  if (bank > 127) bank = 127;
+  if (bank > PERCUSSION_BANK) bank = PERCUSSION_BANK;
   if (voice < 0) voice = 0;
   if (voice > 127) voice = 127;
 
   // bank select doesn't seem to work, though
   printf("selecting voice %d-%d for channel %d\n", bank, voice, channel);
-  send_midi(MIDI_CC, CC_BANK_SELECT, bank, channel);
+  // The percussion bank is 128, which won't fit in a 7-bit CC value -- and
+  // doesn't need to be sent: fluidsynth's GM mode already has the drum
+  // channel on bank 128, so the program change alone picks the set.
+  if (bank != PERCUSSION_BANK) {
+    send_midi(MIDI_CC, CC_BANK_SELECT, bank, channel);
+  }
 
   snd_seq_event_t ev;
   reset_event(&ev);

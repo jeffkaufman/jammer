@@ -39,6 +39,17 @@
 #define MIDI_DRUM_OUT_CLAP 39
 #define MIDI_DRUM_OUT_ESNARE 40
 #define MIDI_DRUM_OUT_CLOSED_HIHAT 42
+#define MIDI_DRUM_OUT_PEDAL_HIHAT 44
+#define MIDI_DRUM_OUT_OPEN_HIHAT 46
+#define MIDI_DRUM_OUT_RIDE 51
+#define MIDI_DRUM_OUT_TAMBOURINE 54
+#define MIDI_DRUM_OUT_HI_BONGO 60
+#define MIDI_DRUM_OUT_LOW_BONGO 61
+#define MIDI_DRUM_OUT_CABASA 69
+#define MIDI_DRUM_OUT_MARACAS 70
+#define MIDI_DRUM_OUT_CLAVES 75
+#define MIDI_DRUM_OUT_HI_WOOD 76
+#define MIDI_DRUM_OUT_LOW_WOOD 77
 
 #define MIDI_MAX 127
 
@@ -105,11 +116,116 @@
 
 #define MIDI_DRUM_CHORD_INTERVAL_MAX_NS 40000000
 
+// Not every kit here is on a key.  The keyboard bindings are in
+// handle_keypad(); the ones left unbound are kits that were measured and
+// tuned but aren't wanted on the keyboard right now, and binding one again
+// is a single line.
+//
+// With the drum endpoint selected the voice keys pick a kit instead: the
+// percussion set the drum channel plays out of, and the sounds it uses from
+// it -- the kick on the downbeat (DB), the snare-ish hit that goes along with
+// it when SHORTISH is on, and the hihat-ish sound on the upbeats (UB).
+//
+// The velocity scales are what keep the kits at one level.  The sets are not
+// mixed to match each other at all, so without them switching kits would be
+// a jump in volume rather than a change of sound.
+//
+// kitlevels.c produces these: it renders each sound, measures it A-weighted
+// against the Standard set, and searches for the velocity that matches.
+// Don't hand-edit them without re-running it -- and in particular don't
+// reason about them from peak levels, which is how they were first set and
+// which was wrong by up to 20dB.  A kick's energy sits where the ear is
+// least sensitive, so peak and loudness disagree wildly between a 53Hz kick
+// and a 9kHz hat.  These are still a starting point rather than the last
+// word: what matters is how they sit in a room.
 #define KIT_RIM    0
 #define KIT_RIM2   1
 #define KIT_SNARE  2
 #define KIT_CLAP   3
 #define KIT_ESNARE 4
+#define KIT_RIDE   5
+#define KIT_BONGO  6
+#define KIT_BLOCK  7
+// Auditioned kits, picked by ear out of the sets the jammer never used to
+// reach for.  See audition.c.
+#define KIT_808_A  8
+#define KIT_808_B  9
+#define KIT_ROOM2  10
+#define KIT_ROOM6  11
+#define KIT_SYNTH  12
+#define N_KITS     13
+
+// The percussion sets, bank 128.  Everything used to come out of Standard,
+// because the drum channel was never sent a program change at all.
+#define PERC_STANDARD 0
+#define PERC_ROOM_2   10
+#define PERC_ROOM_6   14
+#define PERC_808      25
+
+// Melodic programs, bank 0, for a pitched kick.
+#define PROG_SYNTH_DRUM 118
+
+#define NO_PITCHED_KICK -1
+
+typedef struct {
+  int program;       // percussion set this kit's sounds come from
+  int kick;          // a note in that set, or a pitch when kick_program is set
+  int snare;
+  int hihat;
+  float kick_vel;
+  float snare_vel;
+  float hihat_vel;
+  // A kick from a melodic program instead of a percussion sample: it can be
+  // pitched, but it sustains, so it needs its own channel and a note-off.
+  int kick_program;
+  int kick_gate_ms;
+} DrumKit;
+
+static const DrumKit KITS[N_KITS] = {
+  // set            kick                  snare                 hihat
+  [KIT_RIM] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
+               MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.65, 1.0, NO_PITCHED_KICK, 0},
+  [KIT_RIM2] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_RIM,
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+  [KIT_SNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+  [KIT_CLAP] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_CLAP,
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+  [KIT_ESNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_ESNARE,
+                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+  [KIT_RIDE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
+                MIDI_DRUM_OUT_RIDE, 1.0, 0.8, 0.61, NO_PITCHED_KICK, 0},
+  [KIT_BONGO] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_BONGO,
+                 MIDI_DRUM_OUT_HI_BONGO, MIDI_DRUM_OUT_CABASA,
+                 0.43, 0.94, 0.69, NO_PITCHED_KICK, 0},
+  // The claves need nearly full velocity to keep up, so this kit has little
+  // headroom left when the foot hits hard.
+  [KIT_BLOCK] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_WOOD, MIDI_DRUM_OUT_HI_WOOD,
+                 MIDI_DRUM_OUT_CLAVES, 0.58, 1.11, 1.39, NO_PITCHED_KICK, 0},
+
+  // The 808's two kicks, each with its own set's snare and hat.  The two
+  // kicks measure 8dB apart despite near-identical peaks -- 35 is the short
+  // one, 36 the long boom -- so they need quite different scales.
+  [KIT_808_A] = {PERC_808, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_SNARE,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.96, 0.46, 0.60,
+                 NO_PITCHED_KICK, 0},
+  [KIT_808_B] = {PERC_808, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.71, 0.46, 0.60,
+                 NO_PITCHED_KICK, 0},
+  [KIT_ROOM2] = {PERC_ROOM_2, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.99, 0.54, 0.84,
+                 NO_PITCHED_KICK, 0},
+  [KIT_ROOM6] = {PERC_ROOM_6, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.90, 0.84, 0.84,
+                 NO_PITCHED_KICK, 0},
+
+  // Synth Drum played at C0, with the 808's snare and hat around it -- the
+  // hat can't come from Synth Drum, since note 42 of a melodic program is
+  // just a higher note.
+  [KIT_SYNTH] = {PERC_808, 12 /* C0 */, MIDI_DRUM_OUT_SNARE,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.29, 0.46, 0.72,
+                 PROG_SYNTH_DRUM, 120},
+};
 
 #define CHORD_MAJOR 0
 #define CHORD_MINOR 1
@@ -407,15 +523,36 @@ void psend_midi(int action, int note, int velocity, int endpoint) {
   send_midi(action, note, velocity, endpoint);
 }
 
+// The note a pitched kick is holding, and when to let go of it.  A percussion
+// sample rings out on its own; a melodic program would sustain forever.
+int pitched_kick_note = -1;
+uint64_t pitched_kick_off_at = 0;
+
+void end_pitched_kick() {
+  if (pitched_kick_note == -1) return;
+  send_midi(MIDI_OFF, pitched_kick_note, 0, CHANNEL_PITCHED_KICK);
+  pitched_kick_note = -1;
+}
+
 void endpoint_notes_off(int endpoint) {
   // send an explicit all notes off command
   psend_midi(MIDI_CC, 123, 0, endpoint);
+
+  // The pitched kick sounds on its own channel, but it belongs to the drum
+  // endpoint: switching the drum off should stop it too.
+  if (endpoint == ENDPOINT_DRUM) {
+    end_pitched_kick();
+  }
 }
 
 void all_notes_off() {
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     endpoint_notes_off(endpoint);
   }
+  // Not an endpoint, but it can be holding a note.  send_midi() rather than
+  // psend_midi(), which would index the per-endpoint arrays with it.
+  end_pitched_kick();
+  send_midi(MIDI_CC, 123, 0, CHANNEL_PITCHED_KICK);
 }
 
 void reload_voice_setting(struct Configuration* c) {
@@ -431,6 +568,31 @@ void reload_voice_setting(struct Configuration* c) {
   select_endpoint_voice(endpoint,
                         voice % 128, voice / 128,
                         volume_delta, manual_volume, pan);
+}
+
+// Point the drum channel at this kit's percussion set, and set up the
+// pitched-kick channel if it has one.  Has to run whenever the kit changes,
+// and at startup, because until the jammer started doing this the drum
+// channel just sat on whatever program it powered up with.
+void select_drum_kit(int kit) {
+  c->drum_voice = kit;
+  const DrumKit* k = &KITS[kit];
+
+  choose_voice(CHANNEL_DRUM, PERCUSSION_BANK, k->program);
+
+  end_pitched_kick();
+  if (k->kick_program == NO_PITCHED_KICK) return;
+
+  choose_voice(CHANNEL_PITCHED_KICK, 0, k->kick_program);
+  send_midi(MIDI_CC, CC_07, MIDI_MAX, CHANNEL_PITCHED_KICK);
+  send_midi(MIDI_CC, CC_11, fade_value, CHANNEL_PITCHED_KICK);
+  send_midi(MIDI_CC, CC_PAN, 0, CHANNEL_PITCHED_KICK);
+}
+
+// A pitched kick sustains; a percussion sample doesn't.  Called every tick.
+void maybe_end_pitched_kick() {
+  if (pitched_kick_note == -1) return;
+  if (now() >= pitched_kick_off_at) end_pitched_kick();
 }
 
 void select_voice(struct Configuration* c, int voice) {
@@ -511,6 +673,7 @@ void update_fades() {
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     update_fade(endpoint);
   }
+  send_midi(MIDI_CC, CC_11, fade_value, CHANNEL_PITCHED_KICK);
 }
 
 void progress_fades() {
@@ -633,6 +796,10 @@ void clear_status() {
 void voices_reset() {
   clear_configuration();
   clear_status();
+
+  // clear_configuration() picked a kit, but only in memory; the drum channel
+  // needs telling which percussion set that is.
+  select_drum_kit(c->drum_voice);
 
   // clear_configuration() broadcast CC11 to every endpoint using the old
   // fade_value, which on the very first run is 0 -- expression 0 is silence.
@@ -842,35 +1009,36 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
 
   int vel = c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90;
 
+  const DrumKit* kit = &KITS[c->drum_voice];
+
   if (downbeat(subbeat) && c->downbeat[ENDPOINT_DRUM]) {
-    psend_midi(MIDI_ON,
-               c->drum_voice == KIT_RIM2 ?
-                   MIDI_DRUM_OUT_KICK_1 :
-                   MIDI_DRUM_OUT_KICK_2,
-               vel,
-               ENDPOINT_DRUM);
+    if (kit->kick_program == NO_PITCHED_KICK) {
+      psend_midi(MIDI_ON,
+                 kit->kick,
+                 vel * kit->kick_vel,
+                 ENDPOINT_DRUM);
+    } else {
+      // Retrigger cleanly if the last one is somehow still held.
+      end_pitched_kick();
+      send_midi(MIDI_ON,
+                kit->kick,
+                vel * kit->kick_vel,
+                CHANNEL_PITCHED_KICK);
+      pitched_kick_note = kit->kick;
+      pitched_kick_off_at = current_time + kit->kick_gate_ms * 1000000LL;
+    }
 
     float snare_min = 65.0;
     float snare_max = 110.0;
     if (c->shortish[ENDPOINT_DRUM] && last_fb_vel > snare_min) {
-      float snare_vel = vel * (c->drum_voice == KIT_RIM ?
-                               0.65 : 0.8);
+      float snare_vel = vel * kit->snare_vel;
       if (last_fb_vel < snare_max) {
         snare_vel = ((last_fb_vel - snare_min) /
                      (snare_max - snare_min)) * snare_vel;
       }
 
-      int snare_note = MIDI_DRUM_OUT_RIM;
-      if (c->drum_voice == KIT_SNARE) {
-        snare_note = MIDI_DRUM_OUT_SNARE;
-      } else if (c->drum_voice == KIT_CLAP) {
-        snare_note = MIDI_DRUM_OUT_CLAP;
-      } else if (c->drum_voice == KIT_ESNARE) {
-        snare_note = MIDI_DRUM_OUT_ESNARE;
-      }
-
       psend_midi(MIDI_ON,
-                 snare_note,
+                 kit->snare,
                  snare_vel,
                  ENDPOINT_DRUM);
     }
@@ -879,8 +1047,8 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
 
   if (downbeat(subbeat) && c->upbeat_high[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
-               MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 1.0,
+               kit->hihat,
+               vel * 1.0 * kit->hihat_vel,
                ENDPOINT_DRUM);
   }
 
@@ -893,22 +1061,22 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
     }	
 	
     psend_midi(MIDI_ON,
-               MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 0.88,
+               kit->hihat,
+               vel * 0.88 * kit->hihat_vel,
                ENDPOINT_DRUM);
   }
 
   if (preup(subbeat) && c->doubled[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
-               MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 0.74,
+               kit->hihat,
+               vel * 0.74 * kit->hihat_vel,
                ENDPOINT_DRUM);
   }
 
   if (predown(subbeat) && c->pre_unique[ENDPOINT_DRUM]) {
     psend_midi(MIDI_ON,
-               MIDI_DRUM_OUT_CLOSED_HIHAT,
-               vel * 0.88,
+               kit->hihat,
+               vel * 0.88 * kit->hihat_vel,
                ENDPOINT_DRUM);
   }
 }
@@ -1389,11 +1557,17 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
 
   if (c->selected_endpoint == ENDPOINT_DRUM) {
     switch (note_in) {
-    case 'A': c->drum_voice = KIT_RIM; return;
-    case 'S': c->drum_voice = KIT_RIM2; return;
-    case 'D': c->drum_voice = KIT_SNARE; return;
-    case 'F': c->drum_voice = KIT_CLAP; return;
-    case 'G': c->drum_voice = KIT_ESNARE; return;
+    case 'A': select_drum_kit(KIT_RIM); return;
+    case 'Z': select_drum_kit(KIT_808_A); return;
+    case 'X': select_drum_kit(KIT_808_B); return;
+    case 'C': select_drum_kit(KIT_ROOM2); return;
+    case 'V': select_drum_kit(KIT_ROOM6); return;
+    // The rest of the voice keys do nothing with the drum selected.  They
+    // must still return, or they'd fall through and pick a melodic voice
+    // for a channel that's playing a percussion set.
+    case 'S': case 'D': case 'F': case 'G': case 'H':
+    case 'B': case 'N': case 'M':
+      return;
     }
   }
 
@@ -1910,6 +2084,7 @@ void jml_tick() {
   duck();
   trigger_subbeats();
   maybe_end_notes();
+  maybe_end_pitched_kick();
 
   // We fade from 100 to 0 over 4000ms, so we want to progress every 40 ticks.
   if (tick_n % 40 == 0) {

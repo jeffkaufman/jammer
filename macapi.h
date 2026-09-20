@@ -305,7 +305,10 @@ void send_midi(int action, int note, int velocity, int endpoint) {
 
 void choose_voice(int channel, int bank, int voice) {
   if (bank < 0) bank = 0;
-  if (bank > 127) bank = 127;
+  // PERCUSSION_BANK, not 127: clamping to 127 turned every request for a
+  // drum kit into a bank that doesn't exist, and the fallback below then put
+  // a grand piano on the drum channel.
+  if (bank > PERCUSSION_BANK) bank = PERCUSSION_BANK;
   if (voice < 0) voice = 0;
   if (voice > 127) voice = 127;
 
@@ -313,9 +316,16 @@ void choose_voice(int channel, int bank, int voice) {
 
   if (fluid_synth_program_select(fl_synth, channel, fl_sfont_id,
                                  bank, voice) == FLUID_FAILED) {
-    // Not every bank/preset combination exists in the soundfont; fall back to
-    // bank 0 rather than leaving the channel on whatever it had.
-    fluid_synth_program_select(fl_synth, channel, fl_sfont_id, 0, voice);
+    // Not every bank/preset combination exists in the soundfont.  Fall back
+    // within the same family -- the first percussion set for a drum kit,
+    // bank 0 for a melodic voice -- rather than leaving the channel on
+    // whatever it had, or swapping a kit for a piano.
+    int fallback_bank = bank == PERCUSSION_BANK ? PERCUSSION_BANK : 0;
+    int fallback_voice = bank == PERCUSSION_BANK ? 0 : voice;
+    printf("no voice %d-%d in the soundfont; falling back to %d-%d\n",
+           bank, voice, fallback_bank, fallback_voice);
+    fluid_synth_program_select(fl_synth, channel, fl_sfont_id,
+                               fallback_bank, fallback_voice);
   }
   printf("set endpoint #%d to voice %d-%d\n", channel, bank, voice);
 }

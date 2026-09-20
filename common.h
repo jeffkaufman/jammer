@@ -11,6 +11,18 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 
 #define CHANNEL_DRUM 9
 
+// SoundFont keeps the percussion sets in bank 128, above the 127 melodic
+// banks.  It's a real bank number here even though it's too big to send as a
+// 7-bit MIDI bank-select value.
+#define PERCUSSION_BANK 128
+
+// A kit can take its kick from a melodic program played low instead of from a
+// percussion sample.  That can't share the drum channel, which is busy being
+// a percussion set, so it gets one of the channels above the endpoints.  It
+// isn't an endpoint: nothing selects it or switches it on, it just sounds
+// when the kit it belongs to plays a kick.
+#define CHANNEL_PITCHED_KICK 10
+
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
 #define ENDPOINT_DRONE_BASS 1

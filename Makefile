@@ -75,7 +75,7 @@ app: jammer-mac $(SOUNDFONT)
 	@echo "built $(APP)"
 
 clean-mac:
-	rm -rf jammer-mac $(APP) audition
+	rm -rf jammer-mac $(APP) audition kitlevels
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
 audition: audition.c macapi.h common.h
@@ -86,12 +86,23 @@ audition: audition.c macapi.h common.h
 	  -framework CoreFoundation \
 	  -std=gnu11 -Wall -O2
 
+# Are the kits at the same perceived volume?  See the top of kitlevels.c.
+kitlevels: kitlevels.c aweight.h jammermidilib.h voices.h common.h macapi.h
+	@test -n "$(FLUIDSYNTH)" || \
+	  { echo "fluidsynth not found; run: brew install fluid-synth"; exit 1; }
+	clang kitlevels.c -o kitlevels \
+	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
+	  -std=gnu11 -Wall -O2
+
 .PHONY: run run-fakeinput runmac soundfont run-mac app clean-mac test-mac
 
-test-mac: test-keypad.c test-startup.c $(MAC_SRCS) keypad.h
+test-mac: test-keypad.c test-startup.c kitlevels.c aweight.h \
+          $(MAC_SRCS) keypad.h
 	clang test-keypad.c -o /tmp/jammer-test-keypad \
 	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
 	  -framework Carbon -framework IOKit -std=gnu11 -Wall
 	/tmp/jammer-test-keypad
 	clang test-startup.c -o /tmp/jammer-test-startup -I. -std=gnu11 -w
 	/tmp/jammer-test-startup
+	$(MAKE) kitlevels
+	./kitlevels --check

@@ -265,7 +265,11 @@ static NSString* note_name(int note) {
 
   NSColor* color = group_color(key->group);
   bool lit = snapshot.lit[i];
-  bool unbound = (key->label == NULL);
+  // A key with no label at all is filler; a voice key whose drum label is
+  // empty does nothing while the drum is selected.  Both draw as dead keys.
+  bool blank_on_drum = snapshot.selected_endpoint == ENDPOINT_DRUM &&
+                       key->drum_label && key->drum_label[0] == '\0';
+  bool unbound = (key->label == NULL) || blank_on_drum;
   bool selected = snapshot.selected[i];
 
   NSTimeInterval since_flash =

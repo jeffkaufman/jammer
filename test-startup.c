@@ -16,7 +16,7 @@
 #include <math.h>
 #include "common.h"
 
-static int cc11[16], cc7[16], prog[16];
+static int cc11[16], cc7[16], prog[16], bank[16];
 static bool saw_cc11[16];
 
 uint64_t now(void) {
@@ -30,7 +30,10 @@ void send_midi(int action, int note, int velocity, int endpoint) {
                                            saw_cc11[endpoint] = true; }
   if (action == MIDI_CC && note == 0x07) cc7[endpoint] = velocity;
 }
-void choose_voice(int channel, int bank, int voice) { prog[channel] = voice; }
+void choose_voice(int channel, int bank_num, int voice) {
+  prog[channel] = voice;
+  bank[channel] = bank_num;
+}
 
 #include "jammermidilib.h"
 #include "voices.h"
@@ -67,6 +70,37 @@ int main(void) {
     }
   }
 
+  // The drum channel used to never be sent a program change at all, so every
+  // kit came out of whatever set the synth defaulted to.
+  CHECK(bank[CHANNEL_DRUM] == PERCUSSION_BANK,
+        "drum channel is on bank %d, want the percussion bank",
+        bank[CHANNEL_DRUM]);
+  CHECK(prog[CHANNEL_DRUM] == KITS[c->drum_voice].program,
+        "drum channel is on set %d, but the kit wants %d",
+        prog[CHANNEL_DRUM], KITS[c->drum_voice].program);
+
+  // A kit with a pitched kick has to set its own channel up, or the kick is
+  // silent -- it's outside the endpoint loops that do this for everything
+  // else.
+  int pitched = -1;
+  for (int kit = 0; kit < N_KITS; kit++) {
+    if (KITS[kit].kick_program != NO_PITCHED_KICK) pitched = kit;
+  }
+  if (pitched >= 0) {
+    select_drum_kit(pitched);
+    CHECK(prog[CHANNEL_PITCHED_KICK] == KITS[pitched].kick_program,
+          "pitched-kick channel is on program %d, want %d",
+          prog[CHANNEL_PITCHED_KICK], KITS[pitched].kick_program);
+    CHECK(bank[CHANNEL_PITCHED_KICK] == 0,
+          "a pitched kick is a melodic program, so bank 0, not %d",
+          bank[CHANNEL_PITCHED_KICK]);
+    CHECK(cc7[CHANNEL_PITCHED_KICK] > 0, "pitched-kick channel volume is 0");
+    CHECK(cc11[CHANNEL_PITCHED_KICK] == MAX_FADE,
+          "pitched-kick channel expression is %d, want %d",
+          cc11[CHANNEL_PITCHED_KICK], MAX_FADE);
+    select_drum_kit(KIT_RIM);
+  }
+
   // A fade-out followed by a reset used to leave everything silent too.
   fade_target = 0;
   for (int i = 0; i < MAX_FADE + 10; i++) progress_fades();
@@ -76,6 +110,8 @@ int main(void) {
     CHECK(cc11[i] == MAX_FADE,
           "endpoint %d still silent after reset following a fade-out", i);
   }
+  CHECK(cc11[CHANNEL_PITCHED_KICK] == MAX_FADE,
+        "pitched-kick channel still silent after reset following a fade-out");
 
   if (failures) { printf("\n%d failure(s)\n", failures); return 1; }
   printf("\nstartup tests passed: every endpoint audible\n");
