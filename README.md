@@ -118,10 +118,85 @@ $ alsamixer
 7. `sudo apt install git`
 
 
-## Mac Version
+## Running on a Mac
 
-There's also a minimal version that runs on a mac and is a MIDI mapper for an
-electronic harp mandolin.  Run `make runmac` to build and run.
+There's a Mac build with a GUI.  It's one process instead of the Pi's three:
+fluidsynth is linked in directly, MIDI comes in over CoreMIDI, and the Mac's
+own keyboard replaces `kbd.py`.  All the musical logic (`jammermidilib.h`) is
+shared with the Pi build.
+
+The window draws the computer keyboard, with every key labelled both with its
+letter and with what it does, lit up to show current state:
+
+* **Number row** (blue) picks which endpoint the modifier keys act on; the
+  selected one has a heavy outline.
+* **QWERTY row** (green) turns endpoints on and off.
+* **Letter keys** (orange) pick the voice for the selected endpoint — or the
+  drum sound, when the drum endpoint is selected.
+* **Modifier keys** (purple) are the per-endpoint flags: downbeat, upbeat,
+  chord, octave, and so on.  They light up for whichever endpoint is selected,
+  so switching endpoints switches what's lit.
+* **Function row and arrows** (teal) are whole-rig settings and the musical
+  mode.
+
+`F8` and `delete` arm a three-digit entry for the root note and for a manual
+volume, same as on the Pi; the key stays lit and the status line shows the
+digits as you type them.  You can also click keys with the mouse.
+
+### Building
+
+```
+$ brew install fluid-synth
+$ make soundfont    # pulls FluidR3_GM.sf2 out of the Debian package (~148MB)
+$ make run-mac
+```
+
+`make app` instead builds a self-contained `Jammer.app` that carries the
+soundfont and its own copies of libfluidsynth and everything under it, so it
+runs on a Mac without homebrew.
+
+`make test-mac` checks the on-screen keyboard against `handle_keypad`: that
+every key is bound to something real, that no two keys collide or overlap, and
+that the lit state follows the configuration.
+
+### Audio output
+
+The Audio Output menu lists the CoreAudio devices and remembers the choice
+across launches; `$JAMMER_AUDIO_DEVICE` overrides it (exact name or any
+substring, so "Scarlett" finds "Scarlett 2i2 USB").  Without a choice it
+follows the system default, which on a laptop is the built-in speakers.
+
+Don't set `audio.periods` or `audio.period-size` here the way
+`run-fluidsynth.sh` does for ALSA.  On CoreAudio those make the driver open
+successfully and then never request a sample -- no error, no sound -- and
+which values break is device-dependent.  `$JAMMER_PERIODS` and
+`$JAMMER_PERIOD_SIZE` exist for experimenting; jammer checks that audio is
+actually flowing after opening a device and falls back to fluidsynth's own
+buffering if it isn't.
+
+### Notes
+
+* Keys only register while the jammer window is frontmost.  That's deliberate —
+  capturing them system-wide would need Accessibility permission.
+* The F-keys work as plain F1-F12 with a single press, no `fn`.  Jammer flips
+  the system "use F1, F2 etc. as standard function keys" setting while its
+  window is frontmost and puts it straight back when you switch away or quit,
+  so brightness and volume keep working everywhere else.  This needs no
+  special permission, but it is a system-wide setting with no per-device form,
+  so while jammer is frontmost it applies to the built-in keyboard too.
+  It restores to whatever the System Settings checkbox says rather than to a
+  value remembered at startup, so if jammer is ever killed with `kill -9` --
+  the one signal it can't catch -- the next run puts things right when you
+  quit it.
+* MIDI devices are matched by name the same way as on the Pi (`mio`/`DTX` for
+  the foot pedals, `Breath Controller`, and `Piano`/`Roland`/`USB MIDI
+  Interface` for the keyboard, falling back to any unrecognized device).
+  Plugging something in mid-session re-scans.
+
+## Mac Version: harp mandolin MIDI mapper
+
+Separately from the above, there's a minimal version that runs on a mac and is
+a MIDI mapper for an electronic harp mandolin.  Run `make runmac` to build and run.
 
 It will look for two midi devices:
 
