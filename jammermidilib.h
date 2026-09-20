@@ -630,6 +630,14 @@ void clear_status() {
 void voices_reset() {
   clear_configuration();
   clear_status();
+
+  // clear_configuration() broadcast CC11 to every endpoint using the old
+  // fade_value, which on the very first run is 0 -- expression 0 is silence.
+  // clear_status() then resets fade_value in memory but has nothing to send
+  // it with, and progress_fades() won't, because target and value now agree.
+  // So push the restored fade out explicitly.  Same story after a fade-out
+  // followed by a reset.
+  update_fades();
 }
 
 
