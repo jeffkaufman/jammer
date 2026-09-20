@@ -36,6 +36,15 @@ static void press(const char* cap) {
   keypad_key(key->note);
 }
 
+// Shift + an endpoint's on/off key, which is how you pick which endpoint the
+// modifier keys act on.
+static void select_ep(const char* cap) {
+  const Key* key = key_for_cap(cap);
+  assert(key && "no such key in the layout");
+  assert(key->select_note && "that key doesn't select an endpoint");
+  keypad_key(key->select_note);
+}
+
 static bool lit(const char* cap) {
   const Key* key = key_for_cap(cap);
   assert(key);
@@ -55,12 +64,17 @@ static void test_layout_is_sane() {
     }
     CHECK(k->note != 0, "bound key %s sends nothing", k->cap);
     CHECK(k->vk >= 0, "bound key %s has no virtual keycode", k->cap);
+    CHECK(!k->select_note || k->lit == LIT_EP_ON,
+          "key %s shift-selects but isn't an endpoint toggle", k->cap);
     for (int j = i + 1; j < N_KEYS; j++) {
       if (!KEYS[j].label) continue;
       CHECK(KEYS[j].note != k->note,
             "keys %s and %s both send %d", k->cap, KEYS[j].cap, k->note);
       CHECK(KEYS[j].vk != k->vk,
             "keys %s and %s share keycode %d", k->cap, KEYS[j].cap, k->vk);
+      CHECK(!k->select_note || KEYS[j].select_note != k->select_note,
+            "keys %s and %s both select %d", k->cap, KEYS[j].cap,
+            k->select_note);
     }
   }
 
@@ -83,23 +97,38 @@ static void test_layout_is_sane() {
 static void test_select_and_toggle() {
   full_reset();
 
-  press("1");  // select jawharp
-  CHECK(c->selected_endpoint == ENDPOINT_JAWHARP, "1 didn't select jawharp");
-  CHECK(lit("1"), "1 should be lit once jawharp is selected");
-  CHECK(!lit("2"), "2 should not be lit");
+  select_ep("Q");  // shift-Q: select jawharp
+  CHECK(c->selected_endpoint == ENDPOINT_JAWHARP,
+        "shift-Q didn't select jawharp");
+  CHECK(!c->on[ENDPOINT_JAWHARP], "selecting shouldn't switch anything on");
+  CHECK(key_is_selected_endpoint(key_for_cap("Q")), "Q should show as selected");
+  CHECK(!key_is_selected_endpoint(key_for_cap("W")), "W should not");
 
   CHECK(!lit("Q"), "jawharp starts off");
   press("Q");  // toggle jawharp on
   CHECK(c->on[ENDPOINT_JAWHARP], "Q didn't turn the jawharp on");
   CHECK(lit("Q"), "Q should be lit once the jawharp is on");
+  CHECK(key_is_selected_endpoint(key_for_cap("Q")),
+        "toggling shouldn't move the selection");
   press("Q");
   CHECK(!c->on[ENDPOINT_JAWHARP], "Q didn't turn the jawharp back off");
+
+  // Every endpoint is reachable, and selecting never toggles.
+  for (int i = 0; i < N_KEYS; i++) {
+    if (!KEYS[i].select_note) continue;
+    bool was_on = c->on[KEYS[i].arg];
+    keypad_key(KEYS[i].select_note);
+    CHECK(c->selected_endpoint == KEYS[i].arg,
+          "shift-%s didn't select endpoint %d", KEYS[i].cap, KEYS[i].arg);
+    CHECK(c->on[KEYS[i].arg] == was_on,
+          "shift-%s changed whether its endpoint was on", KEYS[i].cap);
+  }
 }
 
 static void test_voices() {
   full_reset();
 
-  press("4");  // select flex
+  select_ep("R");  // select flex
   press("C");  // electric piano
   CHECK(c->voices[ENDPOINT_FLEX] == 4, "C didn't pick voice 4");
   CHECK(lit("C"), "C should be lit for the endpoint using voice 4");
@@ -110,8 +139,8 @@ static void test_voices() {
   CHECK(lit("Z") && !lit("C"), "lit voice didn't move to Z");
 
   // With drums selected the same keys pick drum sounds instead.
-  press("`");
-  CHECK(c->selected_endpoint == ENDPOINT_DRUM, "` didn't select drums");
+  select_ep("tab");
+  CHECK(c->selected_endpoint == ENDPOINT_DRUM, "shift-tab didn't select drums");
   press("D");
   CHECK(c->drum_voice == KIT_SNARE, "D didn't pick the snare");
   CHECK(lit("D"), "D should be lit for the snare");
@@ -120,7 +149,7 @@ static void test_voices() {
 
 static void test_modifier_flags() {
   full_reset();
-  press("5");  // select low
+  select_ep("T");  // select low
 
   CHECK(!lit("K"), "upbeat starts off for low");
   press("K");
@@ -133,13 +162,13 @@ static void test_modifier_flags() {
   CHECK(c->chord[ENDPOINT_LOW] && lit(","), "comma didn't set chord");
 
   // Flags are per endpoint, so switching endpoints switches what's lit.
-  press("6");  // select hi
+  select_ep("Y");  // select hi
   CHECK(!lit(","), "chord leaked from low to hi");
 }
 
 static void test_octave_and_volume() {
   full_reset();
-  press("5");
+  select_ep("T");
 
   CHECK(!lit("]") && !lit("\\"), "octave starts at 0");
   press("]");
@@ -167,43 +196,6 @@ static void test_musical_mode() {
   CHECK(lit("↓") && !lit("↑"), "lit mode didn't move");
 }
 
-// F8 and delete arm a three-digit entry, exactly as kbd.py does.
-static void test_digit_entry() {
-  full_reset();
-
-  int was = root_note;
-  press("F8");
-  CHECK(armed_note == F8, "F8 didn't arm root-note entry");
-  CHECK(lit("F8"), "F8 should be lit while armed");
-
-  press("0"); press("6"); press("2");
-  CHECK(armed_note == 0, "entry didn't finish after three digits");
-  CHECK(!lit("F8"), "F8 should stop being lit");
-  CHECK(root_note == to_root(62), "root note wasn't set to 62 (got %d, was %d)",
-        root_note, was);
-  CHECK(!jig_time, "digits leaked through to the jig toggle");
-
-  // A non-digit cancels the entry rather than being swallowed.
-  press("F8");
-  press("Q");
-  CHECK(armed_note == 0, "a non-digit should cancel the entry");
-  CHECK(c->on[ENDPOINT_JAWHARP], "the cancelling key should still act");
-
-  // Out-of-range values are dropped, as on the Pi.
-  root_note = to_root(30);
-  press("F8");
-  press("2"); press("0"); press("0");
-  CHECK(root_note == to_root(30), "200 should have been rejected");
-
-  // Volume entry goes to the selected endpoint's current voice.
-  press("4");  // flex
-  press("del");
-  CHECK(armed_note == DELETE && lit("del"), "del didn't arm volume entry");
-  press("0"); press("9"); press("9");
-  CHECK(c->manual_volumes[c->voices[ENDPOINT_FLEX]] == 99,
-        "volume entry didn't stick");
-}
-
 static void test_globals() {
   full_reset();
   press("0");
@@ -228,7 +220,6 @@ int main() {
   test_modifier_flags();
   test_octave_and_volume();
   test_musical_mode();
-  test_digit_entry();
   test_globals();
 
   if (failures) {

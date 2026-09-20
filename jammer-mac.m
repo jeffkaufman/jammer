@@ -79,17 +79,13 @@ static const char* source_kind_name(int kind) {
 // before doing any actual drawing.
 typedef struct {
   bool lit[N_KEYS];
+  bool selected[N_KEYS];
   int selected_endpoint;
-  int selected_voice;
   int root_note;
-  int musical_mode;
   int octave_delta;
   int volume_delta;
   int air;
   int bpm;
-  int armed_note;
-  int n_digits_read;
-  char digits_read[4];
   bool on[N_ENDPOINTS];
   MidiActivity midi[N_SOURCE_KINDS];
   uint64_t now_ns;
@@ -100,19 +96,15 @@ static void take_snapshot(Snapshot* s) {
   LOCK();
   for (int i = 0; i < N_KEYS; i++) {
     s->lit[i] = KEYS[i].label ? key_is_lit(&KEYS[i]) : false;
+    s->selected[i] = key_is_selected_endpoint(&KEYS[i]);
   }
   int sel = c->selected_endpoint;
   s->selected_endpoint = sel;
-  s->selected_voice = c->voices[sel];
   s->root_note = root_note;
-  s->musical_mode = musical_mode;
   s->octave_delta = c->octave_deltas[sel];
   s->volume_delta = c->volume_deltas[sel];
   s->air = (int)air;
   s->bpm = current_beat_ns > 0 ? (int)(60 * NS_PER_SEC / current_beat_ns) : 0;
-  s->armed_note = armed_note;
-  s->n_digits_read = n_digits_read;
-  memcpy(s->digits_read, digits_read, sizeof(s->digits_read));
   for (int i = 0; i < N_ENDPOINTS; i++) {
     s->on[i] = c->on[i];
   }
@@ -122,37 +114,34 @@ static void take_snapshot(Snapshot* s) {
   UNLOCK();
 }
 
-static const char* mode_name(int mode) {
-  switch (mode) {
-  case MODE_MAJOR: return "major";
-  case MODE_MIXO: return "mixolydian";
-  case MODE_MINOR: return "minor";
-  case MODE_BETH_COHENS: return "beth cohen's";
-  }
-  return "?";
-}
-
 // ---------------------------------------------------------------------------
 // The keyboard view
 // ---------------------------------------------------------------------------
 
-#define STATUS_HEIGHT 74.0
+// Sized so the whole status block stays readable from a few feet back with
+// the window maximized on a laptop screen.
+#define STATUS_HEIGHT 152.0
 #define KEY_GAP 4.0
-#define VIEW_PAD 12.0
+#define VIEW_PAD 14.0
+
+// The endpoint the modifier keys act on.  Deliberately not one of the group
+// colours, since it has to read on top of any of them.
+#define SELECTED_COLOR [NSColor colorWithSRGBRed:1.00 green:0.93 blue:0.30 \
+                                            alpha:1]
 
 @interface JammerView : NSView {
   Snapshot snapshot;
   // Momentary keys have no lasting state, so flash them briefly when struck.
   NSTimeInterval flash_time[N_KEYS];
+  // Where the key signature is drawn, so a click there can open the picker.
+  NSRect root_note_rect;
 }
-- (void)strikeKeyAtIndex:(int)index;
+- (void)strikeKeyAtIndex:(int)index selecting:(BOOL)selecting;
 - (int)indexForVirtualKeyCode:(int)vk;
 @end
 
 static NSColor* group_color(KeyGroup group) {
   switch (group) {
-  case GROUP_SELECT:   return [NSColor colorWithSRGBRed:0.31 green:0.60
-                                                   blue:1.00 alpha:1];
   case GROUP_TOGGLE:   return [NSColor colorWithSRGBRed:0.24 green:0.85
                                                    blue:0.47 alpha:1];
   case GROUP_VOICE:    return [NSColor colorWithSRGBRed:1.00 green:0.63
@@ -164,6 +153,18 @@ static NSColor* group_color(KeyGroup group) {
   case GROUP_NONE:     break;
   }
   return [NSColor colorWithSRGBRed:0.35 green:0.36 blue:0.40 alpha:1];
+}
+
+// Text on the keys scales with the keys, so maximizing the window actually
+// makes things easier to read rather than just more spread out.
+static CGFloat clamped(CGFloat value, CGFloat lo, CGFloat hi) {
+  return value < lo ? lo : (value > hi ? hi : value);
+}
+
+// "C " -> "C", since note_str() pads to two columns for fixed-width output.
+static NSString* note_name(int note) {
+  return [@(note_str(note)) stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceCharacterSet];
 }
 
 @implementation JammerView
@@ -181,32 +182,46 @@ static NSColor* group_color(KeyGroup group) {
   return -1;
 }
 
-- (void)strikeKeyAtIndex:(int)index {
+// Shift over an endpoint's on/off key selects that endpoint for the modifier
+// keys instead of toggling it, which is what the number row used to do.
+- (void)strikeKeyAtIndex:(int)index selecting:(BOOL)selecting {
   if (index < 0 || index >= N_KEYS) return;
-  if (!KEYS[index].label) return;
+  const Key* key = &KEYS[index];
+  if (!key->label) return;
+
+  int note = (selecting && key->select_note) ? key->select_note : key->note;
 
   LOCK();
-  keypad_key(KEYS[index].note);
+  keypad_key(note);
   UNLOCK();
 
   flash_time[index] = [NSDate timeIntervalSinceReferenceDate];
   [self setNeedsDisplay:YES];
 }
 
-// Geometry: the layout is N_LAYOUT_COLS x N_LAYOUT_ROWS key units, scaled to
-// fill whatever size the window is.
-- (NSRect)rectForKey:(const Key*)key {
+// Geometry: the layout is N_LAYOUT_COLS x N_LAYOUT_ROWS key units, and a key
+// unit is square.  Whichever of width and height runs out first sets the
+// scale, and the keyboard is centred in what's left, so going full screen
+// makes the keys bigger rather than stretching them out of shape.
+- (NSRect)keyboardRect {
   NSRect b = self.bounds;
-  double top = STATUS_HEIGHT;
   double avail_w = b.size.width - 2 * VIEW_PAD;
-  double avail_h = b.size.height - top - VIEW_PAD;
-  double unit_w = avail_w / N_LAYOUT_COLS;
-  double unit_h = avail_h / N_LAYOUT_ROWS;
+  double avail_h = b.size.height - STATUS_HEIGHT - VIEW_PAD;
+  double unit = MIN(avail_w / N_LAYOUT_COLS, avail_h / N_LAYOUT_ROWS);
+  double w = unit * N_LAYOUT_COLS;
+  double h = unit * N_LAYOUT_ROWS;
+  return NSMakeRect(VIEW_PAD + (avail_w - w) / 2,
+                    STATUS_HEIGHT + (avail_h - h) / 2, w, h);
+}
+
+- (NSRect)rectForKey:(const Key*)key {
+  NSRect kb = [self keyboardRect];
+  double unit = kb.size.width / N_LAYOUT_COLS;
   double h = key->h > 0 ? key->h : 1.0;
-  return NSMakeRect(VIEW_PAD + key->x * unit_w,
-                    top + key->row * unit_h,
-                    key->w * unit_w - KEY_GAP,
-                    h * unit_h - KEY_GAP);
+  return NSMakeRect(kb.origin.x + key->x * unit,
+                    kb.origin.y + key->row * unit,
+                    key->w * unit - KEY_GAP,
+                    h * unit - KEY_GAP);
 }
 
 - (void)drawString:(NSString*)s
@@ -225,14 +240,31 @@ static NSColor* group_color(KeyGroup group) {
   }];
 }
 
+// Centres possibly-multi-line text in both directions.
+- (void)drawCentered:(NSString*)s
+              inRect:(NSRect)rect
+                font:(NSFont*)font
+               color:(NSColor*)color {
+  NSInteger lines = [[s componentsSeparatedByString:@"\n"] count];
+  CGFloat text_h = lines * font.pointSize * 1.22;
+  [self drawString:s
+            inRect:NSMakeRect(rect.origin.x,
+                              rect.origin.y + (rect.size.height - text_h) / 2,
+                              rect.size.width, text_h + 2)
+              font:font
+             color:color
+          centered:YES];
+}
+
 - (void)drawKey:(const Key*)key index:(int)i {
   NSRect r = [self rectForKey:key];
   NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r
-                                                       xRadius:5 yRadius:5];
+                                                       xRadius:6 yRadius:6];
 
   NSColor* color = group_color(key->group);
   bool lit = snapshot.lit[i];
   bool unbound = (key->label == NULL);
+  bool selected = snapshot.selected[i];
 
   NSTimeInterval since_flash =
     [NSDate timeIntervalSinceReferenceDate] - flash_time[i];
@@ -249,30 +281,34 @@ static NSColor* group_color(KeyGroup group) {
   }
   [path fill];
 
-  // The endpoint the modifier keys currently act on gets a bright outline.
-  bool is_selected_endpoint =
-    (key->lit == LIT_SEL_EP && key->arg == snapshot.selected_endpoint);
-  [[color colorWithAlphaComponent:unbound ? 0.25 : (lit ? 1.0 : 0.5)] setStroke];
-  path.lineWidth = is_selected_endpoint ? 3.0 : 1.0;
+  // The endpoint the modifier keys currently act on gets its own outline,
+  // whether or not that endpoint is switched on.
+  if (selected) {
+    [SELECTED_COLOR setStroke];
+    path.lineWidth = 4.0;
+  } else {
+    [[color colorWithAlphaComponent:unbound ? 0.25 : (lit ? 1.0 : 0.5)]
+      setStroke];
+    path.lineWidth = 1.0;
+  }
   [path stroke];
 
   // Key cap letter, small, top left.
+  CGFloat cap_size = clamped(r.size.height * 0.145, 9, 17);
   NSColor* cap_color = lit
     ? [NSColor colorWithWhite:0.08 alpha:0.75]
     : [NSColor colorWithWhite:unbound ? 0.35 : 0.62 alpha:1];
   [self drawString:@(key->cap)
-            inRect:NSMakeRect(r.origin.x + 5,
-                              r.size.height < 34 ? r.origin.y + 4
-                                                 : r.origin.y + 2,
-                              r.size.width - 8, 14)
-              font:[NSFont monospacedSystemFontOfSize:10
+            inRect:NSMakeRect(r.origin.x + 6, r.origin.y + 3,
+                              r.size.width - 10, cap_size + 5)
+              font:[NSFont monospacedSystemFontOfSize:cap_size
                                                weight:NSFontWeightBold]
              color:cap_color
           centered:NO];
 
   if (unbound) return;
 
-  // What it does, centred in the rest of the key.
+  // What it does, under the cap letter.
   const char* label = key->label;
   if (snapshot.selected_endpoint == ENDPOINT_DRUM && key->drum_label) {
     label = key->drum_label;
@@ -286,82 +322,117 @@ static NSColor* group_color(KeyGroup group) {
     text = [NSString stringWithFormat:@"VOL\n%+d", snapshot.volume_delta];
   }
 
-  CGFloat size = r.size.height > 52 ? 12 : 10.5;
-  if (r.size.height < 34) size = 9.5;
-  NSFont* font = [NSFont systemFontOfSize:size weight:NSFontWeightSemibold];
-  NSInteger lines = [[text componentsSeparatedByString:@"\n"] count];
-  CGFloat text_h = lines * (size + 2);
-  CGFloat cap_room = r.size.height < 34 ? 0 : 14;
-  NSRect text_rect = NSMakeRect(r.origin.x + 2,
-                                r.origin.y + cap_room +
-                                  (r.size.height - cap_room - text_h) / 2,
-                                r.size.width - 4, text_h + 2);
-  [self drawString:text
-            inRect:text_rect
-              font:font
-             color:(lit ? [NSColor colorWithWhite:0.06 alpha:1]
-                        : [NSColor colorWithWhite:0.88 alpha:1])
-          centered:YES];
+  NSColor* text_color = lit ? [NSColor colorWithWhite:0.06 alpha:1]
+                            : [NSColor colorWithWhite:0.88 alpha:1];
+
+  CGFloat cap_room = cap_size + 6;
+  NSRect body = NSMakeRect(r.origin.x + 2, r.origin.y + cap_room,
+                           r.size.width - 4, r.size.height - cap_room - 4);
+  if (body.size.height < 10) return;
+
+  if (!key->shortname) {
+    [self drawCentered:text
+                inRect:body
+                  font:[NSFont systemFontOfSize:
+                                 clamped(r.size.height * 0.19, 9, 24)
+                                         weight:NSFontWeightSemibold]
+                 color:text_color];
+    return;
+  }
+
+  // The abbreviation written on the paper tab stuck to the real keyboard goes
+  // on top, big, so the screen and the keyboard read the same; the spelled-out
+  // name fills what's left.
+  CGFloat short_size = clamped(r.size.height * 0.27, 11, 32);
+  CGFloat short_h = MIN(short_size * 1.25, body.size.height * 0.55);
+  [self drawCentered:@(key->shortname)
+              inRect:NSMakeRect(body.origin.x, body.origin.y,
+                                body.size.width, short_h)
+                font:[NSFont systemFontOfSize:short_size
+                                       weight:NSFontWeightHeavy]
+               color:text_color];
+  [self drawCentered:text
+              inRect:NSMakeRect(body.origin.x, body.origin.y + short_h,
+                                body.size.width, body.size.height - short_h)
+                font:[NSFont systemFontOfSize:
+                               clamped(r.size.height * 0.145, 8.5, 17)
+                                       weight:NSFontWeightSemibold]
+               color:[text_color colorWithAlphaComponent:0.82]];
 }
+
+// ---------------------------------------------------------------------------
+// Status block
+// ---------------------------------------------------------------------------
 
 - (void)drawStatus {
   NSRect b = self.bounds;
-  NSString* endpoint = @(ENDPOINT_NAMES[snapshot.selected_endpoint]);
+  CGFloat width = b.size.width - 2 * VIEW_PAD;
+
+  // Line 1: the key, which is a button -- click it to pick another -- then
+  // the mode, tempo and air.
+  NSFont* note_font = [NSFont monospacedSystemFontOfSize:30
+                                                  weight:NSFontWeightBold];
+  NSString* note_text = [NSString stringWithFormat:@"%@ ▾",
+                         note_name(snapshot.root_note)];
+  CGFloat note_w =
+    [note_text sizeWithAttributes:@{NSFontAttributeName: note_font}].width;
+
+  root_note_rect = NSMakeRect(VIEW_PAD, 8, note_w + 26, 44);
+  NSBezierPath* pill = [NSBezierPath bezierPathWithRoundedRect:root_note_rect
+                                                      xRadius:8 yRadius:8];
+  [[NSColor colorWithSRGBRed:0.17 green:0.18 blue:0.23 alpha:1] setFill];
+  [pill fill];
+  [[NSColor colorWithWhite:0.45 alpha:1] setStroke];
+  pill.lineWidth = 1.5;
+  [pill stroke];
+  [self drawCentered:note_text
+              inRect:root_note_rect
+                font:note_font
+               color:[NSColor colorWithWhite:0.97 alpha:1]];
 
   NSMutableString* line = [NSMutableString string];
-  [line appendFormat:@"%@", endpoint];
-  if (snapshot.selected_endpoint != ENDPOINT_DRUM) {
-    [line appendFormat:@"  voice %d", snapshot.selected_voice];
-  }
-  [line appendFormat:@"   %s %s",
-        note_str(snapshot.root_note), mode_name(snapshot.musical_mode)];
   if (snapshot.bpm > 0) {
-    [line appendFormat:@"   %d bpm", snapshot.bpm];
+    [line appendFormat:@"%d bpm   ", snapshot.bpm];
   }
-  [line appendFormat:@"   air %d", snapshot.air];
-  if (snapshot.armed_note) {
-    [line appendFormat:@"   %s: %.*s%.*s",
-          snapshot.armed_note == F8 ? "root note" : "volume",
-          snapshot.n_digits_read, snapshot.digits_read,
-          3 - snapshot.n_digits_read, "___"];
-  }
-
+  [line appendFormat:@"air %d", snapshot.air];
+  CGFloat rest_x = NSMaxX(root_note_rect) + 18;
   [self drawString:line
-            inRect:NSMakeRect(VIEW_PAD, 10, b.size.width - 2 * VIEW_PAD, 24)
-              font:[NSFont monospacedSystemFontOfSize:15
+            inRect:NSMakeRect(rest_x, 14, b.size.width - rest_x - VIEW_PAD, 36)
+              font:[NSFont monospacedSystemFontOfSize:25
                                                weight:NSFontWeightMedium]
              color:[NSColor colorWithWhite:0.95 alpha:1]
           centered:NO];
 
-  // Which endpoints are making sound right now.
+  // Line 2: which endpoints are making sound right now.
   NSMutableString* playing = [NSMutableString stringWithString:@"on: "];
   bool any = false;
   for (int i = 0; i < N_ENDPOINTS; i++) {
     if (snapshot.on[i]) {
-      [playing appendFormat:@"%s%s", any ? "  " : "", ENDPOINT_NAMES[i]];
+      [playing appendFormat:@"%s%s", any ? "   " : "", ENDPOINT_NAMES[i]];
       any = true;
     }
   }
   if (!any) [playing appendString:@"—"];
 
   [self drawString:playing
-            inRect:NSMakeRect(VIEW_PAD, 32, b.size.width - 2 * VIEW_PAD, 18)
-              font:[NSFont monospacedSystemFontOfSize:11
-                                               weight:NSFontWeightRegular]
+            inRect:NSMakeRect(VIEW_PAD, 58, width, 26)
+              font:[NSFont monospacedSystemFontOfSize:19
+                                               weight:NSFontWeightMedium]
              color:[NSColor colorWithSRGBRed:0.24 green:0.85
                                         blue:0.47 alpha:1]
           centered:NO];
 
-  [self drawDeviceRow];
+  [self drawMidiRow];
+  [self drawAudioRow];
 }
 
 // One entry per MIDI source, with a dot that lights when something arrives and
-// the last message alongside it, then the audio device we're playing through.
-- (void)drawDeviceRow {
-  NSFont* font = [NSFont monospacedSystemFontOfSize:11
+// the last message alongside it.
+- (void)drawMidiRow {
+  NSFont* font = [NSFont monospacedSystemFontOfSize:17
                                              weight:NSFontWeightRegular];
   CGFloat x = VIEW_PAD;
-  CGFloat y = 50;
+  CGFloat y = 90;
 
   int kinds[] = {SRC_FEET, SRC_BREATH, SRC_PIANO};
   for (int i = 0; i < 3; i++) {
@@ -381,10 +452,9 @@ static NSColor* group_color(KeyGroup group) {
       dot = [NSColor colorWithSRGBRed:0.24 green:0.55 + 0.35 * heat
                                  blue:0.47 alpha:0.55 + 0.45 * heat];
     }
-    NSRect r = NSMakeRect(x, y + 4, 8, 8);
     [dot setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:r] fill];
-    x += 13;
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 6, 12, 12)] fill];
+    x += 18;
 
     NSMutableString* text =
       [NSMutableString stringWithUTF8String:source_kind_name(kinds[i])];
@@ -398,23 +468,29 @@ static NSColor* group_color(KeyGroup group) {
       [text appendFormat:@" %s%d v%d",
             note_str(a->data1), a->data1 / 12 - 1, a->data2];
     }
-    [text appendFormat:@" (%llu)", (unsigned long long)a->count];
 
     CGFloat w = [text sizeWithAttributes:@{NSFontAttributeName: font}].width;
     [self drawString:text
-              inRect:NSMakeRect(x, y, w + 4, 16)
+              inRect:NSMakeRect(x, y, w + 6, 24)
                 font:font
                color:[NSColor colorWithWhite:a->connected ? 0.72 : 0.5 alpha:1]
             centered:NO];
-    x += w + 22;
+    x += w + 30;
   }
+}
 
-  NSString* audio = [NSString stringWithFormat:@"\u266a %s",
+// Where the sound is going, and how loud, on a row of its own -- both are set
+// from the Audio Output menu and both are worth checking before a gig.
+- (void)drawAudioRow {
+  NSFont* font = [NSFont monospacedSystemFontOfSize:17
+                                             weight:NSFontWeightRegular];
+  CGFloat y = 120;
+
+  NSString* audio = [NSString stringWithFormat:@"♪ %s",
                      snapshot.audio_device];
-  CGFloat w = [audio sizeWithAttributes:@{NSFontAttributeName: font}].width;
   [self drawString:audio
-            inRect:NSMakeRect(self.bounds.size.width - VIEW_PAD - w - 4, y,
-                              w + 8, 16)
+            inRect:NSMakeRect(VIEW_PAD, y,
+                              self.bounds.size.width - 2 * VIEW_PAD, 24)
               font:font
              color:[NSColor colorWithSRGBRed:1.00 green:0.63
                                         blue:0.20 alpha:1]
@@ -433,11 +509,49 @@ static NSColor* group_color(KeyGroup group) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Picking the key
+// ---------------------------------------------------------------------------
+
+- (void)chooseRootNote:(NSMenuItem*)item {
+  LOCK();
+  root_note = to_root((int)item.tag);
+  fifth_note = to_root(root_note + 7);
+  update_bass(/*force_refresh=*/false);
+  UNLOCK();
+  [self setNeedsDisplay:YES];
+}
+
+- (void)showRootNotePicker {
+  NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Key"];
+  menu.font = [NSFont monospacedSystemFontOfSize:16
+                                          weight:NSFontWeightMedium];
+  for (int i = 0; i < 12; i++) {
+    int note = to_root(i);
+    NSMenuItem* item = [menu addItemWithTitle:note_name(note)
+                                       action:@selector(chooseRootNote:)
+                                keyEquivalent:@""];
+    item.target = self;
+    item.tag = note;
+    item.state = (note == snapshot.root_note) ? NSControlStateValueOn
+                                              : NSControlStateValueOff;
+  }
+  [menu popUpMenuPositioningItem:nil
+                      atLocation:NSMakePoint(NSMinX(root_note_rect),
+                                             NSMaxY(root_note_rect) + 4)
+                          inView:self];
+}
+
 - (void)mouseDown:(NSEvent*)event {
   NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+  if (NSPointInRect(p, root_note_rect)) {
+    [self showRootNotePicker];
+    return;
+  }
+  BOOL selecting = (event.modifierFlags & NSEventModifierFlagShift) != 0;
   for (int i = 0; i < N_KEYS; i++) {
     if (KEYS[i].label && NSPointInRect(p, [self rectForKey:&KEYS[i]])) {
-      [self strikeKeyAtIndex:i];
+      [self strikeKeyAtIndex:i selecting:selecting];
       return;
     }
   }
@@ -672,7 +786,7 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
 @implementation JammerAppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification*)note {
-  NSRect frame = NSMakeRect(0, 0, 1180, 480);
+  NSRect frame = NSMakeRect(0, 0, 1280, 660);
   self.window =
     [[NSWindow alloc] initWithContentRect:frame
                                 styleMask:(NSWindowStyleMaskTitled |
@@ -682,7 +796,7 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
                                   backing:NSBackingStoreBuffered
                                     defer:NO];
   self.window.title = @"jammer";
-  self.window.minSize = NSMakeSize(900, 380);
+  self.window.minSize = NSMakeSize(1000, 540);
   [self.window center];
 
   self.view = [[JammerView alloc] initWithFrame:frame];
@@ -701,7 +815,8 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
     }
     int index = [self.view indexForVirtualKeyCode:event.keyCode];
     if (index < 0) return event;
-    [self.view strikeKeyAtIndex:index];
+    BOOL selecting = (event.modifierFlags & NSEventModifierFlagShift) != 0;
+    [self.view strikeKeyAtIndex:index selecting:selecting];
     return nil;
   }];
 
@@ -718,9 +833,6 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   return YES;
 }
 
-// Jammer only reads the keyboard while it's frontmost, so that's exactly how
-// long it should hold onto the F-keys.  Switch away and they go back to
-// controlling brightness and volume.
 // Remembers the chosen output across launches, so a rig that's set up once
 // stays set up.
 - (void)chooseAudioDevice:(NSMenuItem*)item {
@@ -752,6 +864,9 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   }
 }
 
+// Jammer only reads the keyboard while it's frontmost, so that's exactly how
+// long it should hold onto the F-keys.  Switch away and they go back to
+// controlling brightness and volume.
 - (void)applicationDidBecomeActive:(NSNotification*)note {
   fkeys_grab();
 }

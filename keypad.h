@@ -11,36 +11,13 @@
 // Keypad: the Mac keyboard standing in for kbd.py
 // ---------------------------------------------------------------------------
 
-// kbd.py collects three digits after DELETE or F8 and sends them as the
-// velocity of a note for that key.  Same here.
-static int armed_note = 0;
-static char digits_read[4];
-static int n_digits_read = 0;
-
+// kbd.py has a mode where DELETE or F8 collects three digits and sends them as
+// a velocity.  The Mac app doesn't: the root note is picked from the status
+// bar instead, and manual per-voice volumes aren't something worth typing
+// blind.  So a key press is just a key press.
+//
 // Caller must hold the lock.
 static void keypad_key(int note) {
-  if (note >= '0' && note <= '9' && armed_note) {
-    digits_read[n_digits_read++] = note;
-    if (n_digits_read == 3) {
-      digits_read[3] = '\0';
-      int val = atoi(digits_read);
-      if (val >= 0 && val <= MIDI_MAX) {
-        handle_keypad(MIDI_ON, armed_note, val);
-      }
-      n_digits_read = 0;
-      armed_note = 0;
-    }
-    return;
-  }
-
-  armed_note = 0;
-  n_digits_read = 0;
-
-  if (note == DELETE || note == F8) {
-    armed_note = note;
-    return;
-  }
-
   handle_keypad(MIDI_ON, note, 64);
 }
 
@@ -91,20 +68,26 @@ static bool key_is_lit(const Key* key) {
   }
 
   switch (lit) {
-  case LIT_SEL_EP:      return sel == arg;
   case LIT_EP_ON:       return c->on[arg];
   case LIT_VOICE:       return !drums_selected && c->voices[sel] == arg;
   case LIT_DRUM_VOICE:  return drums_selected && c->drum_voice == arg;
   case LIT_EP_FLAG:     return ep_flag(sel, arg);
   case LIT_GLOBAL_FLAG: return global_flag(arg);
   case LIT_MODE:        return musical_mode == arg;
-  case LIT_ARMED:       return armed_note == arg;
   case LIT_OCTAVE:      return c->octave_deltas[sel] * arg > 0;
   case LIT_VOLUME:      return c->volume_deltas[sel] * arg > 0;
-  case LIT_DIGIT:       return armed_note != 0;
   case LIT_NEVER:       break;
   }
   return false;
+}
+
+// The key whose endpoint the modifier keys currently act on gets a distinct
+// outline, whether or not that endpoint is switched on.
+//
+// Caller must hold the lock.
+static bool key_is_selected_endpoint(const Key* key) {
+  return key->lit == LIT_EP_ON && key->label &&
+    key->arg == c->selected_endpoint;
 }
 
 #endif

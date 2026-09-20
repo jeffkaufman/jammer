@@ -125,12 +125,13 @@ fluidsynth is linked in directly, MIDI comes in over CoreMIDI, and the Mac's
 own keyboard replaces `kbd.py`.  All the musical logic (`jammermidilib.h`) is
 shared with the Pi build.
 
-The window draws the computer keyboard, with every key labelled both with its
-letter and with what it does, lit up to show current state:
+The window draws the computer keyboard, lit up to show current state.  Each
+key carries its letter in the corner, the abbreviation from the paper tab on
+the physical keyboard in the middle, and what it actually does underneath:
 
-* **Number row** (blue) picks which endpoint the modifier keys act on; the
-  selected one has a heavy outline.
-* **QWERTY row** (green) turns endpoints on and off.
+* **QWERTY row** (green) turns endpoints on and off.  Hold shift to pick which
+  endpoint the modifier keys act on instead of toggling it; the selected one
+  gets a yellow outline whether or not it's switched on.
 * **Letter keys** (orange) pick the voice for the selected endpoint — or the
   drum sound, when the drum endpoint is selected.
 * **Modifier keys** (purple) are the per-endpoint flags: downbeat, upbeat,
@@ -139,9 +140,12 @@ letter and with what it does, lit up to show current state:
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.
 
-`F8` and `delete` arm a three-digit entry for the root note and for a manual
-volume, same as on the Pi; the key stays lit and the status line shows the
-digits as you type them.  You can also click keys with the mouse.
+Click the key signature at the top left to play in another key.  You can click
+keyboard keys with the mouse too, shift-clicking to select.
+
+Unlike the Pi, there's no three-digit entry on `F8` or `delete`: the root note
+comes from that picker, and manual per-voice volumes aren't something worth
+typing blind.
 
 ### Building
 
