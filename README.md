@@ -129,6 +129,9 @@ The window draws the computer keyboard, lit up to show current state.  Each
 key carries its letter in the corner, the abbreviation from the paper tab on
 the physical keyboard in the middle, and what it actually does underneath:
 
+* **`2` and `3`** (green) are two more foot basses, on top of the one on `W`.
+  Same bass line, different rhythmic treatment, so they can run together --
+  see below.
 * **QWERTY row** (green) turns endpoints on and off.  Hold shift to pick which
   endpoint the modifier keys act on instead of toggling it; the selected one
   gets a yellow outline whether or not it's switched on.
@@ -171,6 +174,37 @@ that leaving it puts them back.
 reach the endpoints it plays beside, A-weighted, the way `kitlevels` does for
 the drum kits.  See below: the answer turns on the microphone, not on any
 volume control.
+
+### The extra foot basses
+
+`2` and `3` are the foot bass again with a fixed set of flags already applied,
+so that two or three of them can run at once and land on different beats
+rather than being retyped between tunes:
+
+| | `2` | `3` |
+|---|---|---|
+| downbeat | on | **off** |
+| upbeat / up high | on | on |
+| shortish (`S`) | — | **on** |
+| shorter (`SS`) | **on** | **on** |
+| doubled (`II`) | **on** | **on** |
+| voice | SynBass 2 (39) | **SynBass 1 (38)** |
+
+Bold is where they differ from the foot bass on `W`.  Both short flags at once
+on `3` is a real setting rather than a redundant one: `maybe_end_notes` halves
+the threshold for one and quarters it for the other, so the pair is an eighth.
+
+They are ordinary endpoints in every other way -- toggled, shift-selected,
+and modified like any other -- and they take channels 10 and 11.  That pushed
+`CHANNEL_PITCHED_KICK` up to 15, since it was sitting on 10.  `is_footbass()`
+is what the places that treat the foot bass specially now ask, rather than
+naming the one endpoint: the octave arithmetic, the note-ending rule, the
+arpeggiation and the volume trim all apply to the three of them.
+
+On the Pi they aren't reachable yet: their pseudo-notes are `s`-`v`, because
+`2` and `3` have meant "select the foot bass" and "select the arp" since
+`kbd.py`, and there's no key spare on that number row.  The Mac's `2` and `3`
+carry the new ones instead.
 
 ### The whistle bass
 

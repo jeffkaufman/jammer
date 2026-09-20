@@ -21,7 +21,12 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 // a percussion set, so it gets one of the channels above the endpoints.  It
 // isn't an endpoint: nothing selects it or switches it on, it just sounds
 // when the kit it belongs to plays a kick.
-#define CHANNEL_PITCHED_KICK 10
+//
+// Moved up out of the way when the extra foot basses arrived and took the two
+// channels above the drum, one of which was this one.  Any channel above the
+// endpoints will do; 15 is the last one and leaves the most room to grow
+// into.
+#define CHANNEL_PITCHED_KICK 15
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
@@ -37,7 +42,15 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 // can't change this, because fluidsynth does percussion on channel 10 (which
 // we call 9)
 #define ENDPOINT_DRUM CHANNEL_DRUM
-#define N_ENDPOINTS (ENDPOINT_DRUM+1)
+// Two more foot basses, above the drum because that one can't move.  Same
+// bass line as ENDPOINT_FOOTBASS and the same handling everywhere -- what
+// differs is the rhythmic treatment each one is cleared to, so several can
+// run at once and land on different beats.  See clear_footbass_2 and
+// clear_footbass_3.  Nothing about channel 10 or 11 is special: only 9 is,
+// because that's where GM keeps percussion.
+#define ENDPOINT_FOOTBASS_2 10
+#define ENDPOINT_FOOTBASS_3 11
+#define N_ENDPOINTS (ENDPOINT_FOOTBASS_3+1)
 #define N_DRONE_ENDPOINTS (ENDPOINT_DRONE_CHORD+1)
 
 /* midi values */

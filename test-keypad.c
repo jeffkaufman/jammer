@@ -391,6 +391,80 @@ static void test_percussion_bank_reaches_the_synth() {
   fl_settings = NULL;
 }
 
+// The two foot basses on 2 and 3 exist to be the original plus a fixed set of
+// flags, so what's worth pinning down is exactly which flags -- a derivation
+// nobody can check by looking at it is one that quietly drifts.
+static void test_extra_footbasses() {
+  full_reset();
+
+  struct { const char* cap; int endpoint; const char* name; }
+  keys[] = {
+    {"2", ENDPOINT_FOOTBASS_2, "foot bass 2"},
+    {"3", ENDPOINT_FOOTBASS_3, "foot bass 3"},
+  };
+
+  for (int i = 0; i < 2; i++) {
+    const Key* key = key_for_cap(keys[i].cap);
+    CHECK(key != NULL && key->lit == LIT_EP_ON &&
+          key->arg == keys[i].endpoint,
+          "%s isn't the %s key", keys[i].cap, keys[i].name);
+
+    CHECK(!c->on[keys[i].endpoint], "%s starts off", keys[i].name);
+    press(keys[i].cap);
+    CHECK(c->on[keys[i].endpoint], "%s didn't switch %s on",
+          keys[i].cap, keys[i].name);
+    CHECK(lit(keys[i].cap), "%s should be lit once %s is on",
+          keys[i].cap, keys[i].name);
+    press(keys[i].cap);
+    CHECK(!c->on[keys[i].endpoint], "%s didn't switch %s back off",
+          keys[i].cap, keys[i].name);
+
+    select_ep(keys[i].cap);
+    CHECK(c->selected_endpoint == keys[i].endpoint,
+          "shift-%s didn't select %s", keys[i].cap, keys[i].name);
+  }
+
+  // 2 is the foot bass with a shorter note and the doubling: FB + SS + II.
+  CHECK(c->downbeat[ENDPOINT_FOOTBASS_2], "fb2 keeps the downbeat");
+  CHECK(c->upbeat[ENDPOINT_FOOTBASS_2], "fb2 keeps the upbeat");
+  CHECK(c->upbeat_high[ENDPOINT_FOOTBASS_2], "fb2 keeps the high upbeat");
+  CHECK(c->shorter[ENDPOINT_FOOTBASS_2], "fb2 is SS");
+  CHECK(c->doubled[ENDPOINT_FOOTBASS_2], "fb2 is II");
+  CHECK(!c->shortish[ENDPOINT_FOOTBASS_2], "fb2 is not S");
+  CHECK(c->voices[ENDPOINT_FOOTBASS_2] == 39,
+        "fb2 plays the foot bass's own voice");
+
+  // 3 adds the shortish, drops the downbeat, and takes the S key's voice:
+  // FB + S + s + SS + DB off + II.
+  CHECK(!c->downbeat[ENDPOINT_FOOTBASS_3], "fb3 has the downbeat off");
+  CHECK(c->upbeat[ENDPOINT_FOOTBASS_3], "fb3 keeps the upbeat");
+  CHECK(c->upbeat_high[ENDPOINT_FOOTBASS_3], "fb3 keeps the high upbeat");
+  CHECK(c->shortish[ENDPOINT_FOOTBASS_3], "fb3 is S");
+  CHECK(c->shorter[ENDPOINT_FOOTBASS_3], "fb3 is SS");
+  CHECK(c->doubled[ENDPOINT_FOOTBASS_3], "fb3 is II");
+  CHECK(c->voices[ENDPOINT_FOOTBASS_3] == 38,
+        "fb3 plays SynBass 1, the S key's voice");
+
+  // And the one they were derived from is untouched by any of it.
+  CHECK(c->downbeat[ENDPOINT_FOOTBASS] && c->upbeat[ENDPOINT_FOOTBASS] &&
+        c->upbeat_high[ENDPOINT_FOOTBASS] &&
+        !c->shortish[ENDPOINT_FOOTBASS] && !c->shorter[ENDPOINT_FOOTBASS] &&
+        !c->doubled[ENDPOINT_FOOTBASS] &&
+        c->voices[ENDPOINT_FOOTBASS] == 39,
+        "the original foot bass should be exactly as it was");
+
+  // They are foot basses everywhere it matters, not just in their defaults.
+  CHECK(is_footbass(ENDPOINT_FOOTBASS_2) && is_footbass(ENDPOINT_FOOTBASS_3),
+        "both should count as foot basses");
+  CHECK(!is_footbass(ENDPOINT_ARP) && !is_footbass(ENDPOINT_DRUM),
+        "and nothing else should");
+
+  // The pitched kick moved out of the endpoints' way to make room; if it
+  // ever moves back on top of one, a kit's kick plays down an endpoint.
+  CHECK(CHANNEL_PITCHED_KICK >= N_ENDPOINTS,
+        "the pitched kick is sitting on endpoint %d", CHANNEL_PITCHED_KICK);
+}
+
 // The whistle is an instrument on this keyboard but not an endpoint, so the
 // thing to check is that the selection actually redirects the shared keys --
 // and, just as much, that it puts them back.
@@ -534,6 +608,7 @@ int main() {
   test_drum_picks_notes_defaults();
   test_globals();
   test_percussion_bank_reaches_the_synth();
+  test_extra_footbasses();
   test_whistle();
 
   if (failures) {

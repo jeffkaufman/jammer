@@ -117,8 +117,14 @@ static const Key KEYS[] = {
   // LIT_WHISTLE_ON marker instead.  Shift selects it, as with an endpoint.
   {kVK_ANSI_1, 0, 0, "1", "WH", "Whistle", GROUP_WHISTLE, LIT_WHISTLE_ON, 0,
    NOLABEL, 1, 1, 1},
-  {-1, 0, 0, "2", FILLER, 1, 2, 1},
-  {-1, 0, 0, "3", FILLER, 1, 3, 1},
+  // Two more foot basses, cleared to different rhythmic treatments so they
+  // can run alongside the original -- see clear_footbass_2 / _3.  Toggles and
+  // selects like any other endpoint, on the green of the qwerty row rather
+  // than the whistle's pink, because that is what they are.
+  {kVK_ANSI_2, 's', 't', "2", "FB2", "Foot\nBass 2", GROUP_TOGGLE, LIT_EP_ON,
+   ENDPOINT_FOOTBASS_2, NOLABEL, 1, 2, 1},
+  {kVK_ANSI_3, 'u', 'v', "3", "FB3", "Foot\nBass 3", GROUP_TOGGLE, LIT_EP_ON,
+   ENDPOINT_FOOTBASS_3, NOLABEL, 1, 3, 1},
   {-1, 0, 0, "4", FILLER, 1, 4, 1},
   {-1, 0, 0, "5", FILLER, 1, 5, 1},
   {-1, 0, 0, "6", FILLER, 1, 6, 1},
@@ -249,6 +255,8 @@ static const char* ENDPOINT_NAMES[N_ENDPOINTS] = {
   "Hi",          // ENDPOINT_HI
   "Overlay",     // ENDPOINT_OVERLAY
   "Drum",        // ENDPOINT_DRUM
+  "Foot Bass 2", // ENDPOINT_FOOTBASS_2
+  "Foot Bass 3", // ENDPOINT_FOOTBASS_3
 };
 
 #endif

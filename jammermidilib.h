@@ -480,6 +480,18 @@ void update_drum_pedal_note() {
 
 void update_bass(bool force_refresh);
 
+// The foot basses: the original and the two that were added beside it.  They
+// play the same bass line and are handled identically everywhere -- the
+// octave arithmetic, the note-ending rule, the arpeggiation -- and differ
+// only in the flags they are cleared to.  A named test rather than three
+// comparisons at each site, because missing one of them is a bug you hear
+// rather than see.
+static inline bool is_footbass(int endpoint) {
+  return endpoint == ENDPOINT_FOOTBASS ||
+         endpoint == ENDPOINT_FOOTBASS_2 ||
+         endpoint == ENDPOINT_FOOTBASS_3;
+}
+
 // Given a note relative to root, convert it into a note relative to fifth.
 int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
@@ -508,7 +520,7 @@ void psend_midi(int action, int note, int velocity, int endpoint) {
     //       36 37 38 39 40 41 42 43 44 45 46 47
     //
 
-    if (endpoint == ENDPOINT_FOOTBASS ||
+    if (is_footbass(endpoint) ||
         endpoint == ENDPOINT_JAWHARP) {
       note += (c->octave_deltas[endpoint] / 2) * 12;
       if (c->octave_deltas[endpoint] % 2 == 1) {
@@ -599,7 +611,7 @@ void select_voice(struct Configuration* c, int voice) {
   endpoint_notes_off(c->selected_endpoint);
   c->voices[c->selected_endpoint] = voice;
   reload_voice_setting(c);
-  if (c->selected_endpoint == ENDPOINT_FOOTBASS ||
+  if (is_footbass(c->selected_endpoint) ||
       c->selected_endpoint == ENDPOINT_ARP ||
       c->selected_endpoint == ENDPOINT_JAWHARP || 
       c->selected_endpoint < N_DRONE_ENDPOINTS) {
@@ -628,6 +640,31 @@ void clear_footbass() {
   c->upbeat[ENDPOINT_FOOTBASS] = true;
   c->upbeat_high[ENDPOINT_FOOTBASS] = true;
   c->doubled[ENDPOINT_FOOTBASS] = false;
+}
+
+// The foot bass with a shorter note and the doubling on: what you got by
+// pressing FB, then SS, then II.
+void clear_footbass_2() {
+  select_voice(c, 39);
+  c->downbeat[ENDPOINT_FOOTBASS_2] = true;
+  c->upbeat[ENDPOINT_FOOTBASS_2] = true;
+  c->upbeat_high[ENDPOINT_FOOTBASS_2] = true;
+  c->shorter[ENDPOINT_FOOTBASS_2] = true;
+  c->doubled[ENDPOINT_FOOTBASS_2] = true;
+}
+
+// And with both short flags, the doubling, no downbeat, and SynBass 1 rather
+// than SynBass 2: FB, S, the S key's voice, SS, DB off, II.  Both short flags
+// together is a real setting rather than a redundant one -- maybe_end_notes
+// halves for one and quarters for the other, so the pair is an eighth.
+void clear_footbass_3() {
+  select_voice(c, 38);
+  c->downbeat[ENDPOINT_FOOTBASS_3] = false;
+  c->upbeat[ENDPOINT_FOOTBASS_3] = true;
+  c->upbeat_high[ENDPOINT_FOOTBASS_3] = true;
+  c->shortish[ENDPOINT_FOOTBASS_3] = true;
+  c->shorter[ENDPOINT_FOOTBASS_3] = true;
+  c->doubled[ENDPOINT_FOOTBASS_3] = true;
 }
 
 void clear_drum() {
@@ -707,6 +744,8 @@ void clear_endpoint() {
   switch (c->selected_endpoint) {
   case ENDPOINT_JAWHARP: clear_jawharp(); break;
   case ENDPOINT_FOOTBASS: clear_footbass(); break;
+  case ENDPOINT_FOOTBASS_2: clear_footbass_2(); break;
+  case ENDPOINT_FOOTBASS_3: clear_footbass_3(); break;
   case ENDPOINT_DRUM: clear_drum(); break;
   case ENDPOINT_ARP: clear_arp(); break;
   case ENDPOINT_FLEX: clear_flex(); break;
@@ -959,7 +998,7 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
               c->doubled[endpoint], &fifth, &send_note);
 
   bool end_note = send_note ||
-    (!(endpoint == ENDPOINT_FOOTBASS && drum_chooses_notes) &&
+    (!(is_footbass(endpoint) && drum_chooses_notes) &&
      should_end_note(c->current_len[endpoint], c->shortish[endpoint],
                      c->shorter[endpoint]));
 
@@ -1083,6 +1122,8 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
 
 void arpeggiate(int subbeat, uint64_t current_time, bool drone, bool running) {
   arpeggiate_endpoint(ENDPOINT_FOOTBASS, subbeat, current_time, drone);
+  arpeggiate_endpoint(ENDPOINT_FOOTBASS_2, subbeat, current_time, drone);
+  arpeggiate_endpoint(ENDPOINT_FOOTBASS_3, subbeat, current_time, drone);
   if (running || c->shorter[ENDPOINT_DRUM]) {
     arpeggiate_drum(subbeat, current_time);
   }
@@ -1621,6 +1662,26 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     toggle_endpoint(ENDPOINT_ARP);
     update_bass(/*force_refresh=*/true);
     return;
+  // The extra foot basses.  Their pseudo-notes are 's'..'v' rather than
+  // anything mnemonic because the obvious ones are taken: '2' and '3' have
+  // meant "select the foot bass" and "select the arp" since kbd.py, and the
+  // Mac's number row keys carry these instead.  Nothing on the Pi sends them
+  // yet -- kbd.py has no key spare on the number row -- so there they are
+  // reachable only by adding one.
+  case 't':
+    c->selected_endpoint = ENDPOINT_FOOTBASS_2;
+    return;
+  case 's':
+    toggle_endpoint(ENDPOINT_FOOTBASS_2);
+    update_bass(/*force_refresh=*/true);
+    return;
+  case 'v':
+    c->selected_endpoint = ENDPOINT_FOOTBASS_3;
+    return;
+  case 'u':
+    toggle_endpoint(ENDPOINT_FOOTBASS_3);
+    update_bass(/*force_refresh=*/true);
+    return;
   case '4':
     c->selected_endpoint = ENDPOINT_FLEX;
     return;
@@ -2042,26 +2103,30 @@ void trigger_subbeats() {
   }
 }
 
-void maybe_end_notes() {
-  if (!drum_chooses_notes) return;
-  if (!c->shortish[ENDPOINT_FOOTBASS] && !c->shorter[ENDPOINT_FOOTBASS]) return;
+// Per foot bass, because each one carries its own short flags and so its own
+// threshold: the whole point of the extra two is that they let go at
+// different times from the original.
+static void maybe_end_footbass_notes(int endpoint) {
+  if (!c->shortish[endpoint] && !c->shorter[endpoint]) return;
 
   int threshold = NS_PER_SEC;
-  if (c->shortish[ENDPOINT_FOOTBASS]) {
+  if (c->shortish[endpoint]) {
     threshold /= 2;
   }
-  if (c->shorter[ENDPOINT_FOOTBASS]) {
+  if (c->shorter[endpoint]) {
     threshold /= 4;
   }
 
-  uint64_t current_time = now();
-  //printf("%lld %lld %lld %d\n",
-  //       current_time, c->last_arpeggiation[ENDPOINT_FOOTBASS],
-  //       current_time - c->last_arpeggiation[ENDPOINT_FOOTBASS],
-  //       threshold);
-  if (current_time - c->last_arpeggiation[ENDPOINT_FOOTBASS] > threshold) {
-    endpoint_notes_off(ENDPOINT_FOOTBASS);
+  if (now() - c->last_arpeggiation[endpoint] > threshold) {
+    endpoint_notes_off(endpoint);
   }
+}
+
+void maybe_end_notes() {
+  if (!drum_chooses_notes) return;
+  maybe_end_footbass_notes(ENDPOINT_FOOTBASS);
+  maybe_end_footbass_notes(ENDPOINT_FOOTBASS_2);
+  maybe_end_footbass_notes(ENDPOINT_FOOTBASS_3);
 }
 
 uint64_t tick_n = 0;
