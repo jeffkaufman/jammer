@@ -138,6 +138,11 @@
 // least sensitive, so peak and loudness disagree wildly between a 53Hz kick
 // and a 9kHz hat.  These are still a starting point rather than the last
 // word: what matters is how they sit in a room.
+//
+// The kicks are all 6dB up on where the Standard set's kick used to sit, which
+// is what the room wanted.  That spends nearly all the Standard kick's
+// velocity headroom: at the nominal 90 it plays at 127, so with the drum
+// following the foot (VEL) a harder stomp can't make it any louder.
 #define KIT_RIM    0
 #define KIT_RIM2   1
 #define KIT_SNARE  2
@@ -184,46 +189,46 @@ typedef struct {
 static const DrumKit KITS[N_KITS] = {
   // set            kick                  snare                 hihat
   [KIT_RIM] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
-               MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.65, 1.0, NO_PITCHED_KICK, 0},
+               MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.65, 1.0, NO_PITCHED_KICK, 0},
   [KIT_RIM2] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_RIM,
-                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
   [KIT_SNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
   [KIT_CLAP] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_CLAP,
-                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
   [KIT_ESNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_ESNARE,
-                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.0, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
   [KIT_RIDE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                MIDI_DRUM_OUT_RIDE, 1.0, 0.8, 0.61, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_RIDE, 1.41, 0.8, 0.61, NO_PITCHED_KICK, 0},
   [KIT_BONGO] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_BONGO,
                  MIDI_DRUM_OUT_HI_BONGO, MIDI_DRUM_OUT_CABASA,
-                 0.43, 0.94, 0.69, NO_PITCHED_KICK, 0},
+                 0.61, 0.94, 0.69, NO_PITCHED_KICK, 0},
   // The claves need nearly full velocity to keep up, so this kit has little
   // headroom left when the foot hits hard.
   [KIT_BLOCK] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_WOOD, MIDI_DRUM_OUT_HI_WOOD,
-                 MIDI_DRUM_OUT_CLAVES, 0.58, 1.11, 1.39, NO_PITCHED_KICK, 0},
+                 MIDI_DRUM_OUT_CLAVES, 0.83, 1.11, 1.39, NO_PITCHED_KICK, 0},
 
   // The 808's two kicks, each with its own set's snare and hat.  The two
   // kicks measure 8dB apart despite near-identical peaks -- 35 is the short
   // one, 36 the long boom -- so they need quite different scales.
   [KIT_808_A] = {PERC_808, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.96, 0.46, 0.60,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.34, 0.46, 0.60,
                  NO_PITCHED_KICK, 0},
   [KIT_808_B] = {PERC_808, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.71, 0.46, 0.60,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.99, 0.46, 0.60,
                  NO_PITCHED_KICK, 0},
   [KIT_ROOM2] = {PERC_ROOM_2, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.99, 0.54, 0.84,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.38, 0.54, 0.84,
                  NO_PITCHED_KICK, 0},
   [KIT_ROOM6] = {PERC_ROOM_6, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.90, 0.84, 0.84,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.23, 0.84, 0.84,
                  NO_PITCHED_KICK, 0},
 
   // Synth Drum played at C0, with the 808's snare and hat around it -- the
   // hat can't come from Synth Drum, since note 42 of a melodic program is
   // just a higher note.
   [KIT_SYNTH] = {PERC_808, 12 /* C0 */, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.29, 0.46, 0.72,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.41, 0.46, 0.72,
                  PROG_SYNTH_DRUM, 120},
 };
 

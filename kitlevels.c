@@ -193,7 +193,8 @@ int main(int argc, char** argv) {
   if (sfont_id == FLUID_FAILED) { printf("couldn't load soundfont\n"); return 1; }
 
   // What the kits have always sounded like: the Standard set, at the scales
-  // the original kits used.
+  // the original kits used -- except the kick, which is 6dB up on that (see
+  // KITS), so every kit's kick follows it up.
   const DrumKit* reference = &KITS[KIT_SNARE];
   double target_kick = measure(PERCUSSION_BANK, reference->program,
                                reference->kick,
