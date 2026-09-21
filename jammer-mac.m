@@ -906,6 +906,7 @@ static void* tick_thread(void* unused) {
   while (true) {
     LOCK();
     jml_tick();
+    whistle_poll_picked_note();
     UNLOCK();
 
     next += TICK_MS * 1000000LL;

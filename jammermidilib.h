@@ -94,6 +94,10 @@
 #define DOWN (112)
 #define RIGHT (113)
 #define TAB (114)
+// Not a key kbd.py has: the Mac's F8 sends this to switch the whistle to
+// choosing the notes.  F8 itself still arms root-note entry on the Pi.  127
+// because the values past TAB are the lowercase letters, which are taken.
+#define WHISTLE_PICKS (127)
 
 #define MODE_MAJOR 1
 #define MODE_MIXO 2
@@ -397,6 +401,12 @@ bool jig_time;
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
 bool drum_chooses_some_notes;
+// Drum Some with the whistle choosing instead of the feet: a whistled note
+// picks whichever of Drum Some's four chords it's nearest, and pedals 1, 3
+// and 4 go back to only keeping time.  drum_chooses_some_notes stays on
+// underneath, since everything downstream of the choice is Drum Some's.  The
+// whistle is Mac-only, so on the Pi nothing ever sets this.
+bool whistle_chooses_notes;
 int musical_mode;
 int most_recent_drum_pedal;
 uint64_t most_recent_choosy_drum_ts;
@@ -418,21 +428,10 @@ int to_root(int note_out) {
   return note_out % 12 + 24;
 }
 
-void update_drum_pedal_note() {
-  bool is_composite_note =
-    most_recent_drum_pedal == MIDI_PEDAL_12 ||
-    most_recent_drum_pedal == MIDI_PEDAL_13 ||
-    most_recent_drum_pedal == MIDI_PEDAL_23 ||
-    most_recent_drum_pedal == MIDI_PEDAL_24 ||
-    most_recent_drum_pedal == MIDI_PEDAL_34 ||
-    most_recent_drum_pedal == MIDI_PEDAL_41;
-  if (is_composite_note) {
-    // don't update last_drum_pedal_note because current_drum_pedal_note
-    // contains not a real note.
-  } else {
-    last_drum_pedal_note = current_drum_pedal_note;
-  }
-
+// The note a pedal (or pair of pedals) picks under the current mode, and the
+// kind of chord that goes with it.  No side effects, so the whistle can ask
+// what each pedal would give without pressing any of them.
+int pedal_note(int pedal, int* chord_type_out) {
   int note = root_note;
 
   int selected_chord_type = CHORD_MAJOR;
@@ -442,7 +441,7 @@ void update_drum_pedal_note() {
     note = to_root(note - 9);
   }
 
-  if (most_recent_drum_pedal == MIDI_PEDAL_1) {
+  if (pedal == MIDI_PEDAL_1) {
     if (drum_chooses_some_notes) {
       if (musical_mode == MODE_MAJOR) {
 	note += 9;  // vi
@@ -458,10 +457,10 @@ void update_drum_pedal_note() {
 	selected_chord_type = CHORD_MINOR;
       }
     }
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_12) {
+  } else if (pedal == MIDI_PEDAL_12) {
     note += 11;  // VII
     selected_chord_type = CHORD_NULL;
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_13) {
+  } else if (pedal == MIDI_PEDAL_13) {
     if (drum_chooses_some_notes) {
       if (musical_mode == MODE_MAJOR) {
 	note += 4;  // iii
@@ -482,15 +481,15 @@ void update_drum_pedal_note() {
       }
       selected_chord_type = CHORD_NULL;
     }
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_2) {
+  } else if (pedal == MIDI_PEDAL_2) {
     // pass
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_23) {
+  } else if (pedal == MIDI_PEDAL_23) {
     note += 2;  // ii
     selected_chord_type = CHORD_MINOR;
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_24) {
+  } else if (pedal == MIDI_PEDAL_24) {
     note += 6;  // bV
     selected_chord_type = CHORD_NULL;
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_3) {
+  } else if (pedal == MIDI_PEDAL_3) {
     if (drum_chooses_some_notes) {
       if (musical_mode == MODE_MAJOR || musical_mode == MODE_MIXO ||
 	  musical_mode == MODE_BETH_COHENS) {
@@ -505,7 +504,7 @@ void update_drum_pedal_note() {
     } else {
       note += 5;  // IV
     }
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_34) {
+  } else if (pedal == MIDI_PEDAL_34) {
     if (drum_chooses_some_notes) {
       if (musical_mode == MODE_MAJOR) {
 	note += 7;  // V
@@ -518,7 +517,7 @@ void update_drum_pedal_note() {
       note += 4;  // iii
       selected_chord_type = CHORD_MINOR;
     }
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_4) {
+  } else if (pedal == MIDI_PEDAL_4) {
     if (drum_chooses_some_notes) {
       if (musical_mode == MODE_MAJOR) {
 	note += 5;  // IV
@@ -530,7 +529,7 @@ void update_drum_pedal_note() {
     } else {
       note += 7;  // V
     }
-  } else if (most_recent_drum_pedal == MIDI_PEDAL_41) {
+  } else if (pedal == MIDI_PEDAL_41) {
     if (drum_chooses_some_notes) {
       if (musical_mode == MODE_MAJOR) {
 	note += 2;  // ii
@@ -544,7 +543,27 @@ void update_drum_pedal_note() {
     }
   }
 
-  note = to_root(note);
+  *chord_type_out = selected_chord_type;
+  return to_root(note);
+}
+
+void update_drum_pedal_note() {
+  bool is_composite_note =
+    most_recent_drum_pedal == MIDI_PEDAL_12 ||
+    most_recent_drum_pedal == MIDI_PEDAL_13 ||
+    most_recent_drum_pedal == MIDI_PEDAL_23 ||
+    most_recent_drum_pedal == MIDI_PEDAL_24 ||
+    most_recent_drum_pedal == MIDI_PEDAL_34 ||
+    most_recent_drum_pedal == MIDI_PEDAL_41;
+  if (is_composite_note) {
+    // don't update last_drum_pedal_note because current_drum_pedal_note
+    // contains not a real note.
+  } else {
+    last_drum_pedal_note = current_drum_pedal_note;
+  }
+
+  int selected_chord_type;
+  int note = pedal_note(most_recent_drum_pedal, &selected_chord_type);
 
   if (selected_chord_type == CHORD_NULL) {
     // Don't use note for chord_note.
@@ -921,6 +940,7 @@ void clear_status() {
 
   drum_chooses_notes = false;
   drum_chooses_some_notes = false;
+  whistle_chooses_notes = false;
   musical_mode = MODE_MAJOR;
   most_recent_drum_pedal = MIDI_PEDAL_2;
   most_recent_choosy_drum_ts = 0;
@@ -1360,7 +1380,7 @@ void count_drum_hit(int note_in) {
   // affect the most recent pedal; otherwise we want to use all
   // pedals.
   if (drum_chooses_notes ||
-      (drum_chooses_some_notes &&
+      (drum_chooses_some_notes && !whistle_chooses_notes &&
        (note_in == MIDI_PEDAL_1 ||
 	note_in == MIDI_PEDAL_3 ||
 	note_in == MIDI_PEDAL_4))) {
@@ -1411,6 +1431,58 @@ void count_drum_hit(int note_in) {
     estimate_tempo(current_time, note_in);
     hihat_times_index = (hihat_times_index+1) % HIHAT_TIMES_LENGTH;
   }
+}
+
+// Drum Some's four choices: pedal 3, pedal 4, pedal 1, and 3 and 4 together.
+// Pedals 1+3 and 4+1 pick chords too, but they are chords you reach by
+// combining, and the whistle only has the one note to offer.
+static const int DRUM_SOME_PEDALS[] = {
+  MIDI_PEDAL_3, MIDI_PEDAL_4, MIDI_PEDAL_1, MIDI_PEDAL_34,
+};
+#define N_DRUM_SOME_PEDALS \
+  ((int)(sizeof(DRUM_SOME_PEDALS) / sizeof(DRUM_SOME_PEDALS[0])))
+
+// Semitones between two notes' pitch classes, the short way round.
+static int pitch_class_distance(int a, int b) {
+  int d = ((a - b) % 12 + 12) % 12;
+  return d > 6 ? 12 - d : d;
+}
+
+// Which of Drum Some's pedals a whistled MIDI note is nearest to, by pitch
+// class against the root each would pick in the current key and mode, or -1
+// if it falls exactly between two different roots.  A tie is left alone
+// rather than guessed at: the note that sits between two chords is the one
+// most likely to have been a passing note.  Two pedals landing on the same
+// root isn't a tie -- Freygish gives the I to both 3 and 1.
+int drum_some_pedal_for_note(int midi_note) {
+  int best_pedal = -1, best_root = -1, best_distance = 99;
+  bool tied = false;
+  for (int i = 0; i < N_DRUM_SOME_PEDALS; i++) {
+    int ignored;
+    int root = pedal_note(DRUM_SOME_PEDALS[i], &ignored);
+    int distance = pitch_class_distance(midi_note, root);
+    if (distance < best_distance) {
+      best_pedal = DRUM_SOME_PEDALS[i];
+      best_root = root;
+      best_distance = distance;
+      tied = false;
+    } else if (distance == best_distance &&
+               pitch_class_distance(root, best_root) != 0) {
+      tied = true;
+    }
+  }
+  return tied ? -1 : best_pedal;
+}
+
+// A whistled note has finished: pick the chord it's nearest, exactly as if
+// that pedal had been pressed in Drum Some.
+void whistle_picks_note(int midi_note) {
+  if (!whistle_chooses_notes) return;
+  int pedal = drum_some_pedal_for_note(midi_note);
+  if (pedal < 0) return;
+  most_recent_drum_pedal = pedal;
+  update_drum_pedal_note();
+  update_bass(/*force_refresh=*/false);
 }
 
 void send_chord(int note_out, int vel, int endpoint) {
@@ -1888,8 +1960,25 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     toggle_ducked();
     return;
   case F5:
+    // From the whistle choosing, this hands the choice back to the feet
+    // rather than switching Drum Some off: asking for Drum Some is asking for
+    // the feet to choose.
+    if (whistle_chooses_notes) {
+      whistle_chooses_notes = false;
+      return;
+    }
     drum_chooses_some_notes = !drum_chooses_some_notes;
     if (drum_chooses_some_notes) {
+      most_recent_drum_pedal = MIDI_PEDAL_3;
+    }
+    return;
+  case WHISTLE_PICKS:
+    whistle_chooses_notes = !whistle_chooses_notes;
+    // It is Drum Some underneath, so it comes and goes with it, and it can't
+    // share the job with the drum picking every note.
+    drum_chooses_some_notes = whistle_chooses_notes;
+    if (whistle_chooses_notes) {
+      drum_chooses_notes = false;
       most_recent_drum_pedal = MIDI_PEDAL_3;
     }
     return;
@@ -1907,6 +1996,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case F9:
     drum_chooses_notes = !drum_chooses_notes;
+    if (drum_chooses_notes && whistle_chooses_notes) {
+      whistle_chooses_notes = false;
+      drum_chooses_some_notes = false;
+    }
     if (drum_chooses_notes) {
       // The drum picking notes is only useful with a foot bass to play them,
       // so switching it on brings up the setup that goes with it.  Set rather

@@ -33,6 +33,7 @@
 #include <unistd.h>
 
 #include "engine.h"   // from whistle-synth
+#include "whistlenote.h"
 
 // ---------------------------------------------------------------------------
 // The voices
@@ -170,6 +171,14 @@ static _Atomic int whistle_dropouts;
 static _Atomic int whistle_meter_level;   // playing level, x10000
 static _Atomic int whistle_meter_freq;    // last detected pitch in Hz, x100
 static _Atomic int whistle_meter_voiced;
+
+// Whole whistled notes, for the whistle choosing the chord: the audio thread
+// stores the note, then bumps the count, and the tick thread picks it up when
+// the count moves.  Written whether or not that mode is on -- it costs next to
+// nothing -- and only acted on when it is.
+static WhistleNoteTracker whistle_note_tracker;  // audio thread only
+static _Atomic int whistle_picked_note;
+static _Atomic int whistle_picked_count;
 
 // A frequency as the nearest MIDI note, and the two ends of a range as the
 // notes just inside it -- rounding outwards would offer a note the detector
@@ -492,6 +501,13 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
     atomic_store_explicit(&whistle_meter_freq, (int)(hint->freq * 100),
                           memory_order_relaxed);
   }
+  double pitch;
+  if (wn_feed(&whistle_note_tracker, hint->voiced, hint->freq,
+              len / sample_rate, &pitch)) {
+    atomic_store_explicit(&whistle_picked_note, (int)lround(pitch),
+                          memory_order_relaxed);
+    atomic_fetch_add_explicit(&whistle_picked_count, 1, memory_order_release);
+  }
 
   atomic_store_explicit(&whistle_mix_busy, 0, memory_order_release);
 }
@@ -529,6 +545,18 @@ static bool whistle_resolve_voices(void) {
 //
 // All of these are called on the main thread with jammer_lock held.
 // ---------------------------------------------------------------------------
+
+// Hand any note whistled since last time to the whistle choosing the chord.
+// Called from the tick thread, with the lock held.
+static void whistle_poll_picked_note(void) {
+  static int seen = 0;
+  int count = atomic_load_explicit(&whistle_picked_count,
+                                   memory_order_acquire);
+  if (count == seen) return;
+  seen = count;
+  whistle_picks_note(atomic_load_explicit(&whistle_picked_note,
+                                          memory_order_relaxed));
+}
 
 static void whistle_toggle(void) {
   whistle_on = !whistle_on;

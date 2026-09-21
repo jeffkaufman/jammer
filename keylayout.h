@@ -42,7 +42,7 @@ enum {
 // Globals in jammermidilib.h.
 enum {
   GLOBAL_JIG, GLOBAL_DRUM_CHOOSES, GLOBAL_DRUM_CHOOSES_SOME,
-  GLOBAL_ALL_DRUMS_DOWNBEAT, GLOBAL_FADED,
+  GLOBAL_ALL_DRUMS_DOWNBEAT, GLOBAL_FADED, GLOBAL_WHISTLE_PICKS,
 };
 
 // Colour families, so related keys read as a group.
@@ -99,9 +99,11 @@ static const Key KEYS[] = {
    FLAG_AIR_LOCKED, NOLABEL, 0, 7, 1},
   {kVK_F7, F7, 0, "F7", "AF", "FOLLOW\nAIR", GROUP_MODIFIER, LIT_EP_FLAG,
    FLAG_FOLLOWS_AIR, NOLABEL, 0, 8, 1},
-  // F8 used to arm three-digit root-note entry; the status bar's note picker
-  // does that job now.
-  {-1, 0, 0, "F8", FILLER, 0, 9, 1},
+  // Drum Some, with a whistled note choosing the chord instead of the feet.
+  // F8 used to arm three-digit root-note entry, which the status bar's note
+  // picker does now, so it sends its own pseudo-note rather than F8's.
+  {kVK_F8, WHISTLE_PICKS, 0, "F8", NULL, "WHSTL\nPICKS", GROUP_GLOBAL,
+   LIT_GLOBAL_FLAG, GLOBAL_WHISTLE_PICKS, NOLABEL, 0, 9, 1},
   {kVK_F9, F9, 0, "F9", "DCN", "DRUM\nPICKS", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_DRUM_CHOOSES, NOLABEL, 0, 10, 1},
   {kVK_F10, F10, 0, "F10", "AADD", "ALL\nDOWN", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
