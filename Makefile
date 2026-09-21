@@ -97,13 +97,23 @@ app: jammer-mac $(SOUNDFONT)
 	@echo "built $(APP)"
 
 clean-mac:
-	rm -rf jammer-mac $(APP) audition kitlevels whistlelevels whistle-build
+	rm -rf jammer-mac $(APP) audition pads kitlevels whistlelevels whistle-build
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
 audition: audition.c macapi.h common.h
 	@test -n "$(FLUIDSYNTH)" || \
 	  { echo "fluidsynth not found; run: brew install fluid-synth"; exit 1; }
 	clang audition.c -o audition \
+	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
+	  -framework CoreFoundation \
+	  -std=gnu11 -Wall -O2
+
+# Hear pads as the drone bass and drone chord would play them; see the top
+# of pads.c.
+pads: pads.c macapi.h jammermidilib.h voices.h common.h aweight.h
+	@test -n "$(FLUIDSYNTH)" || \
+	  { echo "fluidsynth not found; run: brew install fluid-synth"; exit 1; }
+	clang pads.c -o pads \
 	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
 	  -framework CoreFoundation \
 	  -std=gnu11 -Wall -O2
@@ -141,3 +151,5 @@ test-mac: test-keypad.c test-startup.c kitlevels.c aweight.h \
 	/tmp/jammer-test-startup
 	$(MAKE) kitlevels
 	./kitlevels --check
+	$(MAKE) pads
+	./pads --check

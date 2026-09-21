@@ -131,6 +131,33 @@ static bool whistle_key(const Key* key, bool selecting) {
 }
 
 // ---------------------------------------------------------------------------
+// The drones
+//
+// With a drone selected the voice keys pick from DRONE_VOICES rather than the
+// usual voices; handle_keypad does the picking, and these say what to draw.
+// The whistle wins over both when it is selected, since then the keys are
+// its whatever endpoint was selected last.
+// ---------------------------------------------------------------------------
+
+static bool drone_keys_active(void) {
+  return !whistle_selected && is_drone(c->selected_endpoint);
+}
+
+// The DRONE_VOICES entry this key picks right now, or -1 if it isn't picking
+// one.  Caller must hold the lock.
+static int drone_voice_on_key(const Key* key) {
+  if (!drone_keys_active() || key->group != GROUP_VOICE) return -1;
+  return drone_voice_for_note(key->note);
+}
+
+// A voice key with no pad on it does nothing while a drone is selected.
+// Caller must hold the lock.
+static bool drone_key_is_dead(const Key* key) {
+  return drone_keys_active() && key->group == GROUP_VOICE && key->label &&
+    drone_voice_for_note(key->note) < 0;
+}
+
+// ---------------------------------------------------------------------------
 // Lit state
 // ---------------------------------------------------------------------------
 
@@ -156,6 +183,11 @@ static bool key_is_lit(const Key* key) {
     default:
       break;   // toggles and whole-rig keys mean what they always mean
     }
+  }
+
+  if (drone_keys_active() && key->group == GROUP_VOICE) {
+    int index = drone_voice_for_note(key->note);
+    return index >= 0 && c->voices[sel] == DRONE_VOICES[index].program;
   }
 
   LitKind lit = key->lit;

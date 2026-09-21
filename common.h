@@ -50,8 +50,12 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 // because that's where GM keeps percussion.
 #define ENDPOINT_FOOTBASS_2 10
 #define ENDPOINT_FOOTBASS_3 11
-#define N_ENDPOINTS (ENDPOINT_FOOTBASS_3+1)
-#define N_DRONE_ENDPOINTS (ENDPOINT_DRONE_CHORD+1)
+// A second drone bass and drone chord, so two pads can be layered.  They are
+// drones in every way the originals are -- see is_drone -- and start out
+// cleared the same way.
+#define ENDPOINT_DRONE_BASS_2 12
+#define ENDPOINT_DRONE_CHORD_2 13
+#define N_ENDPOINTS (ENDPOINT_DRONE_CHORD_2+1)
 
 /* midi values */
 #define MIDI_OFF 0x80

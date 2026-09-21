@@ -75,6 +75,11 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     break;
   }
 
+  // The drones level their pads themselves; see DRONE_VOICES.
+  if (is_drone(endpoint) && drone_volume(endpoint, voice) >= 0) {
+    volume = drone_volume(endpoint, voice);
+  }
+
   if (endpoint == ENDPOINT_DRUM) {
     volume = MIDI_MAX;
   }

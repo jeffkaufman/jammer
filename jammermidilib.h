@@ -232,6 +232,87 @@ static const DrumKit KITS[N_KITS] = {
                  PROG_SYNTH_DRUM, 120},
 };
 
+// What the voice keys pick while a drone is selected: Rock Organ, which is
+// what the drones have always been, and the pads picked out with pads.c.
+// Rock Organ stays on H, where it is for every other endpoint; the rest go
+// in the order they were auditioned.  Labels are for the Mac's on-screen
+// keyboard, where "\n" splits lines.
+//
+// Each carries its own channel volume on the drones, one for the bass drones
+// and one for the chord drones, since a single low note and a chord two
+// octaves up at a different velocity come out nowhere near the same.  These
+// replace the per-voice volumes in voices.h while it's a drone playing.
+//
+// `pads --levels` produces the volumes: every pad as loud, A-weighted, as
+// Rock Organ was on that drone before any of this -- channel volume 65 and
+// the old velocities of 70 and 30 -- and the chord drones 2dB louder than
+// that, since by ear they'd been a little quiet.  Re-run it rather than
+// hand-editing, and `pads --check` (part of make test-mac) says if they've
+// drifted.
+static const struct {
+  char note;
+  int program;
+  const char* label;
+  int bass_volume;   // CC7 on Db and Db2
+  int chord_volume;  // CC7 on Dc and Dc2
+} DRONE_VOICES[] = {
+  {'A', 19, "Church\nOrgan",    35,  58},
+  {'S', 50, "Synth\nStrings",   83,  82},
+  {'D', 54, "Synth\nVoice",     96, 100},
+  {'F', 62, "Synth\nBrass 1",   61,  81},
+  {'G', 63, "Synth\nBrass 2",   61,  86},
+  {'H', 18, "Rock\nOrgan",      40,  55},
+  {'Z', 89, "Warm\nPad",        95,  95},
+  {'X', 90, "Poly\nsynth",      82,  83},
+  {'C', 94, "Halo\nPad",       104,  95},
+  {'V', 95, "Sweep\nPad",       83,  71},
+};
+#define N_DRONE_VOICES ((int)(sizeof(DRONE_VOICES) / sizeof(DRONE_VOICES[0])))
+
+// The DRONE_VOICES entry on this key, or -1.
+static int drone_voice_for_note(int note) {
+  for (int i = 0; i < N_DRONE_VOICES; i++) {
+    if (DRONE_VOICES[i].note == note) return i;
+  }
+  return -1;
+}
+
+// How hard the drones strike their notes: a single bass note, or a chord.
+// These were 70 and 30, which left some pads short of Rock Organ's old level
+// even at full channel volume -- Halo Pad by 5dB on the bass.  At these,
+// every pad in DRONE_VOICES gets there with at least 3dB of channel volume
+// to spare, and the volumes there make up the difference.
+#define DRONE_BASS_VELOCITY 115
+#define DRONE_CHORD_VELOCITY 40
+
+// Which of the pair of volumes a drone takes.  By endpoint rather than by its
+// chord flag, so it doesn't change under you when the flag does.
+static inline bool is_chord_drone(int endpoint) {
+  return endpoint == ENDPOINT_DRONE_CHORD ||
+         endpoint == ENDPOINT_DRONE_CHORD_2;
+}
+
+// The drone's own channel volume for this voice, or -1 if it isn't one of
+// DRONE_VOICES.
+static int drone_volume(int endpoint, int voice) {
+  for (int i = 0; i < N_DRONE_VOICES; i++) {
+    if (DRONE_VOICES[i].program != voice) continue;
+    return is_chord_drone(endpoint) ? DRONE_VOICES[i].chord_volume
+                                    : DRONE_VOICES[i].bass_volume;
+  }
+  return -1;
+}
+
+// The keys that pick a voice for the selected endpoint.
+static bool is_voice_key(int note) {
+  switch (note) {
+  case 'A': case 'S': case 'D': case 'F': case 'G': case 'H':
+  case 'Z': case 'X': case 'C': case 'V': case 'B': case 'N': case 'M':
+    return true;
+  }
+  return false;
+}
+
 #define CHORD_MAJOR 0
 #define CHORD_MINOR 1
 #define CHORD_DIM   2
@@ -497,6 +578,22 @@ static inline bool is_footbass(int endpoint) {
          endpoint == ENDPOINT_FOOTBASS_3;
 }
 
+// The drones: Db and Dc, and the second pair beside them.  Same reasoning as
+// is_footbass -- a named test, so the second pair can't be missed anywhere
+// the first is handled.
+static inline bool is_drone(int endpoint) {
+  return endpoint == ENDPOINT_DRONE_BASS ||
+         endpoint == ENDPOINT_DRONE_CHORD ||
+         endpoint == ENDPOINT_DRONE_BASS_2 ||
+         endpoint == ENDPOINT_DRONE_CHORD_2;
+}
+
+// The endpoints update_bass holds a note on, rather than ones that play on
+// the beat: the jawharp and the drones.
+static inline bool holds_bass_note(int endpoint) {
+  return endpoint == ENDPOINT_JAWHARP || is_drone(endpoint);
+}
+
 // Given a note relative to root, convert it into a note relative to fifth.
 int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
@@ -618,8 +715,7 @@ void select_voice(struct Configuration* c, int voice) {
   reload_voice_setting(c);
   if (is_footbass(c->selected_endpoint) ||
       c->selected_endpoint == ENDPOINT_ARP ||
-      c->selected_endpoint == ENDPOINT_JAWHARP || 
-      c->selected_endpoint < N_DRONE_ENDPOINTS) {
+      holds_bass_note(c->selected_endpoint)) {
     update_bass(/*force_refresh=*/true);
   }
 }
@@ -759,6 +855,8 @@ void clear_endpoint() {
   case ENDPOINT_OVERLAY: clear_overlay(); break;
   case ENDPOINT_DRONE_BASS: clear_drone_bass(); break;
   case ENDPOINT_DRONE_CHORD: clear_drone_chord(); break;
+  case ENDPOINT_DRONE_BASS_2: clear_drone_bass(); break;
+  case ENDPOINT_DRONE_CHORD_2: clear_drone_chord(); break;
   }
 
   update_fade(c->selected_endpoint);
@@ -1347,8 +1445,8 @@ void update_bass(bool force_refresh) {
 
   last_update_bass_note = bass_out;
 
-  for (int endpoint = ENDPOINT_JAWHARP; endpoint < N_DRONE_ENDPOINTS;
-       endpoint++) {
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    if (!holds_bass_note(endpoint)) continue;
     int note_out = c->chord[endpoint] ? chord_out : bass_out;
 
     if (!c->on[endpoint]) continue;
@@ -1361,13 +1459,8 @@ void update_bass(bool force_refresh) {
     }
 
     int vel = MIDI_MAX;
-    if (endpoint == ENDPOINT_DRONE_BASS ||
-        endpoint == ENDPOINT_DRONE_CHORD) {
-      if (c->chord[endpoint]) {
-        vel = 30;
-      } else {
-        vel = 70;
-      }
+    if (is_drone(endpoint)) {
+      vel = c->chord[endpoint] ? DRONE_CHORD_VELOCITY : DRONE_BASS_VELOCITY;
     }
 
     drone_endpoint_off(endpoint);
@@ -1585,7 +1678,7 @@ void toggle_endpoint(int endpoint) {
   endpoint_notes_off(c->selected_endpoint);
   c->on[c->selected_endpoint] = !c->on[c->selected_endpoint];
 
-  if (endpoint < N_DRONE_ENDPOINTS) {
+  if (holds_bass_note(endpoint)) {
     if (c->on[endpoint]) {
       update_bass(/*force_refresh=*/true);
     } else {
@@ -1615,6 +1708,19 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     case 'B': case 'N': case 'M':
       return;
     }
+  }
+
+  // With a drone selected the voice keys pick from its own short list of
+  // pads instead -- see DRONE_VOICES.  Keys without one do nothing, for the
+  // same reason as with the drum: falling through would put a voice on the
+  // drone that isn't on the keyboard.
+  if (is_drone(c->selected_endpoint)) {
+    int index = drone_voice_for_note(note_in);
+    if (index >= 0) {
+      select_voice(c, DRONE_VOICES[index].program);
+      return;
+    }
+    if (is_voice_key(note_in)) return;
   }
 
   switch (note_in) {
@@ -1722,6 +1828,21 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case 'O':
     toggle_endpoint(ENDPOINT_DRONE_CHORD);
+    return;
+  // The second drones.  'w'..'z' for the same reason the extra foot basses
+  // are 's'..'v': '8' and '9' already mean "select the first drones", and
+  // the Mac's own 8 and 9 carry these instead.  Nothing on the Pi sends them.
+  case 'x':
+    c->selected_endpoint = ENDPOINT_DRONE_BASS_2;
+    return;
+  case 'w':
+    toggle_endpoint(ENDPOINT_DRONE_BASS_2);
+    return;
+  case 'z':
+    c->selected_endpoint = ENDPOINT_DRONE_CHORD_2;
+    return;
+  case 'y':
+    toggle_endpoint(ENDPOINT_DRONE_CHORD_2);
     return;
 
   case 'J':
@@ -2084,7 +2205,7 @@ void duck() {
 	psend_midi(MIDI_CC, CC_11,
 		   endpoint == ENDPOINT_JAWHARP ? duck_val * 0.8 : duck_val,
 		   endpoint);
-	if (endpoint < N_DRONE_ENDPOINTS) {
+	if (holds_bass_note(endpoint)) {
 	  if (duck_val < 3 && current_note[endpoint] != -1) {
 	    drone_endpoint_off(endpoint);
 	  } else if (current_note[endpoint] == -1) {

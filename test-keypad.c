@@ -597,6 +597,103 @@ static void test_whistle() {
   whistle_level_full = 5;
 }
 
+// The second drones on 8 and 9, and the drones' own list of pads on the voice
+// keys.
+static void test_drones() {
+  full_reset();
+
+  struct { const char* cap; int endpoint; int like; const char* name; }
+  keys[] = {
+    {"8", ENDPOINT_DRONE_BASS_2, ENDPOINT_DRONE_BASS, "drone bass 2"},
+    {"9", ENDPOINT_DRONE_CHORD_2, ENDPOINT_DRONE_CHORD, "drone chord 2"},
+  };
+
+  for (int i = 0; i < 2; i++) {
+    const Key* key = key_for_cap(keys[i].cap);
+    CHECK(key != NULL && key->lit == LIT_EP_ON &&
+          key->arg == keys[i].endpoint,
+          "%s isn't the %s key", keys[i].cap, keys[i].name);
+
+    // Cleared exactly like the drone it's a second copy of.
+    int e = keys[i].endpoint, o = keys[i].like;
+    CHECK(c->voices[e] == c->voices[o] && c->chord[e] == c->chord[o] &&
+          c->shorter[e] == c->shorter[o],
+          "%s should start out like the first one", keys[i].name);
+    CHECK(is_drone(e) && holds_bass_note(e),
+          "%s should count as a drone", keys[i].name);
+
+    CHECK(!c->on[e], "%s starts off", keys[i].name);
+    press(keys[i].cap);
+    CHECK(c->on[e], "%s didn't switch %s on", keys[i].cap, keys[i].name);
+    CHECK(c->selected_endpoint == e, "toggling %s didn't select it",
+          keys[i].name);
+    CHECK(current_note[e] != -1, "%s is on but holding no note",
+          keys[i].name);
+    press(keys[i].cap);
+    CHECK(!c->on[e], "%s didn't switch %s back off", keys[i].cap,
+          keys[i].name);
+    CHECK(current_note[e] == -1, "%s is off but still holding a note",
+          keys[i].name);
+
+    select_ep("R");
+    select_ep(keys[i].cap);
+    CHECK(c->selected_endpoint == e, "shift-%s didn't select %s",
+          keys[i].cap, keys[i].name);
+  }
+  CHECK(!is_drone(ENDPOINT_JAWHARP) && holds_bass_note(ENDPOINT_JAWHARP),
+        "the jawharp holds a note but isn't a drone");
+  CHECK(!holds_bass_note(ENDPOINT_FOOTBASS) && !is_drone(ENDPOINT_DRUM),
+        "nothing else is a drone");
+
+  // Every pad on the list is on a voice key, and picks and lights there, on
+  // each of the four drones.
+  int drones[] = {ENDPOINT_DRONE_BASS, ENDPOINT_DRONE_CHORD,
+                  ENDPOINT_DRONE_BASS_2, ENDPOINT_DRONE_CHORD_2};
+  for (int d = 0; d < 4; d++) {
+    c->selected_endpoint = drones[d];
+    for (int v = 0; v < N_DRONE_VOICES; v++) {
+      const Key* key = key_for_cap_note(DRONE_VOICES[v].note);
+      CHECK(key && key->group == GROUP_VOICE, "pad %d isn't on a voice key",
+            DRONE_VOICES[v].program);
+      if (!key) continue;
+      keypad_key(key->note);
+      CHECK(c->voices[drones[d]] == DRONE_VOICES[v].program,
+            "%s didn't pick %d on endpoint %d", key->cap,
+            DRONE_VOICES[v].program, drones[d]);
+      CHECK(key_is_lit(key), "%s should be lit for the pad it picked",
+            key->cap);
+      CHECK(drone_voice_on_key(key) == v, "%s should draw as its pad",
+            key->cap);
+    }
+  }
+  CHECK(drone_voice_for_note('H') >= 0 &&
+        DRONE_VOICES[drone_voice_for_note('H')].program == 18,
+        "Rock Organ should still be on H");
+
+  // The voice keys with no pad do nothing, and draw dead.
+  select_ep("I");
+  press("Z");
+  const char* blank[] = {"B", "N", "M"};
+  for (int i = 0; i < 3; i++) {
+    press(blank[i]);
+    CHECK(c->voices[ENDPOINT_DRONE_BASS] == 89,
+          "%s changed the drone's voice; it should be blank", blank[i]);
+    CHECK(drone_key_is_dead(key_for_cap(blank[i])), "%s should draw dead",
+          blank[i]);
+    CHECK(!lit(blank[i]), "%s shouldn't light", blank[i]);
+  }
+
+  // And everywhere else the voice keys are the usual ones again.
+  select_ep("R");
+  press("A");
+  CHECK(c->voices[ENDPOINT_FLEX] == 39, "A should be SynBass 2 on flex");
+  CHECK(drone_voice_on_key(key_for_cap("A")) < 0 &&
+        !drone_key_is_dead(key_for_cap("B")),
+        "the drone labels shouldn't follow you off the drones");
+  CHECK(CHANNEL_PITCHED_KICK >= N_ENDPOINTS,
+        "the pitched kick is sitting on endpoint %d", CHANNEL_PITCHED_KICK);
+}
+
 int main() {
   jml_setup();
   // The whistle's key handling needs its state and its voice table, but no
@@ -615,6 +712,7 @@ int main() {
   test_globals();
   test_percussion_bank_reaches_the_synth();
   test_extra_footbasses();
+  test_drones();
   test_whistle();
 
   if (failures) {

@@ -129,8 +129,12 @@ static const Key KEYS[] = {
   {-1, 0, 0, "5", FILLER, 1, 5, 1},
   {-1, 0, 0, "6", FILLER, 1, 6, 1},
   {-1, 0, 0, "7", FILLER, 1, 7, 1},
-  {-1, 0, 0, "8", FILLER, 1, 8, 1},
-  {-1, 0, 0, "9", FILLER, 1, 9, 1},
+  // A second drone bass and chord, for layering two pads.  They sit over I
+  // and O, where the first pair are.
+  {kVK_ANSI_8, 'w', 'x', "8", "Db2", "Drone\nBass 2", GROUP_TOGGLE, LIT_EP_ON,
+   ENDPOINT_DRONE_BASS_2, NOLABEL, 1, 8, 1},
+  {kVK_ANSI_9, 'y', 'z', "9", "Dc2", "Drone\nChord 2", GROUP_TOGGLE,
+   LIT_EP_ON, ENDPOINT_DRONE_CHORD_2, NOLABEL, 1, 9, 1},
   {kVK_ANSI_0, '0', 0, "0", "J/R", "JIG", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_JIG, NOLABEL, 1, 10, 1},
   {kVK_ANSI_Minus, '-', 0, "-", "-", "VOL−", GROUP_MODIFIER, LIT_VOLUME,
@@ -257,6 +261,8 @@ static const char* ENDPOINT_NAMES[N_ENDPOINTS] = {
   "Drum",        // ENDPOINT_DRUM
   "Foot Bass 2", // ENDPOINT_FOOTBASS_2
   "Foot Bass 3", // ENDPOINT_FOOTBASS_3
+  "Drone Bass 2",  // ENDPOINT_DRONE_BASS_2
+  "Drone Chord 2", // ENDPOINT_DRONE_CHORD_2
 };
 
 #endif

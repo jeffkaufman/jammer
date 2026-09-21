@@ -99,6 +99,8 @@ typedef struct {
   bool whistle_on;
   bool whistle_selected;
   bool whistle_dead[N_KEYS];
+  bool drone_dead[N_KEYS];
+  int drone_voice[N_KEYS];  // DRONE_VOICES index each key picks, or -1
   int whistle_voice;
   int whistle_octave;
   int whistle_volume;
@@ -118,6 +120,8 @@ static void take_snapshot(Snapshot* s) {
     s->lit[i] = KEYS[i].label ? key_is_lit(&KEYS[i]) : false;
     s->selected[i] = key_is_selected_endpoint(&KEYS[i]);
     s->whistle_dead[i] = whistle_key_is_dead(&KEYS[i]);
+    s->drone_dead[i] = drone_key_is_dead(&KEYS[i]);
+    s->drone_voice[i] = drone_voice_on_key(&KEYS[i]);
   }
   int sel = c->selected_endpoint;
   s->selected_endpoint = sel;
@@ -339,7 +343,7 @@ static NSString* note_name(int note) {
   bool blank_on_drum = snapshot.selected_endpoint == ENDPOINT_DRUM &&
                        key->drum_label && key->drum_label[0] == '\0';
   bool unbound = (key->label == NULL) || blank_on_drum ||
-                 snapshot.whistle_dead[i];
+                 snapshot.whistle_dead[i] || snapshot.drone_dead[i];
   bool selected = snapshot.selected[i];
 
   NSTimeInterval since_flash =
@@ -389,6 +393,11 @@ static NSString* note_name(int note) {
   const char* shortname = key->shortname;
   if (snapshot.selected_endpoint == ENDPOINT_DRUM && key->drum_label) {
     label = key->drum_label;
+  }
+  // So do the drones' pads, and like the whistle's they have no paper tab.
+  if (snapshot.drone_voice[i] >= 0) {
+    label = DRONE_VOICES[snapshot.drone_voice[i]].label;
+    shortname = NULL;
   }
   // The whistle's ten voices take over the voice keys while it is selected,
   // the same way the drum kits do.  They have no paper tab on the real

@@ -132,11 +132,14 @@ the physical keyboard in the middle, and what it actually does underneath:
 * **`2` and `3`** (green) are two more foot basses, on top of the one on `W`.
   Same bass line, different rhythmic treatment, so they can run together --
   see below.
+* **`8` and `9`** (green) are a second drone bass and drone chord, over the
+  first pair on `I` and `O`, for layering two pads.
 * **QWERTY row** (green) turns endpoints on and off.  Hold shift to pick which
   endpoint the modifier keys act on instead of toggling it; the selected one
   gets a yellow outline whether or not it's switched on.
 * **Letter keys** (orange) pick the voice for the selected endpoint — or the
-  drum sound, when the drum endpoint is selected.
+  drum sound, when the drum endpoint is selected, or a pad, when a drone is.
+  See below.
 * **Modifier keys** (purple) are the per-endpoint flags: downbeat, upbeat,
   chord, octave, and so on.  They light up for whichever endpoint is selected,
   so switching endpoints switches what's lit.
@@ -205,6 +208,32 @@ On the Pi they aren't reachable yet: their pseudo-notes are `s`-`v`, because
 `2` and `3` have meant "select the foot bass" and "select the arp" since
 `kbd.py`, and there's no key spare on that number row.  The Mac's `2` and `3`
 carry the new ones instead.
+
+### The drones' pads
+
+With any of the four drones selected (`I`, `O`, `8`, `9`) the voice keys pick
+from their own list instead of the usual voices: Rock Organ, which the drones
+have always been, and the pads picked out with `make pads && ./pads`.
+
+| | | | | | |
+|---|---|---|---|---|---|
+| `A` Church Organ | `S` Synth Strings 1 | `D` Synth Voice | `F` Synth Brass 1 | `G` Synth Brass 2 | `H` Rock Organ |
+| `Z` Warm Pad | `X` Polysynth | `C` Halo Pad | `V` Sweep Pad | | |
+
+`B`, `N` and `M` do nothing then.  The list is `DRONE_VOICES` in
+`jammermidilib.h`, and `handle_keypad` does the picking, so the Pi's keypad
+gets it too.
+
+Every pad on the list is levelled to Rock Organ as the drones used to play
+it, A-weighted -- and the chord drones 2dB above that, since they'd been a
+little quiet -- with its own channel volume for the bass drones and for the
+chord drones.  The drones strike harder than they did (velocity 115 and 40,
+up from 70 and 30) so the quieter pads can get there.  `./pads --levels` works those volumes out and `./pads --check`
+(part of `make test-mac`) fails if they drift.
+
+`8` and `9` are cleared exactly like `I` and `O`, and `is_drone()` is what
+the places that treat the drones specially ask.  Like the extra foot basses
+they aren't reachable from `kbd.py`: their pseudo-notes are `w`-`z`.
 
 ### The whistle bass
 
