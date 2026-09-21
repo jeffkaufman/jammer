@@ -91,18 +91,18 @@ static bool whistle_key_is_dead(const Key* key) {
 //
 // Caller must hold the lock.
 static bool whistle_key(const Key* key, bool selecting) {
+  // Toggling selects, the same as it does for an endpoint in
+  // toggle_endpoint(): whatever you just switched is what you'll want to set
+  // up next.
   if (key->lit == LIT_WHISTLE_ON) {
-    if (selecting) {
-      whistle_select();
-    } else {
-      whistle_toggle();
-    }
+    if (!selecting) whistle_toggle();
+    whistle_select();
     return true;
   }
 
-  // Shift on an endpoint's toggle key selects that endpoint, which is how you
-  // get back out of the whistle.  Let it through to do its own work.
-  if (selecting && key->select_note) {
+  // An endpoint's toggle key, shifted or not, selects that endpoint, which is
+  // how you get back out of the whistle.  Let it through to do its own work.
+  if (key->group == GROUP_TOGGLE) {
     whistle_selected = false;
     return false;
   }

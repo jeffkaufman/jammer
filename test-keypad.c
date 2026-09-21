@@ -491,7 +491,8 @@ static void test_whistle() {
   strike("1", false);
   CHECK(whistle_on, "1 didn't switch the whistle on");
   CHECK(lit("1"), "1 should be lit once the whistle is on");
-  CHECK(!whistle_selected, "toggling shouldn't select");
+  CHECK(whistle_selected, "toggling should select, as it does an endpoint");
+  select_ep("R");
   strike("1", true);
   CHECK(whistle_selected, "shift-1 didn't select the whistle");
   CHECK(whistle_on, "selecting shouldn't switch it off");
@@ -557,13 +558,18 @@ static void test_whistle() {
         "a modifier key reached an endpoint while the whistle was selected");
   CHECK(whistle_key_is_dead(key_for_cap(",")), ", should draw as dead");
 
-  // Toggles still toggle, and shift-selecting an endpoint hands the keys back.
+  // Toggles still toggle, and toggling or shift-selecting an endpoint hands
+  // the keys back to it.
   bool low_was_on = c->on[ENDPOINT_LOW];
   strike("T", false);
   CHECK(c->on[ENDPOINT_LOW] != low_was_on,
         "an endpoint toggle stopped working while the whistle was selected");
-  CHECK(whistle_selected, "a plain toggle shouldn't move the selection");
+  CHECK(!whistle_selected, "toggling an endpoint didn't leave the whistle");
+  CHECK(c->selected_endpoint == ENDPOINT_LOW, "...or didn't select it");
+  strike("T", false);                  // put it back
 
+  strike("1", true);
+  CHECK(whistle_selected, "shift-1 didn't reselect the whistle");
   strike("T", true);
   CHECK(!whistle_selected, "shift on an endpoint didn't leave the whistle");
   CHECK(c->selected_endpoint == ENDPOINT_LOW, "...or didn't select it");
