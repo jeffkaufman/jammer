@@ -175,7 +175,7 @@ Say a Nashville number, one to seven, and the chord goes to that degree of
 the major key on the root -- 1 I, 2 ii, 3 iii, 4 IV, 5 V, 6 vi, 7 vii° --
 whatever the arrow keys say.  Only the words and digits count, not "to" or
 "for", so talking to the room doesn't change chords.  It's Apple's on-device speech recognition (`speech.h`); the
-first time `F3` or `F8` goes on, macOS asks permission.  So that a bare `jammer-mac`
+first time it starts, macOS asks permission.  So that a bare `jammer-mac`
 can ask, `Info.plist` is linked into it, which also means running it from a
 terminal now shares `Jammer.app`'s saved settings.
 

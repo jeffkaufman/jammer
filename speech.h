@@ -907,9 +907,9 @@ static void speech_tick(void) {
   bool numbers = speech_chooses_notes, commands = speech_commands_on;
   UNLOCK();
 
-  // Asked for the first time the mode is switched on, not at launch, so
-  // nobody who never uses it is ever prompted.
-  if (wanted && !speech_asked) {
+  // Asked at launch, so the prompt doesn't interrupt the first time F3 or F8
+  // is pressed mid-song.
+  if (!speech_asked) {
     speech_asked = true;
     [SFSpeechRecognizer requestAuthorization:^(
         SFSpeechRecognizerAuthorizationStatus status) {
