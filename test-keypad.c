@@ -696,16 +696,18 @@ static void test_drones() {
         "the pitched kick is sitting on endpoint %d", CHANNEL_PITCHED_KICK);
 }
 
-// F8, speech recognition: Drum Some with a spoken number choosing the chord
+// F3, number recognition: Drum Some with a spoken number choosing the chord
 // instead of the feet, and how it gives way to the other ways of choosing.
 static void test_speech_picks() {
   full_reset();
   root_note = to_root(26);  // D
   fifth_note = to_root(root_note + 7);
-  press("F8");
+  press("F3");
   CHECK(speech_chooses_notes && drum_chooses_some_notes,
-        "F8 didn't switch on speech choosing");
-  CHECK(lit("F8") && !lit("F5"), "F8 should light, and F5 shouldn't");
+        "F3 didn't switch on speech choosing");
+  CHECK(lit("F3") && !lit("F5"), "F3 should light, and F5 shouldn't");
+  CHECK(!speech_commands_on && !lit("F8"),
+        "F3 shouldn't switch on spoken commands");
 
   nashville_picks_chord(6);
   CHECK(active_note() == to_root(35) && chord_type == CHORD_MINOR,
@@ -725,20 +727,52 @@ static void test_speech_picks() {
   press("F5");
   CHECK(!drum_chooses_some_notes, "F5 again should switch Drum Some off");
 
-  // F8 off takes Drum Some with it; F9 and escape both end it.
-  press("F8");
-  press("F8");
+  // F3 off takes Drum Some with it; F9 and escape both end it.
+  press("F3");
+  press("F3");
   CHECK(!speech_chooses_notes && !drum_chooses_some_notes,
-        "F8 off should leave neither on");
-  press("F8");
+        "F3 off should leave neither on");
+  press("F3");
   press("F9");
   CHECK(drum_chooses_notes && !speech_chooses_notes &&
         !drum_chooses_some_notes, "F9 should take over from speech");
   press("F9");
-  press("F8");
+  press("F3");
   press("esc");
   CHECK(!speech_chooses_notes && !drum_chooses_some_notes,
         "escape should end speech choosing");
+}
+
+// F8, speech recognition: spoken commands, on and off by themselves, whatever
+// is choosing the chord.
+static void test_speech_commands() {
+  full_reset();
+  speech_commands_on = false;  // a reset leaves it alone
+  press("F8");
+  CHECK(speech_commands_on && lit("F8"), "F8 didn't switch on commands");
+  CHECK(!speech_chooses_notes && !drum_chooses_some_notes && !lit("F3"),
+        "F8 shouldn't touch how the chord is chosen");
+  press("F3");
+  CHECK(speech_commands_on && speech_chooses_notes,
+        "F3 and F8 should both be on");
+  press("F9");
+  CHECK(speech_commands_on && !speech_chooses_notes,
+        "F9 should take over from F3 and leave F8 alone");
+  press("F9");
+  press("F3");
+  press("F8");
+  CHECK(!speech_commands_on && speech_chooses_notes,
+        "F8 off should leave F3 on");
+  press("F3");
+  CHECK(!speech_commands_on && !speech_chooses_notes, "both should be off");
+
+  // A reset ends number recognition but not spoken commands.
+  press("F3");
+  press("F8");
+  press("esc");
+  CHECK(!speech_chooses_notes && speech_commands_on,
+        "escape should end F3 and leave F8");
+  press("F8");
 }
 
 static SwAction next_action(const char* const* words, int n, int* consumed,
@@ -1100,8 +1134,8 @@ static void test_nashville_chords() {
   root_note = to_root(26);  // D
   fifth_note = to_root(root_note + 7);
   nashville_picks_chord(4);
-  CHECK(active_note() == root_note, "a number did something with F8 off");
-  press("F8");
+  CHECK(active_note() == root_note, "a number did something with F3 off");
+  press("F3");
   musical_mode = MODE_MINOR;
   struct { int number, note, type; } want[] = {
     {1, 26, CHORD_MAJOR}, {2, 28, CHORD_MINOR}, {3, 30, CHORD_MINOR},
@@ -1144,6 +1178,7 @@ int main() {
   test_drones();
   test_whistle();
   test_speech_picks();
+  test_speech_commands();
   test_nashville_numbers();
   test_spoken_presses();
   test_nashville_chords();

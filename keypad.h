@@ -44,11 +44,12 @@ static bool global_flag(int flag) {
   switch (flag) {
   case GLOBAL_JIG:                return jig_time;
   case GLOBAL_DRUM_CHOOSES:       return drum_chooses_notes;
-  // Drum Some is on underneath speech choosing, but it's F8 that lights for
+  // Drum Some is on underneath speech choosing, but it's F3 that lights for
   // that: F5 lit means the feet are choosing.
   case GLOBAL_DRUM_CHOOSES_SOME:
     return drum_chooses_some_notes && !speech_chooses_notes;
   case GLOBAL_SPEECH_PICKS:       return speech_chooses_notes;
+  case GLOBAL_SPEECH_COMMANDS:    return speech_commands_on;
   case GLOBAL_ALL_DRUMS_DOWNBEAT: return allow_all_drums_downbeat;
   case GLOBAL_FADED:              return fade_target == 0;
   }
@@ -218,6 +219,7 @@ static const struct { const char* label; const char* spoken; bool instead; }
 SPOKEN_ALIASES[] = {
   {"CLEAR\nENDPT", "clear endpoint"},
   {"SPEECH\nRECOG", "speech recognition", true},
+  {"NUMBER\nRECOG", "number recognition", true},
   {"DRUM\nCHOOSES", "drum chooses notes", true},
   {"VOL−", "volume down", true},
   {"VOL+", "volume up", true},

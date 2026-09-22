@@ -1,9 +1,11 @@
 #ifndef JML_SPEECH_H
 #define JML_SPEECH_H
 
-// Speaking to the rig, with speech recognition on (F8): say "four" and it
-// goes to the IV, "press foot bass" and that button is struck, "change key to
-// A" or "change mode to minor".  See
+// Speaking to the rig.  With number recognition on (F3), say "four" and it
+// goes to the IV; with speech recognition on (F8), "press foot bass" and that
+// button is struck, "change key to A" or "change mode to minor".  Either, both
+// or neither: it's the same recognizers listening for both, and the keys say
+// which of what they hear is acted on.  See
 // nashville_picks_chord for what each number means, speechwords.h for how the
 // words are read, and key_spoken_names for what the buttons answer to.
 //
@@ -23,7 +25,7 @@
 // hears takes effect two beats after the talking stops, so it lands in time
 // however long the recognizer took.
 //
-// It only listens while speech recognition is on (F8).  Partial results are
+// It only listens while F3 or F8 is on.  Partial results are
 // acted on as they arrive, so a number lands a moment after it's said rather
 // than after a pause long enough for the recognizer to call the sentence
 // done.
@@ -418,6 +420,12 @@ static bool speech_fast_claims(const SwAction* action);
 // Heard, and to happen on the beat two beats after the talking stops.
 static void speech_queue_action(const SwAction* action) {
   if (speech_fast_claims(action)) return;
+  // Numbers only with F3, everything else only with F8.
+  LOCK();
+  bool wanted = action->kind == SW_NUMBER ? speech_chooses_notes
+                                          : speech_commands_on;
+  UNLOCK();
+  if (!wanted) return;
   if (speech_n_pending < SPEECH_MAX_PENDING) {
     speech_pending[speech_n_pending++] = *action;
   }
@@ -453,7 +461,8 @@ static void speech_queue_action(const SwAction* action) {
 // numrec.h hears a bare number within about a tenth of a second of the word
 // ending, having learned your voice from numtrain.h's recordings.  It's fed
 // the same microphone as Apple's recognizer, before the gate -- it has its
-// own, set from the same menu -- and only while speech recognition is on.
+// own, set from the same menu -- and only while number recognition (F3) is
+// on.
 //
 // What it hears goes in on the very next beat, the soonest it can be heard,
 // since the rhythm parts only play on beats; or, with the feet stopped, at
@@ -470,7 +479,9 @@ static char speech_fast_state[64] = "fast: learning";
 static int speech_fast_unclaimed;   // fast numbers Apple hasn't reported yet
 static uint64_t speech_fast_at;
 
-// A number from Apple's recognizer that the fast path already took.
+// A number from Apple's recognizer that the fast path already took.  Before
+// F3 is asked, so a number the fast path took just before F3 went off still
+// isn't done twice.
 static bool speech_fast_claims(const SwAction* action) {
   if (action->kind != SW_NUMBER || speech_fast_unclaimed == 0) return false;
   if (now() - speech_fast_at > SPEECH_FAST_CLAIM_S * NS_PER_SEC) {
@@ -485,6 +496,10 @@ static bool speech_fast_claims(const SwAction* action) {
 }
 
 static void speech_fast_take(int number, int quiet_ms) {
+  LOCK();
+  bool numbers = speech_chooses_notes;
+  UNLOCK();
+  if (!numbers) return;  // F3 just went off
   speech_fast_unclaimed++;
   speech_fast_at = now();
   bool feet;
@@ -755,7 +770,10 @@ static void speech_drain(void) {
   speech_gate.threshold = (float)pow(10, speech_gate_db / 20);
   speech_fast_stream->p.trigger_db = (float)speech_gate_db;
   UNLOCK();
-  if (speech_request && speech_fast_model) {
+  LOCK();
+  bool numbers = speech_chooses_notes;
+  UNLOCK();
+  if (numbers && speech_fast_model) {
     nr_stream_push(speech_fast_stream, in, (int)available);
   }
 
@@ -789,7 +807,9 @@ static void speech_tick(void) {
   speech_run_pending();
 
   LOCK();
-  bool wanted = speech_chooses_notes && whistle_available;
+  bool wanted = (speech_chooses_notes || speech_commands_on) &&
+                whistle_available;
+  bool numbers = speech_chooses_notes, commands = speech_commands_on;
   UNLOCK();
 
   // Asked for the first time the mode is switched on, not at launch, so
@@ -811,8 +831,9 @@ static void speech_tick(void) {
   wanted = wanted && speech_authorized && speech_recognizer.isAvailable;
 
   if (!on) {
-    speech_set_state(whistle_available ? "off: F8 to listen"
-                                       : "off: no whistle microphone");
+    speech_set_state(whistle_available
+                       ? "off: F3 for numbers, F8 for commands"
+                       : "off: no whistle microphone");
   } else if (!speech_authorized) {
     speech_set_state(speech_asked
       ? "not authorized: System Settings > Privacy & Security > Speech "
@@ -821,8 +842,11 @@ static void speech_tick(void) {
     speech_set_state("recognizer unavailable");
   } else if (speech_task && now() - speech_error_at > 5 * NS_PER_SEC) {
     char state[160];
-    snprintf(state, sizeof(state), "listening, %s, %s",
-             speech_dictionary_state, speech_fast_state);
+    snprintf(state, sizeof(state), "listening for %s, %s%s%s",
+             numbers && commands ? "numbers and commands"
+               : numbers ? "numbers" : "commands",
+             speech_dictionary_state, numbers ? ", " : "",
+             numbers ? speech_fast_state : "");
     speech_set_state(state);
   }
 

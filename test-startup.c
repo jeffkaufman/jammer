@@ -157,8 +157,8 @@ int main(void) {
 
   // A chord picked by voice, or a key change, reaches the drones at once --
   // bass and chord both -- with no beat needed to carry it.
-  handle_keypad(MIDI_ON, SPEECH_PICKS, 64);  // F8: speech choosing
-  CHECK(speech_chooses_notes, "F8 should switch on speech choosing");
+  handle_keypad(MIDI_ON, SPEECH_PICKS, 64);  // F3: speech choosing
+  CHECK(speech_chooses_notes, "F3 should switch on speech choosing");
   for (int e = ENDPOINT_DRONE_BASS; e <= ENDPOINT_DRONE_CHORD; e++) {
     c->selected_endpoint = e;
     if (!c->on[e]) toggle_endpoint(e);

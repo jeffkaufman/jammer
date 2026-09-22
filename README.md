@@ -153,24 +153,33 @@ keyboard keys with the mouse too, shift-clicking to select.
 
 Unlike the Pi, there's no three-digit entry on `F8` or `delete`: the root note
 comes from that picker, and manual per-voice volumes aren't something worth
-typing blind.  `F8` is speech recognition instead -- see below.
+typing blind.  `F8` is speech recognition instead, and `F3` number
+recognition -- see below.
 
 ### Speech recognition
 
-`F8` is Drum Some (`F5`) with your voice choosing the chord instead of pedals
-1, 3 and 4, which go back to only keeping time.  It listens on the whistle's
-microphone, which has to be set up, though the whistle bass doesn't have to
-be on.
+There are two keys, which can be on in any combination: `F3`, number
+recognition, is for choosing the chord by calling numbers, and `F8`, speech
+recognition, is for spoken commands.  It's the same recognizers listening
+either way -- the keys only say which of what they hear gets acted on -- so
+with just `F8` on, a number said to the room does nothing.  Both listen on the
+whistle's microphone, which has to be set up, though the whistle bass doesn't
+have to be on.
+
+`F3` is Drum Some (`F5`) with your voice choosing the chord instead of pedals
+1, 3 and 4, which go back to only keeping time.  So it's one of the three ways
+of choosing the chord, with `F5` and `F9`: switching one on switches the
+others off.  `F8` stays as it was.
 
 Say a Nashville number, one to seven, and the chord goes to that degree of
 the major key on the root -- 1 I, 2 ii, 3 iii, 4 IV, 5 V, 6 vi, 7 vii° --
 whatever the arrow keys say.  Only the words and digits count, not "to" or
 "for", so talking to the room doesn't change chords.  It's Apple's on-device speech recognition (`speech.h`); the
-first time `F8` goes on, macOS asks permission.  So that a bare `jammer-mac`
+first time `F3` or `F8` goes on, macOS asks permission.  So that a bare `jammer-mac`
 can ask, `Info.plist` is linked into it, which also means running it from a
 terminal now shares `Jammer.app`'s saved settings.
 
-Any button can be pressed the same way, by saying "press" and then its name:
+With `F8` on, any button can be pressed by saying "press" and then its name:
 "press foot bass", "press drum some", "press octave up".  "select" instead of
 "press" is shift-click, for the buttons where that means something.  "change
 key to B flat" and "change mode to minor" do what the key picker and the
@@ -182,6 +191,7 @@ the drum kits, the drones' pads or the whistle's voices when those are showing
 ("press warm pad" with a drone selected).  Labels that are abbreviations,
 symbols, or cut short to fit also answer to spelled-out names -- "volume up",
 "octave down", "clear endpoint", "electric piano", "speech recognition" (F8),
+"number recognition" (F3),
 "drum chooses notes" (F9), "frequency modulator" -- listed in
 `SPOKEN_ALIASES` in `keypad.h`.  Spaces and number words don't matter: "room
 two" is Room 2.
@@ -241,7 +251,8 @@ sessions, and ones made with the band playing, make it better.  `make
 numrec-eval && ./numrec-eval` says how well it does on them.  The speech row
 says how many numbers it has learned.
 
-`F5` from here hands the choice back to the feet, and `F9` or `esc` end it.
+From `F3`, `F5` hands the choice back to the feet, and `F9` or `esc` end it;
+`esc` leaves `F8` alone, since commands aren't musical state.
 The words are `speechwords.h` and the chords `nashville_picks_chord`.
 
 ### Building

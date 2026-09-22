@@ -43,6 +43,7 @@ enum {
 enum {
   GLOBAL_JIG, GLOBAL_DRUM_CHOOSES, GLOBAL_DRUM_CHOOSES_SOME,
   GLOBAL_ALL_DRUMS_DOWNBEAT, GLOBAL_FADED, GLOBAL_SPEECH_PICKS,
+  GLOBAL_SPEECH_COMMANDS,
 };
 
 // Colour families, so related keys read as a group.
@@ -90,7 +91,11 @@ static const Key KEYS[] = {
    NOLABEL, 0, 2, 1},
   {kVK_F2, F2, 0, "F2", "CH", "CHANNEL\nSWAP", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_PAN,
    NOLABEL, 0, 3, 1},
-  {-1, 0, 0, "F3", FILLER, 0, 4, 1},
+  // Number recognition: Drum Some, with a spoken number choosing the chord
+  // instead of the feet (speech.h).  One of the three ways of choosing, with
+  // F5 and F9.
+  {kVK_F3, SPEECH_PICKS, 0, "F3", "NR", "NUMBER\nRECOG", GROUP_GLOBAL,
+   LIT_GLOBAL_FLAG, GLOBAL_SPEECH_PICKS, NOLABEL, 0, 4, 1},
   {kVK_F4, F4, 0, "F4", "P", "PULSE", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_DUCKED,
    NOLABEL, 0, 5, 1},
   {kVK_F5, F5, 0, "F5", "DS", "DRUM\nSOME", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
@@ -99,12 +104,12 @@ static const Key KEYS[] = {
    FLAG_AIR_LOCKED, NOLABEL, 0, 7, 1},
   {kVK_F7, F7, 0, "F7", "AF", "FOLLOW\nAIR", GROUP_MODIFIER, LIT_EP_FLAG,
    FLAG_FOLLOWS_AIR, NOLABEL, 0, 8, 1},
-  // Speech recognition: Drum Some, with a spoken number choosing the chord
-  // instead of the feet, and spoken commands for the rest (speech.h).
-  // F8 used to arm three-digit root-note entry, which the status bar's note
-  // picker does now, so it sends its own pseudo-note rather than F8's.
-  {kVK_F8, SPEECH_PICKS, 0, "F8", "SR", "SPEECH\nRECOG", GROUP_GLOBAL,
-   LIT_GLOBAL_FLAG, GLOBAL_SPEECH_PICKS, NOLABEL, 0, 9, 1},
+  // Speech recognition: spoken commands, "press foot bass" and the like
+  // (speech.h), on or off whatever is choosing the chord.  F8 used to arm
+  // three-digit root-note entry, which the status bar's note picker does now,
+  // so it sends its own pseudo-note rather than F8's.
+  {kVK_F8, SPEECH_COMMANDS, 0, "F8", "SR", "SPEECH\nRECOG", GROUP_GLOBAL,
+   LIT_GLOBAL_FLAG, GLOBAL_SPEECH_COMMANDS, NOLABEL, 0, 9, 1},
   {kVK_F9, F9, 0, "F9", "DCN", "DRUM\nCHOOSES", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_DRUM_CHOOSES, NOLABEL, 0, 10, 1},
   {kVK_F10, F10, 0, "F10", "AADD", "ALL\nDOWN", GROUP_GLOBAL, LIT_GLOBAL_FLAG,

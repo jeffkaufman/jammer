@@ -94,9 +94,11 @@
 #define DOWN (112)
 #define RIGHT (113)
 #define TAB (114)
-// Not a key kbd.py has: the Mac's F8 sends this to switch speech to
-// choosing the notes.  F8 itself still arms root-note entry on the Pi.  127
+// Not keys kbd.py has: the Mac's F3 sends SPEECH_PICKS to switch spoken
+// numbers to choosing the chord, and its F8 SPEECH_COMMANDS to switch spoken
+// commands on -- F8 itself still arms root-note entry on the Pi.  Up here
 // because the values past TAB are the lowercase letters, which are taken.
+#define SPEECH_COMMANDS (126)
 #define SPEECH_PICKS (127)
 
 #define MODE_MAJOR 1
@@ -401,12 +403,16 @@ bool jig_time;
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
 bool drum_chooses_some_notes;
-// Drum Some with speech choosing instead of the feet: a spoken Nashville
+// Drum Some with speech choosing instead of the feet (F3): a spoken Nashville
 // number picks the chord (nashville_picks_chord, from speech.h), and pedals
 // 1, 3 and 4 go back to only keeping time.  drum_chooses_some_notes stays on
 // underneath, since everything downstream of the choice is Drum Some's.
 // Speech is Mac-only, so on the Pi nothing ever sets this.
 bool speech_chooses_notes;
+// Spoken commands (F8): "press foot bass", "change key to B flat".  Separate
+// from the numbers, so either can be on without the other.  Not musical
+// state, so a reset leaves it alone.
+bool speech_commands_on;
 int musical_mode;
 int most_recent_drum_pedal;
 uint64_t most_recent_choosy_drum_ts;
@@ -1979,6 +1985,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     if (drum_chooses_some_notes) {
       most_recent_drum_pedal = MIDI_PEDAL_3;
     }
+    return;
+  case SPEECH_COMMANDS:
+    speech_commands_on = !speech_commands_on;
     return;
   case SPEECH_PICKS:
     speech_chooses_notes = !speech_chooses_notes;
