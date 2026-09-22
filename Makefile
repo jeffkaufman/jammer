@@ -52,7 +52,8 @@ SOUNDFONT := FluidR3_GM.sf2
 SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h \
-            jammermidilib.h voices.h common.h whistle.h whistleinput.h
+            jammermidilib.h voices.h common.h whistle.h whistleinput.h \
+            whistlenote.h speech.h speechwords.h Info.plist
 
 jammer-mac: $(MAC_SRCS) $(WHISTLE_OBJS)
 	@test -n "$(FLUIDSYNTH)" || \
@@ -62,6 +63,8 @@ jammer-mac: $(MAC_SRCS) $(WHISTLE_OBJS)
 	  -I$(WHISTLE_DIR) \
 	  -framework Cocoa -framework CoreMIDI -framework Carbon -framework IOKit \
 	  -framework AudioToolbox -framework CoreAudio \
+	  -framework Speech -framework AVFoundation \
+	  -Wl,-sectcreate,__TEXT,__info_plist,Info.plist \
 	  -fobjc-arc -std=gnu11 -Wall -O2
 
 $(SOUNDFONT):
@@ -78,26 +81,27 @@ $(SOUNDFONT):
 soundfont: $(SOUNDFONT)
 
 # Run straight out of the source directory.
-run-mac: jammer-mac $(SOUNDFONT)
+run-mac: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
 	./jammer-mac
 
 # Jammer.app is self-contained: it carries the soundfont and its own copies of
 # libfluidsynth and everything that links against, so it runs on a Mac with no
 # homebrew installed.
 APP := Jammer.app
-app: jammer-mac $(SOUNDFONT)
+app: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources \
 	         $(APP)/Contents/Frameworks
 	cp jammer-mac $(APP)/Contents/MacOS/jammer
-	cp $(SOUNDFONT) $(APP)/Contents/Resources/
+	cp $(SOUNDFONT) $(SPEECH_MODEL) $(APP)/Contents/Resources/
 	cp Info.plist $(APP)/Contents/
 	./vendor-dylibs.sh $(APP)
 	codesign --force --deep --sign - $(APP)
 	@echo "built $(APP)"
 
 clean-mac:
-	rm -rf jammer-mac $(APP) audition pads kitlevels whistlelevels whistle-build
+	rm -rf jammer-mac $(APP) audition pads speechphrases speechmodel \
+	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
 audition: audition.c macapi.h common.h
@@ -107,6 +111,23 @@ audition: audition.c macapi.h common.h
 	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
 	  -framework CoreFoundation \
 	  -std=gnu11 -Wall -O2
+
+# The speech recognizer's dictionary: every phrase it should expect, printed
+# from the jammer's own tables, made into training data for a custom language
+# model.  See speechmodel.swift.
+speechphrases: speechphrases.c $(MAC_SRCS) $(WHISTLE_OBJS)
+	clang speechphrases.c $(WHISTLE_OBJS) -o speechphrases \
+	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
+	  -I$(WHISTLE_DIR) \
+	  -framework Carbon -framework IOKit \
+	  -framework AudioToolbox -framework CoreAudio -std=gnu11 -Wall -w
+
+speechmodel: speechmodel.swift
+	swiftc -O speechmodel.swift -o speechmodel
+
+SPEECH_MODEL := speech-model.bin
+$(SPEECH_MODEL): speechphrases speechmodel
+	./speechphrases | ./speechmodel $(SPEECH_MODEL)
 
 # Hear pads as the drone bass and drone chord would play them; see the top
 # of pads.c.

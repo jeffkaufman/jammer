@@ -88,10 +88,10 @@ static const Key KEYS[] = {
    NOLABEL, 0, 0, 1.5},
   {kVK_F1, F1, 0, "F1", "ER", "CLEAR\nENDPT", GROUP_MODIFIER, LIT_NEVER, 0,
    NOLABEL, 0, 2, 1},
-  {kVK_F2, F2, 0, "F2", "CH", "PAN", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_PAN,
+  {kVK_F2, F2, 0, "F2", "CH", "CHANNEL\nSWAP", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_PAN,
    NOLABEL, 0, 3, 1},
   {-1, 0, 0, "F3", FILLER, 0, 4, 1},
-  {kVK_F4, F4, 0, "F4", "P", "DUCK", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_DUCKED,
+  {kVK_F4, F4, 0, "F4", "P", "PULSE", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_DUCKED,
    NOLABEL, 0, 5, 1},
   {kVK_F5, F5, 0, "F5", "DS", "DRUM\nSOME", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_DRUM_CHOOSES_SOME, NOLABEL, 0, 6, 1},
@@ -102,9 +102,9 @@ static const Key KEYS[] = {
   // Drum Some, with a whistled note choosing the chord instead of the feet.
   // F8 used to arm three-digit root-note entry, which the status bar's note
   // picker does now, so it sends its own pseudo-note rather than F8's.
-  {kVK_F8, WHISTLE_PICKS, 0, "F8", NULL, "WHSTL\nPICKS", GROUP_GLOBAL,
+  {kVK_F8, WHISTLE_PICKS, 0, "F8", NULL, "SPEECH\nRECOG", GROUP_GLOBAL,
    LIT_GLOBAL_FLAG, GLOBAL_WHISTLE_PICKS, NOLABEL, 0, 9, 1},
-  {kVK_F9, F9, 0, "F9", "DCN", "DRUM\nPICKS", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
+  {kVK_F9, F9, 0, "F9", "DCN", "DRUM\nCHOOSES", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_DRUM_CHOOSES, NOLABEL, 0, 10, 1},
   {kVK_F10, F10, 0, "F10", "AADD", "ALL\nDOWN", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_ALL_DRUMS_DOWNBEAT, NOLABEL, 0, 11, 1},
@@ -117,15 +117,15 @@ static const Key KEYS[] = {
   // nothing to handle_keypad -- it makes its own sound rather than playing a
   // fluidsynth channel -- so its note is 0 and keypad.h dispatches it by its
   // LIT_WHISTLE_ON marker instead.  Shift selects it, as with an endpoint.
-  {kVK_ANSI_1, 0, 0, "1", "WH", "Whistle", GROUP_WHISTLE, LIT_WHISTLE_ON, 0,
+  {kVK_ANSI_1, 0, 0, "1", "WH", "Whistle\nBass", GROUP_WHISTLE, LIT_WHISTLE_ON, 0,
    NOLABEL, 1, 1, 1},
   // Two more foot basses, cleared to different rhythmic treatments so they
   // can run alongside the original -- see clear_footbass_2 / _3.  Toggles and
   // selects like any other endpoint, on the green of the qwerty row rather
   // than the whistle's pink, because that is what they are.
-  {kVK_ANSI_2, 's', 't', "2", "FB2", "Foot\nBass 2", GROUP_TOGGLE, LIT_EP_ON,
+  {kVK_ANSI_2, 's', 't', "2", "FB2", "Bounce\nBass", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_FOOTBASS_2, NOLABEL, 1, 2, 1},
-  {kVK_ANSI_3, 'u', 'v', "3", "FB3", "Foot\nBass 3", GROUP_TOGGLE, LIT_EP_ON,
+  {kVK_ANSI_3, 'u', 'v', "3", "FB3", "Skip\nBass", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_FOOTBASS_3, NOLABEL, 1, 3, 1},
   {-1, 0, 0, "4", FILLER, 1, 4, 1},
   {-1, 0, 0, "5", FILLER, 1, 5, 1},
@@ -133,9 +133,9 @@ static const Key KEYS[] = {
   {-1, 0, 0, "7", FILLER, 1, 7, 1},
   // A second drone bass and chord, for layering two pads.  They sit over I
   // and O, where the first pair are.
-  {kVK_ANSI_8, 'w', 'x', "8", "Db2", "Drone\nBass 2", GROUP_TOGGLE, LIT_EP_ON,
+  {kVK_ANSI_8, 'w', 'x', "8", "Db2", "Pad\nBass", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_DRONE_BASS_2, NOLABEL, 1, 8, 1},
-  {kVK_ANSI_9, 'y', 'z', "9", "Dc2", "Drone\nChord 2", GROUP_TOGGLE,
+  {kVK_ANSI_9, 'y', 'z', "9", "Dc2", "Pad\nChord", GROUP_TOGGLE,
    LIT_EP_ON, ENDPOINT_DRONE_CHORD_2, NOLABEL, 1, 9, 1},
   {kVK_ANSI_0, '0', 0, "0", "J/R", "JIG", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_JIG, NOLABEL, 1, 10, 1},
@@ -147,19 +147,19 @@ static const Key KEYS[] = {
   {-1, 0, 0, "del", FILLER, 1, 13, 2},
 
   // ---- qwerty row: turn endpoints on and off, shift to select one ---------
-  {kVK_Tab, TAB, '`', "tab", "d", "Drum", GROUP_TOGGLE, LIT_EP_ON,
+  {kVK_Tab, TAB, '`', "tab", "d", "Drum\nKit", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_DRUM, NOLABEL, 2, 0, 1.5},
   {kVK_ANSI_Q, 'Q', '1', "Q", "JH", "Jaw\nharp", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_JAWHARP, NOLABEL, 2, 1.5, 1},
   {kVK_ANSI_W, 'W', '2', "W", "FB", "Foot\nBass", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_FOOTBASS, NOLABEL, 2, 2.5, 1},
-  {kVK_ANSI_E, 'E', '3', "E", "ARP", "Arp", GROUP_TOGGLE, LIT_EP_ON,
+  {kVK_ANSI_E, 'E', '3', "E", "ARP", "Arpeg\ngiator", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_ARP, NOLABEL, 2, 3.5, 1},
   {kVK_ANSI_R, 'R', '4', "R", "FX", "Flex", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_FLEX, NOLABEL, 2, 4.5, 1},
   {kVK_ANSI_T, 'T', '5', "T", "L", "Low", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_LOW, NOLABEL, 2, 5.5, 1},
-  {kVK_ANSI_Y, 'Y', '6', "Y", "H", "Hi", GROUP_TOGGLE, LIT_EP_ON,
+  {kVK_ANSI_Y, 'Y', '6', "Y", "H", "Upper", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_HI, NOLABEL, 2, 6.5, 1},
   {kVK_ANSI_U, 'U', '7', "U", "Ov", "Over\nlay", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_OVERLAY, NOLABEL, 2, 7.5, 1},
@@ -234,7 +234,7 @@ static const Key KEYS[] = {
   {-1, 0, 0, "space", FILLER, 5, 4.25, 5},
   {-1, 0, 0, "cmd", FILLER, 5, 9.25, 1.25},
   {-1, 0, 0, "opt", FILLER, 5, 10.5, 0.75},
-  {kVK_LeftArrow, LEFT, 0, "←", NULL, "MIXO", GROUP_GLOBAL, LIT_MODE,
+  {kVK_LeftArrow, LEFT, 0, "←", NULL, "MIXO\nLYDIAN", GROUP_GLOBAL, LIT_MODE,
    MODE_MIXO, NOLABEL, 5, 11.25, 1.25},
   {kVK_UpArrow, UP, 0, "↑", NULL, "MAJOR", GROUP_GLOBAL, LIT_MODE,
    MODE_MAJOR, NOLABEL, 5, 12.5, 1.25, 0.5},
@@ -255,16 +255,16 @@ static const char* ENDPOINT_NAMES[N_ENDPOINTS] = {
   "Drone Bass",  // ENDPOINT_DRONE_BASS
   "Drone Chord", // ENDPOINT_DRONE_CHORD
   "Foot Bass",   // ENDPOINT_FOOTBASS
-  "Arp",         // ENDPOINT_ARP
+  "Arpeggiator", // ENDPOINT_ARP
   "Flex",        // ENDPOINT_FLEX
   "Low",         // ENDPOINT_LOW
-  "Hi",          // ENDPOINT_HI
+  "Upper",       // ENDPOINT_HI
   "Overlay",     // ENDPOINT_OVERLAY
-  "Drum",        // ENDPOINT_DRUM
-  "Foot Bass 2", // ENDPOINT_FOOTBASS_2
-  "Foot Bass 3", // ENDPOINT_FOOTBASS_3
-  "Drone Bass 2",  // ENDPOINT_DRONE_BASS_2
-  "Drone Chord 2", // ENDPOINT_DRONE_CHORD_2
+  "Drum Kit",    // ENDPOINT_DRUM
+  "Bounce Bass", // ENDPOINT_FOOTBASS_2
+  "Skip Bass",   // ENDPOINT_FOOTBASS_3
+  "Pad Bass",      // ENDPOINT_DRONE_BASS_2
+  "Pad Chord",     // ENDPOINT_DRONE_CHORD_2
 };
 
 #endif

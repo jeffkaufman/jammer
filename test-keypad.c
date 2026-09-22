@@ -11,6 +11,8 @@
 #include "jammermidilib.h"
 #include "voices.h"
 #include "whistle.h"
+#include "speechwords.h"
+#include "speechgate.h"
 #include "keylayout.h"
 #include "keypad.h"
 
@@ -806,6 +808,394 @@ static void test_whistle_picks() {
         "escape should end the whistle choosing");
 }
 
+static SwAction next_action(const char* const* words, int n, int* consumed,
+                            bool settled);
+
+// Spoken Nashville numbers: which words count, acting on a transcription
+// that revises itself, and the chord each number gives.
+static void test_nashville_numbers() {
+  CHECK(nw_number_for_word("Four") == 4 && nw_number_for_word("seven.") == 7 &&
+        nw_number_for_word("1") == 1 && nw_number_for_word("SIX") == 6,
+        "number words and digits should count");
+  CHECK(!nw_number_for_word("for") && !nw_number_for_word("to") &&
+        !nw_number_for_word("8") && !nw_number_for_word("eleven") &&
+        !nw_number_for_word(""), "those shouldn't count");
+
+  // "go to" then revised to "go two": the revision counts, once.
+  static char names[256][SW_NAME_MAX];
+  static int keys[256];
+  int n_names = key_spoken_names(names, keys, 256);
+  int consumed = 0;
+  const char* first[] = {"go", "to"};
+  CHECK(next_action(first, 2, &consumed, false).kind == SW_NONE,
+        "'to' isn't a number");
+  const char* revised[] = {"go", "two"};
+  SwAction a = next_action(revised, 2, &consumed, false);
+  CHECK(a.kind == SW_NUMBER && a.value == 2, "the revision to 'two'");
+  CHECK(next_action(revised, 2, &consumed, false).kind == SW_NONE,
+        "acted on twice");
+  const char* more[] = {"go", "two", "and", "five", "four"};
+  a = next_action(more, 5, &consumed, false);
+  SwAction b = next_action(more, 5, &consumed, false);
+  CHECK(a.value == 5 && b.value == 4 &&
+        next_action(more, 5, &consumed, false).kind == SW_NONE,
+        "later numbers should each come once, in order");
+  (void)n_names;
+}
+
+// Runs the parser against the buttons as they're named right now.
+static SwAction next_action(const char* const* words, int n, int* consumed,
+                            bool settled) {
+  static char names[256][SW_NAME_MAX];
+  static int keys[256];
+  int n_names = key_spoken_names(names, keys, 256);
+  SwVocab buttons = {(const char (*)[SW_NAME_MAX])names, keys, n_names};
+  SwVocab modes = sw_mode_vocab(MODE_MAJOR, MODE_MINOR, MODE_MIXO,
+                                MODE_BETH_COHENS);
+  return sw_next_action(words, n, consumed, &buttons, &modes, settled);
+}
+
+// The whole of what a phrase does, settled, as "press <cap>" / "select <cap>"
+// / "<number>" separated by spaces, for comparing in one go.
+static const char* phrase(const char* const* words, int n, bool settled) {
+  static char out[256];
+  out[0] = '\0';
+  int consumed = 0;
+  SwAction a;
+  while ((a = next_action(words, n, &consumed, settled)).kind != SW_NONE) {
+    char one[32];
+    if (a.kind == SW_NUMBER) {
+      snprintf(one, sizeof(one), "%d", a.value);
+    } else if (a.kind == SW_KEY || a.kind == SW_MODE) {
+      snprintf(one, sizeof(one), "%s=%d", a.kind == SW_KEY ? "key" : "mode",
+               a.value);
+    } else {
+      snprintf(one, sizeof(one), "%s %s",
+               a.kind == SW_PRESS ? "press" : "select", KEYS[a.value].cap);
+    }
+    if (out[0]) strcat(out, " ");
+    strcat(out, one);
+  }
+  return out;
+}
+
+// "press <button>": the keyword, the names, and waiting for a name that
+// could still grow.
+static void test_spoken_presses() {
+  full_reset();
+  whistle_reset();
+
+  // Every key that does something has a name.
+  static char names[256][SW_NAME_MAX];
+  static int keys[256];
+  int n = key_spoken_names(names, keys, 256);
+  for (int i = 0; i < N_KEYS; i++) {
+    if (!KEYS[i].label) continue;
+    bool named = false;
+    for (int k = 0; k < n; k++) if (keys[k] == i) named = true;
+    CHECK(named, "key %s has no spoken name", KEYS[i].cap);
+  }
+
+  // And in no state is one key's name the same as another's, or the start of
+  // it: a name that's the start of another has to wait to see whether it's
+  // going to grow, and saying the longer one with a pause in it presses the
+  // shorter.
+  for (int state = 0; state < 4; state++) {
+    static const char* STATES[] = {"flex", "drum", "drone", "whistle"};
+    whistle_reset();
+    c->selected_endpoint = state == 1 ? ENDPOINT_DRUM :
+                           state == 2 ? ENDPOINT_DRONE_BASS : ENDPOINT_FLEX;
+    if (state == 3) whistle_selected = true;
+    n = key_spoken_names(names, keys, 256);
+    for (int j = 0; j < n; j++) {
+      for (int k = 0; k < n; k++) {
+        if (j == k || keys[j] == keys[k]) continue;
+        CHECK(strncmp(names[j], names[k], strlen(names[j])) != 0,
+              "with %s selected, %s's '%s' is the start of %s's '%s'",
+              STATES[state], KEYS[keys[j]].cap, names[j], KEYS[keys[k]].cap,
+              names[k]);
+      }
+    }
+  }
+  whistle_reset();
+  c->selected_endpoint = ENDPOINT_FLEX;
+
+#define PHRASE(settled, ...) \
+  phrase((const char*[]){__VA_ARGS__}, \
+         (int)(sizeof((const char*[]){__VA_ARGS__}) / sizeof(char*)), settled)
+
+  CHECK(strcmp(PHRASE(true, "foot", "bass"), "") == 0,
+        "a name without 'press' shouldn't press anything");
+  CHECK(strcmp(PHRASE(false, "press", "foot", "bass"), "press W") == 0,
+        "'press foot bass' needn't wait: nothing longer starts that way");
+  CHECK(strcmp(PHRASE(false, "press", "bounce", "bass", "two"),
+               "press 2 2") == 0,
+        "'press bounce bass' then a separate two");
+  CHECK(strcmp(PHRASE(false, "Press", "skip", "bass"), "press 3") == 0,
+        "skip bass");
+  CHECK(strcmp(PHRASE(false, "press", "drum", "kit", "four"),
+               "press tab 4") == 0, "'press drum kit four'");
+  CHECK(strcmp(PHRASE(false, "press", "drum"), "") == 0,
+        "'press drum' is the start of three names; wait");
+  CHECK(strcmp(PHRASE(true, "press", "drum"), "") == 0,
+        "and 'drum' on its own isn't any of them");
+  CHECK(strcmp(PHRASE(false, "press", "drum", "chooses", "notes"),
+               "press F9") == 0, "drum chooses notes");
+  CHECK(strcmp(PHRASE(true, "press", "drum", "chooses"), "") == 0,
+        "the cut-short label isn't a name of its own");
+  CHECK(strcmp(PHRASE(false, "press", "speech", "recognition"),
+               "press F8") == 0, "speech recognition");
+  CHECK(strcmp(PHRASE(false, "press", "whistle", "bass"), "press 1") == 0,
+        "whistle bass");
+  CHECK(strcmp(PHRASE(false, "press", "pad", "chord"), "press 9") == 0,
+        "pad chord");
+  CHECK(strcmp(PHRASE(false, "press", "channel", "swap"), "press F2") == 0,
+        "channel swap");
+  CHECK(strcmp(PHRASE(false, "press", "pulse"), "press F4") == 0, "pulse");
+  CHECK(strcmp(PHRASE(false, "press", "arpeggiator"), "press E") == 0,
+        "arpeggiator");
+  CHECK(strcmp(PHRASE(false, "press", "upper"), "press Y") == 0, "upper");
+  CHECK(strcmp(PHRASE(false, "press", "mixolydian"), "press ←") == 0,
+        "mixolydian");
+  CHECK(strcmp(PHRASE(true, "press", "banana", "four"), "4") == 0,
+        "a keyword that names nothing should be dropped");
+  CHECK(strcmp(PHRASE(true, "press", "octave", "up"), "press ]") == 0,
+        "aliases should work");
+  CHECK(strcmp(PHRASE(true, "select", "skip", "bass"), "select 3") == 0,
+        "select");
+  CHECK(strcmp(PHRASE(true, "press", "warm", "pad"), "") == 0,
+        "warm pad isn't on any key unless a drone is selected");
+
+  // The recognizer hands words over slowly: "press" can sit alone past the
+  // settle time before "foot bass" arrives, and mustn't be thrown away.
+  {
+    int consumed = 0;
+    const char* early[] = {"press"};
+    CHECK(next_action(early, 1, &consumed, true).kind == SW_NONE &&
+          consumed == 0, "a lone 'press' should keep waiting, even settled");
+    const char* later[] = {"press", "foot", "bass"};
+    SwAction a = next_action(later, 3, &consumed, true);
+    CHECK(a.kind == SW_PRESS && a.value == key_for_cap("W") - KEYS,
+          "'foot bass' arriving after a settled 'press' should press W");
+    const char* half[] = {"change", "key"};
+    consumed = 0;
+    CHECK(next_action(half, 2, &consumed, true).kind == SW_NONE &&
+          consumed == 0, "'change key' should wait for its key");
+  }
+
+  // A first guess that fits no name is revised soon after, so while the
+  // speaker is still going the "press" waits rather than being dropped.
+  {
+    int consumed = 0;
+    const char* guess[] = {"press", "our", "page"};
+    CHECK(next_action(guess, 3, &consumed, false).kind == SW_NONE &&
+          consumed == 0, "'press our page' should wait for a revision");
+    const char* revised[] = {"press", "arpeggiator"};
+    SwAction a = next_action(revised, 2, &consumed, false);
+    CHECK(a.kind == SW_PRESS && a.value == key_for_cap("E") - KEYS,
+          "the revision to 'press arpeggiator' should press E");
+    char title[48];
+    key_spoken_title(key_for_cap("E"), title, sizeof(title));
+    CHECK(strcmp(title, "arpeggiator") == 0, "E should be called '%s'",
+          title);
+  }
+
+  // After a lead-in, sound-alikes count; bare, they don't.
+  CHECK(strcmp(PHRASE(false, "press", "foot", "base"), "press W") == 0,
+        "'foot base' should be foot bass");
+  CHECK(strcmp(PHRASE(false, "pressed", "pad", "cord"), "press 9") == 0,
+        "'pressed pad cord' should be pad chord");
+  CHECK(strcmp(PHRASE(true, "for"), "") == 0,
+        "a bare 'for' mustn't pick the IV");
+  CHECK(strcmp(PHRASE(false, "set", "mode", "to", "minor", "now"),
+               "mode=3") == 0, "'set' works like 'change'");
+  CHECK(strcmp(PHRASE(true, "set", "key", "too", "F", "sharp"),
+               "key=6") == 0, "set key too F sharp");
+
+  // Changing key and mode.
+  CHECK(strcmp(PHRASE(false, "change", "key", "to", "A", "now"),
+               "key=9") == 0, "change key to A");
+  CHECK(strcmp(PHRASE(false, "change", "key", "to", "B"), "") == 0,
+        "'B' could still be 'B flat'; wait");
+  CHECK(strcmp(PHRASE(true, "change", "key", "to", "B"), "key=11") == 0,
+        "and settled, it's B");
+  CHECK(strcmp(PHRASE(false, "change", "key", "to", "B", "flat"),
+               "key=10") == 0, "B flat");
+  CHECK(strcmp(PHRASE(true, "change", "key", "to", "B♭"), "key=10") == 0,
+        "B♭ as written");
+  CHECK(strcmp(PHRASE(true, "change", "key", "two", "Bb"), "key=10") == 0,
+        "Bb, with 'to' heard as 'two'");
+  CHECK(strcmp(PHRASE(true, "change", "key", "to", "F#"), "key=6") == 0,
+        "F#");
+  CHECK(strcmp(PHRASE(true, "change", "key", "to", "see", "sharp"),
+               "key=1") == 0, "a sound-alike letter");
+  CHECK(strcmp(PHRASE(true, "change", "key", "G"), "key=7") == 0,
+        "'to' is optional");
+  char want[32];
+  snprintf(want, sizeof(want), "mode=%d", MODE_MINOR);
+  CHECK(strcmp(PHRASE(false, "change", "mode", "to", "minor"), want) == 0,
+        "change mode to minor");
+  snprintf(want, sizeof(want), "mode=%d", MODE_BETH_COHENS);
+  CHECK(strcmp(PHRASE(false, "change", "mode", "to", "freygish"), want) == 0,
+        "change mode to freygish");
+  CHECK(strcmp(PHRASE(true, "change", "the", "key", "to", "A"), "") == 0,
+        "not quite the phrase: nothing");
+  CHECK(strcmp(PHRASE(true, "change", "key", "to", "banana", "five"),
+               "5") == 0, "a key that names nothing, then a number");
+
+  // The voice keys answer to whatever they show.
+  select_ep("I");
+  CHECK(strcmp(PHRASE(true, "press", "warm", "pad"), "press Z") == 0,
+        "with a drone selected, warm pad is on Z");
+  CHECK(strcmp(PHRASE(true, "press", "vox", "lead"), "") == 0,
+        "and vox lead isn't anywhere");
+  CHECK(strcmp(PHRASE(true, "press", "saw", "lead"), "") == 0,
+        "and B, N and M do nothing, so don't answer");
+  select_ep("tab");
+  CHECK(strcmp(PHRASE(true, "press", "room", "two"), "press C") == 0,
+        "with the drum selected, room 2 is on C");
+  strike("1", true);
+  CHECK(strcmp(PHRASE(true, "press", "reese"), "press D") == 0,
+        "with the whistle selected, reese is on D");
+  CHECK(strcmp(PHRASE(true, "press", "frequency", "modulator"), "press G") == 0,
+        "frequency modulator");
+  CHECK(strcmp(PHRASE(true, "press", "sub", "fm"), "press H") == 0, "sub fm");
+  CHECK(strcmp(PHRASE(true, "press", "high", "drawbar"), "press C") == 0,
+        "high drawbar");
+  whistle_reset();
+
+  CHECK(key_selects(key_for_cap("W")) && key_selects(key_for_cap("1")) &&
+        !key_selects(key_for_cap("J")), "which keys shift-select");
+
+  // And they do what they say.
+  full_reset();
+  const char* words[] = {"change", "key", "to", "E", "flat"};
+  int consumed = 0;
+  SwAction a = next_action(words, 5, &consumed, true);
+  CHECK(a.kind == SW_KEY, "change key to E flat");
+  change_key(a.value);
+  CHECK(root_note == to_root(3) && fifth_note == to_root(10),
+        "change_key should move the root and the fifth");
+#undef PHRASE
+}
+
+// The recognizer's dictionary (all_spoken_phrases, and speechphrases.c from
+// it) only helps if what it's taught is what the matcher accepts: every
+// phrase has to be some button's name in some state, and every word given a
+// pronunciation has to be in some phrase.
+static void test_speech_dictionary() {
+  full_reset();
+  static char known[1024][SW_NAME_MAX];
+  int n_known = 0;
+  for (int state = 0; state < 4; state++) {
+    whistle_reset();
+    c->selected_endpoint = state == 1 ? ENDPOINT_DRUM :
+                           state == 2 ? ENDPOINT_DRONE_BASS : ENDPOINT_FLEX;
+    if (state == 3) whistle_selected = true;
+    static char names[256][SW_NAME_MAX];
+    static int keys[256];
+    int n = key_spoken_names(names, keys, 256);
+    for (int i = 0; i < n && n_known < 1024; i++) {
+      snprintf(known[n_known++], SW_NAME_MAX, "%s", names[i]);
+    }
+  }
+  whistle_reset();
+
+  static char phrases[512][48];
+  int n = all_spoken_phrases(phrases, 512);
+  CHECK(n > 50, "only %d phrases", n);
+  for (int i = 0; i < n; i++) {
+    char name[SW_NAME_MAX];
+    sw_name(phrases[i], name, sizeof(name));
+    bool found = false;
+    for (int k = 0; k < n_known; k++) {
+      if (strcmp(known[k], name) == 0) found = true;
+    }
+    CHECK(found, "the recognizer is taught '%s', which presses nothing",
+          phrases[i]);
+    CHECK(!strchr(phrases[i], '\n'), "'%s' has a line break", phrases[i]);
+  }
+
+  for (int p = 0; p < (int)(sizeof(SW_PRONUNCIATIONS) /
+                            sizeof(SW_PRONUNCIATIONS[0])); p++) {
+    bool used = strcmp(SW_PRONUNCIATIONS[p].word, "mixolydian") == 0 ||
+                strcmp(SW_PRONUNCIATIONS[p].word, "freygish") == 0;
+    for (int i = 0; i < n; i++) {
+      if (strstr(phrases[i], SW_PRONUNCIATIONS[p].word)) used = true;
+    }
+    CHECK(used, "'%s' has a pronunciation but isn't in any phrase",
+          SW_PRONUNCIATIONS[p].word);
+  }
+}
+
+// The gate in front of the speech recognizer: quiet comes out as silence,
+// and loud comes through with a little before it and a little after.
+static void test_speech_gate() {
+  SpeechGate g;
+  sg_init(&g, 48000);
+  g.threshold = 0.1f;  // -20dB
+  int second = 48000, w = g.window;
+  static float in[48000 * 3], out[48000 * 3 + 480];
+  // A second of room, a tenth of a second of talking, then more room.
+  for (int i = 0; i < 3 * second; i++) {
+    bool talking = i >= second && i < second + second / 10;
+    in[i] = talking ? 0.5f : 0.01f;
+  }
+  int n = sg_process(&g, in, 3 * second, out);
+  CHECK(n == 3 * second - SG_PRE_WINDOWS * w,
+        "everything but any look-ahead should be out, got %d", n);
+  CHECK(!sg_open(&g), "the gate should have closed again");
+  CHECK(sg_windows_since_loud(&g) == (3 * second - second - second / 10) / w,
+        "the last loud window is where the talking stopped");
+
+  // It comes out late, but in order: out[i] is in[i], gated.
+  int start = second, end = second + second / 10;
+  CHECK(out[start - 20 * w] == 0,
+        "room 200ms before the talking should be silent");
+  CHECK(out[start - 5 * w] == (SG_PRE_WINDOWS >= 5 ? 0.01f : 0),
+        "the 50ms just before the talking: only with enough look-ahead");
+  CHECK(out[start + 100] == 0.5f, "the talking itself should");
+  CHECK(out[end + 20 * w] == 0.01f,
+        "200ms after, the hold should still be open");
+  CHECK(out[end + 40 * w] == 0, "400ms after, it should be shut again");
+}
+
+// The chord each spoken number gives.
+static void test_nashville_chords() {
+  // The chords: the major key on the root, whatever the arrows say.
+  full_reset();
+  root_note = to_root(26);  // D
+  fifth_note = to_root(root_note + 7);
+  nashville_picks_chord(4);
+  CHECK(active_note() == root_note, "a number did something with F8 off");
+  press("F8");
+  musical_mode = MODE_MINOR;
+  struct { int number, note, type; } want[] = {
+    {1, 26, CHORD_MAJOR}, {2, 28, CHORD_MINOR}, {3, 30, CHORD_MINOR},
+    {4, 31, CHORD_MAJOR}, {5, 33, CHORD_MAJOR}, {6, 35, CHORD_MINOR},
+    {7, 25, CHORD_DIM},
+  };
+  for (int i = 0; i < 7; i++) {
+    nashville_picks_chord(want[i].number);
+    CHECK(active_note() == to_root(want[i].note) &&
+          active_chord() == to_root(want[i].note) &&
+          chord_type == want[i].type,
+          "%d should be note %d type %d, got %d type %d", want[i].number,
+          to_root(want[i].note), want[i].type, active_note(), chord_type);
+  }
+  nashville_picks_chord(8);
+  nashville_picks_chord(0);
+  CHECK(active_note() == to_root(25), "out-of-range numbers did something");
+
+  // Numbers and whistled notes take turns.
+  musical_mode = MODE_MAJOR;
+  whistle_picks_note(81);  // A
+  CHECK(active_note() == to_root(33), "whistling after a number didn't work");
+  nashville_picks_chord(2);
+  CHECK(active_note() == to_root(28), "a number after whistling didn't work");
+  press("esc");
+}
+
 int main() {
   jml_setup();
   // The whistle's key handling needs its state and its voice table, but no
@@ -827,6 +1217,11 @@ int main() {
   test_drones();
   test_whistle();
   test_whistle_picks();
+  test_nashville_numbers();
+  test_spoken_presses();
+  test_nashville_chords();
+  test_speech_dictionary();
+  test_speech_gate();
 
   if (failures) {
     printf("\n%d failure(s)\n", failures);

@@ -129,11 +129,11 @@ The window draws the computer keyboard, lit up to show current state.  Each
 key carries its letter in the corner, the abbreviation from the paper tab on
 the physical keyboard in the middle, and what it actually does underneath:
 
-* **`2` and `3`** (green) are two more foot basses, on top of the one on `W`.
-  Same bass line, different rhythmic treatment, so they can run together --
-  see below.
-* **`8` and `9`** (green) are a second drone bass and drone chord, over the
-  first pair on `I` and `O`, for layering two pads.
+* **`2` and `3`** (green) are Bounce Bass and Skip Bass: two more foot
+  basses, on top of the one on `W`.  Same bass line, different rhythmic
+  treatment, so they can run together -- see below.
+* **`8` and `9`** (green) are Pad Bass and Pad Chord: a second drone bass and
+  drone chord, over the first pair on `I` and `O`, for layering two pads.
 * **QWERTY row** (green) turns endpoints on and off.  Hold shift to pick which
   endpoint the modifier keys act on instead of toggling it; the selected one
   gets a yellow outline whether or not it's switched on.
@@ -171,9 +171,72 @@ weighted to the middle.  "Clear" and "above the background" are the
 whistle's own gate, in the Whistle menu; the whistle's microphone has to be
 set up, but the whistle bass doesn't have to be on.
 
+You can also say a Nashville number, one to seven, into the same microphone:
+the chord goes straight to that degree of the major key on the root -- 1 I,
+2 ii, 3 iii, 4 IV, 5 V, 6 vi, 7 vii° -- whatever the arrow keys say.  Only the
+words and digits count, not "to" or "for", so talking to the room doesn't
+change chords.  It's Apple's on-device speech recognition (`speech.h`); the
+first time `F8` goes on, macOS asks permission.  So that a bare `jammer-mac`
+can ask, `Info.plist` is linked into it, which also means running it from a
+terminal now shares `Jammer.app`'s saved settings.
+
+Any button can be pressed the same way, by saying "press" and then its name:
+"press foot bass", "press drum some", "press octave up".  "select" instead of
+"press" is shift-click, for the buttons where that means something.  "change
+key to B flat" and "change mode to minor" do what the key picker and the
+arrow keys do.  Without the lead-in words a name does nothing, so talking to
+the room is safe.
+
+A button's name is what's written on it right now, so the voice keys answer to
+the drum kits, the drones' pads or the whistle's voices when those are showing
+("press warm pad" with a drone selected).  Labels that are abbreviations,
+symbols, or cut short to fit also answer to spelled-out names -- "volume up",
+"octave down", "clear endpoint", "electric piano", "speech recognition" (F8),
+"drum chooses notes" (F9), "frequency modulator" -- listed in
+`SPOKEN_ALIASES` in `keypad.h`.  Spaces and number words don't matter: "room
+two" is Room 2.
+
+No button's name is the start of another's, in any selection state, and a
+test holds that: a name that's the start of a longer one has to wait to see
+if it's going to grow, and saying the longer one with a pause in the middle
+would press the shorter.  Keys and modes do still have that shape -- "change
+key to B" might be heading for "B flat" -- so those wait for 0.7s of quiet.
+
+The recognizer is given a dictionary of every phrase it should expect, so
+that "press foot bass" beats "press foot base" and "arpeggiator" beats "or
+educator".  `speechphrases` prints the phrases from the jammer's own tables,
+so renaming a button renames it for the recognizer too; `speechmodel.swift`
+(Swift, since that's the only way Apple offers) turns them into training data,
+`speech-model.bin`, with pronunciations for the unusual words from
+`SW_PRONUNCIATIONS` in `speechwords.h`; and the app compiles it into a custom
+language model at startup, cached under `~/Library/Caches/net.jefftk.jammer`.
+`make run-mac` and `make app` build it.  The same phrases go to the
+recognizer as hint words too.  On top of that, once "press" or "change key to"
+has been said, sound-alikes count -- "base" for "bass", "for" for 4 -- though
+never for a bare number.  The speech row says whether it's listening with the
+dictionary, and shows the words it's hearing.
+
+Speaking is played, not just said.  Only what's loud enough to be said right
+into the microphone reaches the recognizer -- the gate, set from the Speech
+Recognition menu and shown as a white tick on the speech row's meter, which
+brightens while it's open.  It starts strict, at -20dBFS peak, so a caller
+across the room doesn't count.  And whatever's heard takes effect on the beat
+two beats after you stop talking: say "four" ending on the one and the IV
+comes in on the three, however long the recognizer took.  On the beat itself
+-- each pedal hit is a beat, and the change is made inside the nearest one,
+just before its notes, since arriving a few milliseconds after it would only
+be heard on the next note.  Heard too late for its beat -- recognition
+sometimes takes longer than two beats -- it goes on the next beat instead: a
+beat late, but still on a beat.  With the pedals stopped it's timed from the
+last tempo, and with no tempo at all it's two beats at 116 BPM after you
+stopped.  Talk
+again before then and it waits for you to finish.  The speech row shows a
+change that's waiting with "…", and jammer's output logs the timing of each.
+
 `F5` from here hands the choice back to the feet, and `F9` or `esc` end it.
 The note tracking is `whistlenote.h`; the snapping is
-`drum_some_pedal_for_note` in `jammermidilib.h`.
+`drum_some_pedal_for_note` in `jammermidilib.h`; the words are
+`speechwords.h` and the chords `nashville_picks_chord`.
 
 ### Building
 
@@ -273,7 +336,7 @@ doesn't know about it and neither does the Pi.
 * `1` switches it on and off.  Shift-`1` selects it, the same way shift over
   an endpoint's key selects that endpoint.
 * **While it's selected** the voice keys pick its ten voices -- Bass,
-  Octaveless, Reese, 808, FM, FM Sub, Square, Drawbar, Drawbar Hi, Accordion
+  Octaveless, Reese, 808, FM, Sub FM, Square, Drawbar, High Drawbar, Accordion
   on `A S D F G H` and `Z X C V` -- and `]`/`\` and `-`/`=` move its octave
   and its volume.  The per-endpoint flags go dark, because the endpoint they'd
   act on isn't what's on screen.  Shift over any endpoint's key hands the keys

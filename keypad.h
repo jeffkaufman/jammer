@@ -5,7 +5,7 @@
 // should be lit.  Kept apart from the Cocoa code so test-keypad.c can drive it
 // directly.
 //
-// Include after jammermidilib.h, keylayout.h and whistle.h.
+// Include after jammermidilib.h, keylayout.h, whistle.h and speechwords.h.
 
 // ---------------------------------------------------------------------------
 // Keypad: the Mac keyboard standing in for kbd.py
@@ -159,6 +159,184 @@ static int drone_voice_on_key(const Key* key) {
 static bool drone_key_is_dead(const Key* key) {
   return drone_keys_active() && key->group == GROUP_VOICE && key->label &&
     drone_voice_for_note(key->note) < 0;
+}
+
+// Strike a key, as a keypress would, minus the drawing.  Caller must hold the
+// lock.
+static void strike_key_locked(const Key* key, bool selecting) {
+  int note = (selecting && key->select_note) ? key->select_note : key->note;
+  // The whistle gets first refusal: while it is selected the voice, octave
+  // and volume keys are its, and its own on/off key never reaches
+  // handle_keypad at all.
+  if (!whistle_key(key, selecting)) {
+    // A reset is a reset.  The whistle's setup knobs are left alone -- see
+    // whistle_reset.
+    if (note == ESCAPE) whistle_reset();
+    keypad_key(note);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Spoken names
+//
+// What "press ..." matches against (see speechwords.h): each key's label as
+// it's drawn right now -- so the voice keys answer to the drum kits, the
+// drones' pads or the whistle's voices when those are what's on them -- plus
+// a spoken form for the labels that are abbreviations or symbols.
+// ---------------------------------------------------------------------------
+
+// The label a key shows right now, the way drawKey picks it, or NULL for a key
+// that does nothing at the moment.  Caller must hold the lock.
+static const char* key_current_label(const Key* key) {
+  if (!key->label) return NULL;
+  if (whistle_key_is_dead(key) || drone_key_is_dead(key)) return NULL;
+  // The whistle first: while it's selected the voice keys are its, whatever
+  // endpoint was selected before it.
+  if (whistle_selected && key->group == GROUP_VOICE) {
+    return WHISTLE_VOICES[whistle_voice_for_note(key->note)].label;
+  }
+  int drone = drone_voice_on_key(key);
+  if (drone >= 0) return DRONE_VOICES[drone].label;
+  if (c->selected_endpoint == ENDPOINT_DRUM && key->drum_label) {
+    if (key->drum_label[0] == '\0') return NULL;  // blank with the drum
+    return key->drum_label;
+  }
+  return key->label;
+}
+
+// Labels that don't say themselves: what to call them as well -- or instead,
+// for the ones whose label is mostly a symbol and says nothing once the
+// symbol's gone ("VOL−" and "VOL+" would both be "vol").
+//
+// Also for labels cut short to fit on the key: the name to say is the whole
+// thing, and the part that fits isn't a name of its own.
+//
+// And for labels split mid-word to fit, like "Arpeg\ngiator", so the
+// dictionary the recognizer is given (all_spoken_phrases) has the word and
+// not its halves.  Those match the same either way.
+static const struct { const char* label; const char* spoken; bool instead; }
+SPOKEN_ALIASES[] = {
+  {"CLEAR\nENDPT", "clear endpoint"},
+  {"SPEECH\nRECOG", "speech recognition", true},
+  {"DRUM\nCHOOSES", "drum chooses notes", true},
+  {"VOL−", "volume down", true},
+  {"VOL+", "volume up", true},
+  {"OCT−", "octave down", true},
+  {"OCT+", "octave up", true},
+  {"PRE\nUNIQ", "pre unique"},
+  {"SynBass\n2", "synth bass 2"},
+  {"SynBass\n1", "synth bass 1"},
+  {"Acou\nBass", "acoustic bass"},
+  {"E.\nPiano", "electric piano"},
+  {"Bari\nSax", "baritone sax"},
+  {"Tub\nBells", "tubular bells"},
+  {"VEL", "velocity"},
+  {"FRAYG", "freygish"},
+  {"FM", "frequency modulator", true},
+  {"Arpeg\ngiator", "arpeggiator"},
+  {"Over\nlay", "overlay"},
+  {"DOUB\nLED", "doubled"},
+  {"SHORT\nISH", "shortish"},
+  {"SHORT\nER", "shorter"},
+  {"DOWN\nBEAT", "downbeat"},
+  {"UP\nBEAT", "upbeat"},
+  {"Draw\nbar", "drawbar"},
+  {"Fret\nless", "fretless"},
+  {"Poly\nsynth", "polysynth"},
+  {"Octave\nless", "octaveless"},
+  {"Accor\ndion", "accordion"},
+  {"MIXO\nLYDIAN", "mixolydian"},
+};
+
+// A label as words to say: lower case, with the line breaks as spaces.
+static void spoken_label(const char* label, char* out, int out_size) {
+  int n = 0;
+  for (const char* p = label; *p && n < out_size - 1; p++) {
+    out[n++] = *p == '\n' ? ' ' : (char)tolower((unsigned char)*p);
+  }
+  out[n] = '\0';
+}
+
+// The phrases for one label: its aliases if it has any, since those are how
+// it's actually said, else the label itself.  Appended to out, skipping any
+// already there.
+static int add_spoken_phrases(const char* label, char (*out)[48], int n,
+                              int max) {
+  char phrases[4][48];
+  int count = 0;
+  for (int a = 0; a < (int)(sizeof(SPOKEN_ALIASES) /
+                            sizeof(SPOKEN_ALIASES[0])) && count < 4; a++) {
+    if (strcmp(SPOKEN_ALIASES[a].label, label) != 0) continue;
+    snprintf(phrases[count++], 48, "%s", SPOKEN_ALIASES[a].spoken);
+  }
+  if (count == 0) spoken_label(label, phrases[count++], 48);
+  for (int i = 0; i < count && n < max; i++) {
+    bool seen = false;
+    for (int j = 0; j < n; j++) if (strcmp(out[j], phrases[i]) == 0) seen = true;
+    if (!seen) snprintf(out[n++], 48, "%s", phrases[i]);
+  }
+  return n;
+}
+
+// What to call a key in feedback: the name it answers to right now, as said
+// ("arpeggiator", "whistle bass"), not the letter on it.  Caller must hold
+// the lock.
+static void key_spoken_title(const Key* key, char* out, int out_size) {
+  const char* label = key_current_label(key);
+  if (!label) label = key->label ? key->label : key->cap;
+  char phrases[4][48];
+  int n = add_spoken_phrases(label, phrases, 0, 4);
+  snprintf(out, out_size, "%s", n > 0 ? phrases[0] : key->cap);
+}
+
+// Every phrase any button answers to in any state -- its own label, the drum
+// kits, the drones' pads, the whistle's voices -- for teaching the speech
+// recognizer what to expect.  From the tables, not by trying each state, so
+// it needs no lock.  Returns how many.
+static int all_spoken_phrases(char (*out)[48], int max) {
+  int n = 0;
+  for (int i = 0; i < N_KEYS; i++) {
+    if (KEYS[i].label) n = add_spoken_phrases(KEYS[i].label, out, n, max);
+    if (KEYS[i].drum_label && KEYS[i].drum_label[0]) {
+      n = add_spoken_phrases(KEYS[i].drum_label, out, n, max);
+    }
+  }
+  for (int i = 0; i < N_DRONE_VOICES; i++) {
+    n = add_spoken_phrases(DRONE_VOICES[i].label, out, n, max);
+  }
+  for (int i = 0; i < N_WHISTLE_VOICES; i++) {
+    n = add_spoken_phrases(WHISTLE_VOICES[i].label, out, n, max);
+  }
+  return n;
+}
+
+// Every name any key answers to right now, normalized (sw_name), with the
+// index into KEYS each belongs to.  Returns how many.  Caller must hold the
+// lock.
+static int key_spoken_names(char (*names)[SW_NAME_MAX], int* keys, int max) {
+  int n = 0;
+  for (int i = 0; i < N_KEYS && n < max; i++) {
+    const char* label = key_current_label(&KEYS[i]);
+    if (!label) continue;
+    bool instead = false;
+    for (int a = 0; a < (int)(sizeof(SPOKEN_ALIASES) /
+                              sizeof(SPOKEN_ALIASES[0])) && n < max; a++) {
+      if (strcmp(SPOKEN_ALIASES[a].label, label) != 0) continue;
+      sw_name(SPOKEN_ALIASES[a].spoken, names[n], SW_NAME_MAX);
+      keys[n++] = i;
+      instead |= SPOKEN_ALIASES[a].instead;
+    }
+    if (instead || n >= max) continue;
+    sw_name(label, names[n], SW_NAME_MAX);
+    if (names[n][0]) keys[n++] = i;
+  }
+  return n;
+}
+
+// Whether shift-clicking this key means anything, so "select ..." can refuse
+// the keys where it would just be a click.
+static bool key_selects(const Key* key) {
+  return key->select_note || key->lit == LIT_WHISTLE_ON;
 }
 
 // ---------------------------------------------------------------------------

@@ -9,3 +9,6 @@ pads
 kitlevels
 whistle-build/
 whistlelevels
+speechphrases
+speechmodel
+speech-model.bin

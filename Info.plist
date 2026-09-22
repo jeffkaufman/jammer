@@ -18,5 +18,11 @@
        prompt. -->
   <key>NSMicrophoneUsageDescription</key>
   <string>Jammer listens to your whistling and plays it as a bass line.</string>
+  <!-- Saying a Nashville number while the whistle picks the chord.  The same
+       as the microphone: without it, asking is fatal.  The plist is also
+       linked into the bare jammer-mac binary, so running it from a terminal
+       can ask too. -->
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Jammer listens for chord numbers, one to seven, while the whistle is picking the chord.</string>
 </dict>
 </plist>

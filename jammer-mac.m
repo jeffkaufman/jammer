@@ -26,6 +26,7 @@
 #include "jammermidilib.h"
 #include "voices.h"
 #include "whistle.h"
+#include "speechwords.h"
 #include "whistleinput.h"
 #include "keylayout.h"
 #include "keypad.h"
@@ -42,6 +43,9 @@
 static pthread_mutex_t jammer_lock = PTHREAD_MUTEX_INITIALIZER;
 #define LOCK() pthread_mutex_lock(&jammer_lock)
 #define UNLOCK() pthread_mutex_unlock(&jammer_lock)
+
+// Wants the lock, so here rather than with the other includes.
+#include "speech.h"
 
 // Which device a CoreMIDI source is, passed through as the connection refCon.
 typedef enum {
@@ -112,6 +116,14 @@ typedef struct {
   double whistle_latency_ms;
   char whistle_device[WHISTLE_DEVICE_NAME_MAX];
   char whistle_error[256];
+
+  // Speech, for the whistle choosing the chord.
+  char speech_state[160];
+  char speech_heard[200];
+  char speech_action[64];
+  float speech_level;  // peak, held and decaying here
+  double speech_gate_db;
+  bool speech_gate_open;
 } Snapshot;
 
 static void take_snapshot(Snapshot* s) {
@@ -172,6 +184,16 @@ static void take_snapshot(Snapshot* s) {
            whistle_input_name);
   snprintf(s->whistle_error, sizeof(s->whistle_error), "%s",
            whistle_input_error);
+
+  snprintf(s->speech_state, sizeof(s->speech_state), "%s", speech_state);
+  snprintf(s->speech_heard, sizeof(s->speech_heard), "%s", speech_heard_text);
+  snprintf(s->speech_action, sizeof(s->speech_action), "%s",
+           speech_last_action);
+  // Held and let fall, since it's refilled 20 times a second and drawn 60.
+  s->speech_level = fmaxf(s->speech_level * 0.93f, speech_level);
+  speech_level = 0;
+  s->speech_gate_db = speech_gate_db;
+  s->speech_gate_open = speech_gate_open;
   UNLOCK();
 }
 
@@ -181,7 +203,7 @@ static void take_snapshot(Snapshot* s) {
 
 // Sized so the whole status block stays readable from a few feet back with
 // the window maximized on a laptop screen.
-#define STATUS_HEIGHT 182.0
+#define STATUS_HEIGHT 212.0
 #define KEY_GAP 4.0
 #define VIEW_PAD 14.0
 
@@ -198,6 +220,7 @@ static void take_snapshot(Snapshot* s) {
   NSRect root_note_rect;
 }
 - (void)strikeKeyAtIndex:(int)index selecting:(BOOL)selecting;
+- (void)flashKeyAtIndex:(int)index;
 - (int)indexForVirtualKeyCode:(int)vk;
 @end
 
@@ -254,22 +277,13 @@ static NSString* note_name(int note) {
   const Key* key = &KEYS[index];
   if (!key->label) return;
 
-  int note = (selecting && key->select_note) ? key->select_note : key->note;
-
   LOCK();
-  // The whistle gets first refusal: while it is selected the voice, octave
-  // and volume keys are its, and its own on/off key never reaches
-  // handle_keypad at all.
-  if (!whistle_key(key, selecting)) {
-    if (note == ESCAPE) {
-      // A reset is a reset.  The whistle's setup knobs are left alone -- see
-      // whistle_reset.
-      whistle_reset();
-    }
-    keypad_key(note);
-  }
+  strike_key_locked(key, selecting);
   UNLOCK();
+  [self flashKeyAtIndex:index];
+}
 
+- (void)flashKeyAtIndex:(int)index {
   flash_time[index] = [NSDate timeIntervalSinceReferenceDate];
   [self setNeedsDisplay:YES];
 }
@@ -340,7 +354,10 @@ static NSString* note_name(int note) {
   bool lit = snapshot.lit[i];
   // A key with no label at all is filler; a voice key whose drum label is
   // empty does nothing while the drum is selected.  Both draw as dead keys.
+  // Not while the whistle is selected, though: then the voice keys are its,
+  // whichever endpoint was selected before it.
   bool blank_on_drum = snapshot.selected_endpoint == ENDPOINT_DRUM &&
+                       !snapshot.whistle_selected &&
                        key->drum_label && key->drum_label[0] == '\0';
   bool unbound = (key->label == NULL) || blank_on_drum ||
                  snapshot.whistle_dead[i] || snapshot.drone_dead[i];
@@ -532,6 +549,7 @@ static NSString* note_name(int note) {
   [self drawMidiRow];
   [self drawAudioRow];
   [self drawWhistleRow];
+  [self drawSpeechRow];
 }
 
 // One entry per MIDI source, with a dot that lights when something arrives and
@@ -671,6 +689,72 @@ static NSString* note_name(int note) {
           centered:NO];
 }
 
+// Speech, for the whistle choosing the chord: whether it's listening, how
+// loud what it's listening to is, what words it's hearing, and what it last
+// did about them.  Without this a recognizer that isn't working looks the
+// same as one hearing nothing it knows.
+- (void)drawSpeechRow {
+  NSFont* font = [NSFont monospacedSystemFontOfSize:17
+                                             weight:NSFontWeightRegular];
+  CGFloat y = 180;
+  NSColor* color = [NSColor colorWithSRGBRed:0.45 green:0.78
+                                        blue:1.00 alpha:1];
+  bool listening = strncmp(snapshot.speech_state, "listening", 9) == 0;
+  CGFloat x = VIEW_PAD;
+
+  NSString* state = [NSString stringWithFormat:@"speech: %s",
+                     snapshot.speech_state];
+  NSColor* state_color = listening ? color
+    : strncmp(snapshot.speech_state, "off", 3) == 0
+      ? [color colorWithAlphaComponent:0.5]
+      : [NSColor colorWithSRGBRed:0.80 green:0.45 blue:0.45 alpha:1];
+  NSDictionary* attrs = @{NSFontAttributeName: font};
+  CGFloat state_w = [state sizeWithAttributes:attrs].width;
+  [self drawString:state
+            inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
+              font:font
+             color:state_color
+          centered:NO];
+  if (!listening) return;
+  x += state_w + 16;
+
+  // The meter: -60dBFS to 0, which is where speech into a vocal mic lives,
+  // with the gate's threshold marked on it.  Bright while the gate is open,
+  // dim when what's coming in is being kept from the recognizer.
+  double db = snapshot.speech_level > 0
+    ? 20 * log10(snapshot.speech_level) : -99;
+  double fill = fmin(1, fmax(0, (db + 60) / 60));
+  CGFloat meter_w = 120;
+  [[NSColor colorWithWhite:0.22 alpha:1] setFill];
+  NSRectFill(NSMakeRect(x, y + 7, meter_w, 10));
+  [[color colorWithAlphaComponent:snapshot.speech_gate_open ? 1.0 : 0.35]
+    setFill];
+  NSRectFill(NSMakeRect(x, y + 7, meter_w * fill, 10));
+  double gate = fmin(1, fmax(0, (snapshot.speech_gate_db + 60) / 60));
+  [[NSColor whiteColor] setFill];
+  NSRectFill(NSMakeRect(x + meter_w * gate - 1, y + 3, 2, 18));
+  x += meter_w + 8;
+  NSString* level = db > -99 ? [NSString stringWithFormat:@"%4.0f dB", db]
+                             : @"  silent";
+  [self drawString:level
+            inRect:NSMakeRect(x, y, 90, 24)
+              font:font
+             color:color
+          centered:NO];
+  x += 96;
+
+  NSMutableString* text = [NSMutableString string];
+  [text appendFormat:@"heard: \"%s\"", snapshot.speech_heard];
+  if (snapshot.speech_action[0]) {
+    [text appendFormat:@"   → %s", snapshot.speech_action];
+  }
+  [self drawString:text
+            inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
+              font:font
+             color:color
+          centered:NO];
+}
+
 - (void)drawRect:(NSRect)dirty {
   take_snapshot(&snapshot);
 
@@ -689,9 +773,7 @@ static NSString* note_name(int note) {
 
 - (void)chooseRootNote:(NSMenuItem*)item {
   LOCK();
-  root_note = to_root((int)item.tag);
-  fifth_note = to_root(root_note + 7);
-  update_bass(/*force_refresh=*/false);
+  change_key((int)item.tag);
   UNLOCK();
   [self setNeedsDisplay:YES];
 }
@@ -951,6 +1033,15 @@ static void start_tick_thread() {
 @class JammerAppDelegate;
 static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
 
+// "press ..." said to the whistle picking the chord (speech.h) strikes the key
+// itself, on the beat; this is just the flash that shows it happened.
+static __weak JammerView* spoken_view;
+static void flash_from_speech(int key) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [spoken_view flashKeyAtIndex:key];
+  });
+}
+
 @interface JammerAppDelegate : NSObject <NSApplicationDelegate>
 @property(strong) NSWindow* window;
 @property(strong) JammerView* view;
@@ -958,6 +1049,8 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
 @property(strong) NSMenuItem* volumeItem;
 @property(strong) NSSlider* volumeSlider;
 @property(strong) NSMenu* whistleMenu;
+@property(strong) NSMenu* speechMenu;
+@property(strong) NSTextField* speechGateCaption;
 @property(strong) NSMenuItem* whistleVolumeItem;
 @property(strong) NSSlider* whistleVolumeSlider;
 - (void)rebuildAudioMenu;
@@ -981,6 +1074,8 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   [self.window center];
 
   self.view = [[JammerView alloc] initWithFrame:frame];
+  spoken_view = self.view;
+  speech_flash = flash_from_speech;
   self.window.contentView = self.view;
   [self.window makeFirstResponder:self.view];
   [self.window makeKeyAndOrderFront:nil];
@@ -1003,6 +1098,7 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
 
   [self rebuildAudioMenu];
   [self rebuildWhistleMenu];
+  [self buildSpeechMenu];
 
   [NSTimer scheduledTimerWithTimeInterval:1.0 / 60
                                   repeats:YES
@@ -1200,6 +1296,53 @@ static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
   return self.whistleVolumeItem;
 }
 
+// The Speech Recognition menu: the gate in front of the recognizer.  A slider
+// rather than a 0-9 knob because it's a level to match to a microphone, set
+// against the meter on the speech row.
+- (void)speechGateChanged:(NSSlider*)slider {
+  double db = round(slider.doubleValue);
+  LOCK();
+  speech_gate_db = db;
+  UNLOCK();
+  self.speechGateCaption.stringValue =
+    [NSString stringWithFormat:@"Gate: %.0f dB", db];
+  [NSUserDefaults.standardUserDefaults setDouble:db forKey:@"speechGate"];
+  [self.view setNeedsDisplay:YES];
+}
+
+- (void)buildSpeechMenu {
+  NSMenu* menu = self.speechMenu;
+  [menu removeAllItems];
+
+  NSView* holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 54)];
+  LOCK();
+  double db = speech_gate_db;
+  UNLOCK();
+  self.speechGateCaption = [NSTextField labelWithString:
+    [NSString stringWithFormat:@"Gate: %.0f dB", db]];
+  self.speechGateCaption.font = [NSFont menuFontOfSize:0];
+  self.speechGateCaption.textColor = NSColor.labelColor;
+  self.speechGateCaption.frame = NSMakeRect(20, 30, 200, 18);
+  [holder addSubview:self.speechGateCaption];
+  NSSlider* slider = [NSSlider sliderWithValue:db
+                                      minValue:SPEECH_GATE_MIN_DB
+                                      maxValue:SPEECH_GATE_MAX_DB
+                                        target:self
+                                        action:@selector(speechGateChanged:)];
+  slider.frame = NSMakeRect(20, 6, 220, 20);
+  slider.continuous = YES;
+  [holder addSubview:slider];
+  NSMenuItem* item = [[NSMenuItem alloc] init];
+  item.view = holder;
+  [menu addItem:item];
+
+  NSMenuItem* note = [[NSMenuItem alloc]
+    initWithTitle:@"Only what's louder than the gate is heard"
+           action:nil keyEquivalent:@""];
+  note.enabled = NO;
+  [menu addItem:note];
+}
+
 // A 0-9 knob as a submenu, with what each step actually means beside it where
 // there's a number worth showing.
 - (NSMenuItem*)knobMenu:(NSString*)title
@@ -1395,6 +1538,12 @@ static void setup_menu(JammerAppDelegate* delegate) {
   [menubar addItem:whistle_item];
   delegate.whistleMenu = [[NSMenu alloc] initWithTitle:@"Whistle"];
   whistle_item.submenu = delegate.whistleMenu;
+
+  NSMenuItem* speech_item = [NSMenuItem new];
+  [menubar addItem:speech_item];
+  delegate.speechMenu =
+    [[NSMenu alloc] initWithTitle:@"Speech Recognition"];
+  speech_item.submenu = delegate.speechMenu;
 }
 
 int main(int argc, const char** argv) {
@@ -1437,6 +1586,9 @@ int main(int argc, const char** argv) {
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
     NSString* whistle_input =
       [defaults stringForKey:@"whistleInput"] ?: @"";
+    if ([defaults objectForKey:@"speechGate"]) {
+      speech_gate_db = [defaults doubleForKey:@"speechGate"];
+    }
     if ([defaults objectForKey:@"whistleGate"]) {
       whistle_gate = (int)[defaults integerForKey:@"whistleGate"];
     }
@@ -1494,6 +1646,7 @@ int main(int argc, const char** argv) {
     whistle_resolve_voices();
     audio_mix_hook = whistle_mix;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
+    speech_start(synth_sample_rate);
 
     setup_midi_input();
 

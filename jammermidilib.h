@@ -1243,7 +1243,13 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   }
 }
 
+// Called on each beat, before its notes are played, with the lock held.  For
+// changes that have to land on a beat -- speech.h's -- to land on this one
+// rather than just after it.  NULL on the Pi.
+static void (*before_beat_hook)(void) = NULL;
+
 void arpeggiate(int subbeat, uint64_t current_time, bool drone, bool running) {
+  if (subbeat == 0 && running && before_beat_hook) before_beat_hook();
   arpeggiate_endpoint(ENDPOINT_FOOTBASS, subbeat, current_time, drone);
   arpeggiate_endpoint(ENDPOINT_FOOTBASS_2, subbeat, current_time, drone);
   arpeggiate_endpoint(ENDPOINT_FOOTBASS_3, subbeat, current_time, drone);
@@ -1482,6 +1488,37 @@ void whistle_picks_note(int midi_note) {
   if (pedal < 0) return;
   most_recent_drum_pedal = pedal;
   update_drum_pedal_note();
+  update_bass(/*force_refresh=*/false);
+}
+
+// A spoken Nashville number, 1-7, while the whistle is choosing: that degree
+// of the major scale on the root, with the chord the major key puts there --
+// I ii iii IV V vi vii-diminished.  Always the major key, whatever the arrow
+// keys say, the way a number chart reads; the arrows still steer what the
+// whistle snaps to.
+void nashville_picks_chord(int number) {
+  static const int DEGREE[7] = {0, 2, 4, 5, 7, 9, 11};
+  static const int QUALITY[7] = {
+    CHORD_MAJOR, CHORD_MINOR, CHORD_MINOR, CHORD_MAJOR, CHORD_MAJOR,
+    CHORD_MINOR, CHORD_DIM,
+  };
+  if (!whistle_chooses_notes || number < 1 || number > 7) return;
+
+  // What update_drum_pedal_note does with a pedal's note, minus the pedal.
+  int note = to_root(root_note + DEGREE[number - 1]);
+  last_drum_pedal_note = current_drum_pedal_note;
+  prev_chord_note = chord_note;
+  prev_chord_type = chord_type;
+  chord_type = QUALITY[number - 1];
+  chord_note = note;
+  current_drum_pedal_note = note;
+  update_bass(/*force_refresh=*/false);
+}
+
+// Play in another key: the root the bass lines and drones are built on.
+void change_key(int pitch_class) {
+  root_note = to_root(pitch_class);
+  fifth_note = to_root(root_note + 7);
   update_bass(/*force_refresh=*/false);
 }
 

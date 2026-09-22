@@ -58,10 +58,10 @@ static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'D', "reese",          "Reese"},
   {'F', "eight-oh-eight", "808"},
   {'G', "fm",             "FM"},
-  {'H', "fm-sub",         "FM\nSub"},
+  {'H', "fm-sub",         "Sub\nFM"},
   {'Z', "square",         "Square"},
   {'X', "drawbar",        "Draw\nbar"},
-  {'C', "drawbar-hi",     "Draw\nbar Hi"},
+  {'C', "drawbar-hi",     "High\nDrawbar"},
   {'V', "accordion",      "Accor\ndion"},
 };
 
@@ -261,8 +261,14 @@ static void whistle_ring_reset(void) {
   memset(whistle_ring, 0, sizeof(whistle_ring));
 }
 
+// Anything else that wants to hear the microphone -- speech.h, for spoken
+// chord numbers -- sets this.  Called on the input device's thread with every
+// block, so it must be realtime safe: no locks, no allocation.
+static void (*whistle_input_tap)(const float* samples, int frames) = NULL;
+
 // Called on the input device's thread.
 static void whistle_push_input(const float* samples, int frames) {
+  if (whistle_input_tap) whistle_input_tap(samples, frames);
   unsigned write = atomic_load_explicit(&whistle_ring_write,
                                         memory_order_relaxed);
   unsigned read = atomic_load_explicit(&whistle_ring_read,
