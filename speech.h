@@ -32,7 +32,8 @@
 //
 // Numbers have a faster way in too: numrec.h, which knows only one to seven,
 // in your voice, and hears them within about a tenth of a second of the word
-// ending.  See "The fast path" below.
+// ending.  See "The fast path" below.  Where the two disagree, numheard.h
+// keeps the audio for the fast one to learn from.
 //
 // Everything that touches the recognizer runs on speech_queue: the timer, and
 // the result handler, via the recognizer's own queue.
@@ -64,6 +65,14 @@ static _Atomic int speech_recording;  // ... or this: numtrain.h is recording
 // Everything the microphone sends, ungated, as it's drained: numtrain.h's
 // recorder while it's recording.  Speech queue.
 static void (*speech_record_hook)(const float* samples, int n) = NULL;
+
+// The last dozen seconds of the microphone, ungated, as drained, for
+// numheard.h to cut clips from.  speech_mic_samples counts everything drained
+// so far, and is the one timeline that the fast path's frames and Apple's
+// words are both put on.  Speech queue.
+static float* speech_mic;
+static long long speech_mic_mask;  // its length, a power of two, less one
+static long long speech_mic_samples;
 
 static void speech_tap(const float* samples, int frames) {
   if (!atomic_load_explicit(&speech_listening, memory_order_relaxed) &&
@@ -112,8 +121,14 @@ static SFSpeechAudioBufferRecognitionRequest* speech_request;
 static SFSpeechRecognitionTask* speech_task;
 static AVAudioFormat* speech_format;
 static uint64_t speech_task_started;
+static int speech_task_serial;          // counts tasks, for numheard.h
+static long long speech_task_mic_start; // speech_mic_samples when it started
 static int speech_consumed;    // words in this task's transcript acted on
 static NSArray<NSString*>* speech_words;  // this task's transcript so far
+// Where on the microphone's timeline each word was said, from Apple's
+// timestamps, or -1 where it gave none.
+static long long speech_word_from[SPEECH_MAX_WORDS];
+static long long speech_word_to[SPEECH_MAX_WORDS];
 static uint64_t speech_words_at;          // when it last changed
 static bool speech_words_settled;         // and it's been read as settled
 static bool speech_asked;      // authorization has been requested
@@ -473,8 +488,20 @@ static void speech_queue_action(const SwAction* action) {
 
 #define SPEECH_FAST_CLAIM_S 3
 
+// numheard.h, which keeps the audio when the two recognizers disagree.
+static void nh_fast_judged(const NrStream* s, long long onset, long long end,
+                           int number);
+static void nh_apple_word(int index, const char* text, int number);
+static void nh_tick(void);
+static bool nh_unreviewed(NSString* tsv);
+
 static NrModel* speech_fast_model;  // speech queue; NULL until learned
+static int speech_fast_generation;  // counts the models it's had
 static NrStream* speech_fast_stream;
+// Where the stream's sample 0 would be on the microphone's timeline: the
+// stream only hears while F3 is on, so this moves on each time it's off.
+static long long speech_fast_offset;
+static long long speech_fast_pushed;
 static char speech_fast_state[64] = "fast: learning";
 static int speech_fast_unclaimed;   // fast numbers Apple hasn't reported yet
 static uint64_t speech_fast_at;
@@ -495,11 +522,11 @@ static bool speech_fast_claims(const SwAction* action) {
   return true;
 }
 
-static void speech_fast_take(int number, int quiet_ms) {
+static bool speech_fast_take(int number, int quiet_ms) {
   LOCK();
   bool numbers = speech_chooses_notes;
   UNLOCK();
-  if (!numbers) return;  // F3 just went off
+  if (!numbers) return false;  // F3 just went off
   speech_fast_unclaimed++;
   speech_fast_at = now();
   bool feet;
@@ -522,6 +549,7 @@ static void speech_fast_take(int number, int quiet_ms) {
   printf("fast: heard %d, %dms after the word ended%s\n", number, quiet_ms,
          feet ? "; on the next beat" : "; no beat, made now");
   fflush(stdout);
+  return true;
 }
 
 static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
@@ -529,14 +557,31 @@ static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
                                   bool final) {
   (void)ctx;
   if (!speech_fast_model || !clear) return true;
+  // Asked again every 10ms until its word's wait is up, but while it's quiet
+  // the utterance doesn't change, so neither does what it's nearest: match it
+  // once, and after that it's only the wait.  Different if the talking
+  // started again and moved its end, or there's a new model.
+  static long long matched_onset = -1, matched_end = -1;
+  static int matched_n, matched_generation;
+  static NrResult r;
   float feat[NR_MAX_FRAMES + 2 * NR_PAD][NR_DIM];
   int n = nr_utterance(s, onset, end, feat);
-  NrResult r = nr_classify(speech_fast_model, feat, n, &s->p, -1, 0, 0);
+  if (onset != matched_onset || end != matched_end || n != matched_n ||
+      speech_fast_generation != matched_generation) {
+    r = nr_classify(speech_fast_model, feat, n, &s->p, -1, 0, 0);
+    matched_onset = onset;
+    matched_end = end;
+    matched_n = n;
+    matched_generation = speech_fast_generation;
+  }
   if (r.label >= 0 && quiet >= speech_fast_model->wait[r.label]) {
     // A tick's worth on top: that's how long the audio waited in the ring.
-    speech_fast_take(r.label + 1, quiet * 10 + SPEECH_TICK_MS);
+    if (speech_fast_take(r.label + 1, quiet * 10 + SPEECH_TICK_MS)) {
+      nh_fast_judged(s, onset, end, r.label + 1);
+    }
     return true;
   }
+  if (final) nh_fast_judged(s, onset, end, 0);
   if (final && r.nearest >= 0 && r.nearest != NR_OTHER) {
     printf("fast: maybe %s (%.2f, runner-up %.2f), but %s; leaving it to "
            "apple\n", NR_WORDS[r.nearest], r.dist, r.runner_up,
@@ -559,26 +604,40 @@ static void speech_fast_learn(void) {
     NSArray<NSURL*>* files = [NSFileManager.defaultManager
       contentsOfDirectoryAtURL:dir includingPropertiesForKeys:nil
                        options:0 error:nil];
+    // numheard.h's clips, which are laid out as sessions of their own.
+    files = [files arrayByAddingObjectsFromArray:
+      [NSFileManager.defaultManager
+        contentsOfDirectoryAtURL:[dir URLByAppendingPathComponent:@"heard"]
+      includingPropertiesForKeys:nil options:0 error:nil] ?: @[]];
     NrModel* model = calloc(1, sizeof(NrModel));
     NrParams p = nr_default_params(SPEECH_GATE_DEFAULT_DB);
-    int session = 0;
+    int session = 0, clips = 0;
     for (NSURL* file in files) {
       if (![file.pathExtension isEqualToString:@"wav"]) continue;
+      NSURL* tsv =
+        [file.URLByDeletingPathExtension URLByAppendingPathExtension:@"tsv"];
+      bool clip = [file.lastPathComponent hasPrefix:@"heard-"];
+      if (clip && nh_unreviewed([NSString stringWithContentsOfURL:tsv
+                                   encoding:NSUTF8StringEncoding
+                                      error:nil] ?: @"")) {
+        continue;
+      }
       long long n;
       double rate;
       float* x = nr_read_wav(file.path.UTF8String, &n, &rate);
       NrPrompt* prompts = NULL;
-      float gate_db = SPEECH_GATE_DEFAULT_DB;
-      int n_prompts = nr_read_prompts(
-        [file.URLByDeletingPathExtension URLByAppendingPathExtension:@"tsv"]
-          .path.UTF8String, &prompts, &gate_db);
+      float gate_db = SPEECH_GATE_DEFAULT_DB, room_db = p.room_db;
+      int n_prompts = nr_read_prompts(tsv.path.UTF8String, &prompts, &gate_db,
+                                      &room_db);
       if (x && n_prompts > 0) {
         // A little below the gate it was recorded with, so the quieter
         // words are learned too: which prompt was up says what they were.
         NrParams sp = p;
         sp.trigger_db = gate_db - 6;
+        sp.room_db = room_db;
         nr_learn_session(model, x, n, rate, prompts, n_prompts, &sp,
                          session++);
+        if (clip) clips++;
       }
       free(x);
       free(prompts);
@@ -594,6 +653,7 @@ static void speech_fast_learn(void) {
         free(speech_fast_model);
       }
       speech_fast_model = numbers > 0 ? model : NULL;
+      speech_fast_generation++;
       if (numbers > 0) {
         snprintf(speech_fast_state, sizeof(speech_fast_state),
                  "fast: %d numbers learned", numbers);
@@ -603,7 +663,8 @@ static void speech_fast_learn(void) {
         snprintf(speech_fast_state, sizeof(speech_fast_state),
                  "fast: no recordings");
       }
-      printf("speech %s from %d sessions\n", speech_fast_state, session);
+      printf("speech %s from %d sessions and %d kept clips\n",
+             speech_fast_state, session - clips, clips);
       fflush(stdout);
     });
   });
@@ -634,6 +695,11 @@ static void speech_read(bool settled) {
     SwAction action = sw_next_action(words, n, &speech_consumed, &buttons,
                                      &modes, settled);
     if (action.kind == SW_NONE) break;
+    if (action.kind == SW_NUMBER) {
+      // A bare number is the one word just before where it's got to.
+      nh_apple_word(speech_consumed - 1, words[speech_consumed - 1],
+                    action.value);
+    }
     speech_queue_action(&action);
   }
 
@@ -658,10 +724,30 @@ static void speech_end_task(void) {
 
 static void speech_heard(SFSpeechRecognitionResult* result) {
   NSMutableArray<NSString*>* words = [NSMutableArray array];
+  double rate = speech_format.sampleRate;
   for (SFTranscriptionSegment* segment in result.bestTranscription.segments) {
+    int i = (int)words.count;
+    if (i < SPEECH_MAX_WORDS) {
+      // What the request heard is the microphone, gated, sample for sample,
+      // from when the task started.
+      bool timed = segment.duration > 0;
+      speech_word_from[i] = timed ? speech_task_mic_start +
+        (long long)(segment.timestamp * rate) : -1;
+      speech_word_to[i] = timed ? speech_task_mic_start +
+        (long long)((segment.timestamp + segment.duration) * rate) : -1;
+    }
     [words addObject:segment.substring];
   }
   if (![words isEqualToArray:speech_words ?: @[]]) {
+    // Each word that's new or revised, for numheard.h to set against what
+    // the fast path made of the same moment.
+    for (int i = 0; i < (int)MIN(words.count, (NSUInteger)SPEECH_MAX_WORDS);
+         i++) {
+      if (i >= (int)speech_words.count ||
+          [words[i] caseInsensitiveCompare:speech_words[i]] != NSOrderedSame) {
+        nh_apple_word(i, words[i].UTF8String ?: "", 0);
+      }
+    }
     // Has the recognizer started over?  If the words already acted on aren't
     // at the start any more, it's either that or a revision of them -- "foot
     // bass" becoming "football" -- and a revision comes quickly, while a new
@@ -716,6 +802,8 @@ static void speech_start_task(void) {
   speech_request = request;
   speech_consumed = 0;
   speech_task_started = now();
+  speech_task_serial++;
+  speech_task_mic_start = speech_mic_samples;
   speech_task = [speech_recognizer
     recognitionTaskWithRequest:request
                  resultHandler:^(SFSpeechRecognitionResult* result,
@@ -764,6 +852,9 @@ static void speech_drain(void) {
   }
   atomic_store_explicit(&speech_ring_read, write, memory_order_release);
   if (speech_record_hook) speech_record_hook(in, (int)available);
+  for (unsigned i = 0; i < available; i++) {
+    speech_mic[(speech_mic_samples + i) & speech_mic_mask] = in[i];
+  }
 
   LOCK();
   if (peak > speech_level) speech_level = peak;
@@ -774,8 +865,12 @@ static void speech_drain(void) {
   bool numbers = speech_chooses_notes;
   UNLOCK();
   if (numbers && speech_fast_model) {
+    speech_fast_offset = speech_mic_samples - speech_fast_pushed;
     nr_stream_push(speech_fast_stream, in, (int)available);
+    speech_fast_pushed += available;
   }
+  speech_mic_samples += available;
+  nh_tick();
 
   long long loud_before = speech_gate.last_loud;
   int n_out = sg_process(&speech_gate, in, (int)available, out);
@@ -978,9 +1073,18 @@ static void speech_start(double sample_rate) {
                 channels:1
              interleaved:NO];
   sg_init(&speech_gate, sample_rate);
+  long long mic = 1;
+  while (mic < (long long)(12 * sample_rate)) mic <<= 1;
+  speech_mic = calloc((size_t)mic, sizeof(float));
+  speech_mic_mask = mic - 1;
   speech_fast_stream = malloc(sizeof(NrStream));
-  nr_stream_init(speech_fast_stream, sample_rate,
-                 nr_default_params(SPEECH_GATE_DEFAULT_DB),
+  // Asked from NR_PAD frames of quiet rather than `hangover`: the utterance
+  // is whole by then, padding and all, so it's matched a frame before any
+  // word's wait can be up (the waits were set with `hangover` itself) and
+  // the matching is done in time for it.  See speech_fast_utterance.
+  NrParams stream_params = nr_default_params(SPEECH_GATE_DEFAULT_DB);
+  stream_params.hangover = NR_PAD;
+  nr_stream_init(speech_fast_stream, sample_rate, stream_params,
                  speech_fast_utterance, NULL);
   speech_fast_learn();
   whistle_input_tap = speech_tap;

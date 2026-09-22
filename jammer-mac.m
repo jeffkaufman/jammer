@@ -47,6 +47,7 @@ static pthread_mutex_t jammer_lock = PTHREAD_MUTEX_INITIALIZER;
 // Wants the lock, so here rather than with the other includes.
 #include "speech.h"
 #include "numtrain.h"
+#include "numheard.h"
 
 // Which device a CoreMIDI source is, passed through as the connection refCon.
 typedef enum {
@@ -1074,6 +1075,7 @@ static void flash_from_speech(int key) {
 @property(strong) NSMenu* speechMenu;
 @property(strong) NSTextField* speechGateCaption;
 @property(strong) NtWindowController* numberSamples;
+@property(strong) NhReviewController* numberReview;
 @property(strong) NSMenuItem* whistleVolumeItem;
 @property(strong) NSSlider* whistleVolumeSlider;
 - (void)rebuildAudioMenu;
@@ -1111,6 +1113,10 @@ static void flash_from_speech(int key) {
     if (event.modifierFlags & (NSEventModifierFlagCommand |
                                NSEventModifierFlagControl)) {
       return event;  // leave cmd-Q and friends alone
+    }
+    // The review window answers with number keys of its own.
+    if (event.window && event.window == self.numberReview.window) {
+      return event;
     }
     int index = [self.view indexForVirtualKeyCode:event.keyCode];
     if (index < 0) return event;
@@ -1371,6 +1377,18 @@ static void flash_from_speech(int key) {
            action:@selector(recordNumberSamples:) keyEquivalent:@""];
   record.target = self;
   [menu addItem:record];
+  NSMenuItem* review = [[NSMenuItem alloc]
+    initWithTitle:@"Review Number Clips..."
+           action:@selector(reviewNumberClips:) keyEquivalent:@""];
+  review.target = self;
+  [menu addItem:review];
+}
+
+// Saying what was really said in the clips the two recognizers disagreed
+// about; see numheard.h.
+- (void)reviewNumberClips:(id)sender {
+  if (!self.numberReview) self.numberReview = [NhReviewController new];
+  [self.numberReview show];
 }
 
 // Samples of your voice saying the numbers, for the fast recognizer; see

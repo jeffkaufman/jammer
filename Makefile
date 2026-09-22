@@ -53,7 +53,7 @@ SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h \
             jammermidilib.h voices.h common.h whistle.h whistleinput.h \
-            speech.h speechwords.h numrec.h numtrain.h Info.plist
+            speech.h speechwords.h numrec.h numtrain.h numheard.h Info.plist
 
 jammer-mac: $(MAC_SRCS) $(WHISTLE_OBJS)
 	@test -n "$(FLUIDSYNTH)" || \

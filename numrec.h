@@ -58,6 +58,11 @@
 #define NR_OTHER 7            // the label for "not a number"
 #define NR_N_LABELS 8
 
+// A frame's features padded out to 16 floats, for matching four at a time.
+typedef float NrV4 __attribute__((vector_size(16)));
+typedef struct { NrV4 v[4]; } NrFrame;
+_Static_assert(NR_DIM <= 16, "a frame's features must fit an NrFrame");
+
 static const char* NR_WORDS[NR_N_LABELS] = {
   "one", "two", "three", "four", "five", "six", "seven", "other",
 };
@@ -73,13 +78,14 @@ typedef struct {
   int max_back;      // how far before the trigger an utterance can start
   float accept;      // farther than this from every number is nothing
   float margin;      // the runner-up must be at least this much farther
+  float room_db;     // the room's noise, RMS dBFS, before anything's heard
 } NrParams;
 
 static NrParams nr_default_params(float trigger_db) {
   return (NrParams){
     .trigger_db = trigger_db, .floor_db = -60, .noise_db = 10, .rel_db = 30,
     .hangover = 4, .end_hangover = 18, .pre_quiet = 30, .max_back = 30,
-    .accept = 1.6f, .margin = 0.05f,
+    .accept = 1.6f, .margin = 0.05f, .room_db = -70,
   };
 }
 
@@ -252,7 +258,7 @@ static void nr_stream_init(NrStream* s, double rate, NrParams p,
   memset(s, 0, sizeof(*s));
   s->p = p;
   nr_features_init(&s->f, rate);
-  s->noise = -70;
+  s->noise = p.room_db;
   s->last_end = -1000000;
   s->on_utterance = fn;
   s->ctx = ctx;
@@ -374,6 +380,7 @@ typedef struct {
   int label;          // 0-6 for one to seven, NR_OTHER
   int n;
   float (*feat)[NR_DIM];  // normalized
+  NrFrame* frames;    // the same, for matching
   int gap;            // the longest quiet inside it, in frames
   int session;        // where it came from, so a test can leave it out
   long long sample;
@@ -403,9 +410,17 @@ static void nr_model_add(NrModel* m, int label, float (*feat)[NR_DIM], int n,
 }
 
 static void nr_model_free(NrModel* m) {
-  for (int i = 0; i < m->n; i++) free(m->t[i].feat);
+  for (int i = 0; i < m->n; i++) {
+    free(m->t[i].feat);
+    free(m->t[i].frames);
+  }
   free(m->t);
   memset(m, 0, sizeof(*m));
+}
+
+static void nr_pad_frames(float (*feat)[NR_DIM], int n, NrFrame* out) {
+  memset(out, 0, sizeof(NrFrame) * (size_t)n);
+  for (int i = 0; i < n; i++) memcpy(&out[i], feat[i], sizeof(feat[i]));
 }
 
 static int nr_int_cmp(const void* a, const void* b) {
@@ -455,27 +470,30 @@ static void nr_model_finish(NrModel* m, const NrParams* p) {
         m->t[i].feat[j][d] = (m->t[i].feat[j][d] - m->mean[d]) / m->sd[d];
       }
     }
+    m->t[i].frames = malloc(sizeof(NrFrame) * (size_t)m->t[i].n);
+    nr_pad_frames(m->t[i].feat, m->t[i].n, m->t[i].frames);
   }
 }
 
 // Average distance per step along the best alignment of the two, end to
 // end.  Anything more than twice the other's length isn't the same word.
-static float nr_dtw(float (*a)[NR_DIM], int n, float (*b)[NR_DIM], int m) {
+// Nearly all of the time goes on the distances between frames, which is why
+// they're padded to be done four features at a time.
+static float nr_dtw(const NrFrame* a, int n, const NrFrame* b, int m) {
   if (n > 2 * m || m > 2 * n) return INFINITY;
-  static float prev[NR_MAX_FRAMES + 2 * NR_PAD + 1];
-  static float cur[NR_MAX_FRAMES + 2 * NR_PAD + 1];
+  float prev[NR_MAX_FRAMES + 2 * NR_PAD + 1];
+  float cur[NR_MAX_FRAMES + 2 * NR_PAD + 1];
   if (m > NR_MAX_FRAMES + 2 * NR_PAD) return INFINITY;
   prev[0] = 0;
   for (int j = 1; j <= m; j++) prev[j] = INFINITY;
   for (int i = 1; i <= n; i++) {
+    const NrFrame x = a[i - 1];
     cur[0] = INFINITY;
     for (int j = 1; j <= m; j++) {
-      float d = 0;
-      for (int k = 0; k < NR_DIM; k++) {
-        float x = a[i - 1][k] - b[j - 1][k];
-        d += x * x;
-      }
-      d = sqrtf(d);
+      NrV4 d0 = x.v[0] - b[j - 1].v[0], d1 = x.v[1] - b[j - 1].v[1];
+      NrV4 d2 = x.v[2] - b[j - 1].v[2], d3 = x.v[3] - b[j - 1].v[3];
+      NrV4 sq = d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+      float d = sqrtf(sq[0] + sq[1] + sq[2] + sq[3]);
       float best = prev[j - 1];
       if (prev[j] < best) best = prev[j];
       if (cur[j - 1] < best) best = cur[j - 1];
@@ -506,6 +524,8 @@ static NrResult nr_classify(const NrModel* m, float (*feat)[NR_DIM], int n,
       q[i][d] = (feat[i][d] - m->mean[d]) / m->sd[d];
     }
   }
+  NrFrame frames[NR_MAX_FRAMES + 2 * NR_PAD];
+  nr_pad_frames(q, n, frames);
   float best[NR_N_LABELS];
   for (int l = 0; l < NR_N_LABELS; l++) best[l] = INFINITY;
   for (int i = 0; i < m->n; i++) {
@@ -514,7 +534,7 @@ static NrResult nr_classify(const NrModel* m, float (*feat)[NR_DIM], int n,
         llabs(t->sample - skip_sample) < skip_within) {
       continue;
     }
-    float d = nr_dtw(q, n, t->feat, t->n);
+    float d = nr_dtw(frames, n, t->frames, t->n);
     if (d < best[t->label]) best[t->label] = d;
   }
   NrResult r = {.label = -1, .nearest = -1, .dist = INFINITY,
@@ -602,8 +622,10 @@ static int nr_prompt_at(const NrPrompt* p, int n, long long sample) {
   return found;
 }
 
-// Read a session's prompts: <sample>\t<text>, and "# gate_db\t<db>".
-static int nr_read_prompts(const char* path, NrPrompt** out, float* gate_db) {
+// Read a session's prompts: <sample>\t<text>, and "# gate_db\t<db>" and
+// "# room_db\t<db>" (numheard.h's clips, which start mid-performance).
+static int nr_read_prompts(const char* path, NrPrompt** out, float* gate_db,
+                           float* room_db) {
   FILE* f = fopen(path, "r");
   if (!f) return -1;
   int n = 0, cap = 0;
@@ -616,6 +638,7 @@ static int nr_read_prompts(const char* path, NrPrompt** out, float* gate_db) {
     *tab = 0;
     if (line[0] == '#') {
       if (strcmp(line, "# gate_db") == 0 && gate_db) *gate_db = atof(tab + 1);
+      if (strcmp(line, "# room_db") == 0 && room_db) *room_db = atof(tab + 1);
       continue;
     }
     if (n == cap) {

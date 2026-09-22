@@ -251,6 +251,17 @@ sessions, and ones made with the band playing, make it better.  `make
 numrec-eval && ./numrec-eval` says how well it does on them.  The speech row
 says how many numbers it has learned.
 
+It also learns from playing.  Whenever Apple's recognizer and the fast one
+disagree about whether something you said was a number, the audio is kept,
+labeled with what Apple heard, in `numbers/heard/` (`numheard.h`), and
+learned from at every startup along with the recordings.  Apple is usually
+right but not always; each clip's `.tsv` says what both recognizers made of
+it.  The ones where the fast one took a number and Apple didn't agree aren't
+learned until you've said who was right -- so far it's been Apple that was
+wrong -- with Speech Recognition > Review Number Clips..., which plays each
+and asks what you said.  The kept clips are held to
+2GB, oldest going first.
+
 From `F3`, `F5` hands the choice back to the feet, and `F9` or `esc` end it;
 `esc` leaves `F8` alone, since commands aren't musical state.
 The words are `speechwords.h` and the chords `nashville_picks_chord`.

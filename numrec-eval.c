@@ -31,6 +31,7 @@ typedef struct {
   NrPrompt* prompts;
   int n_prompts;
   float gate_db;
+  float room_db;
 } Session;
 
 typedef struct {
@@ -122,7 +123,9 @@ static int load_sessions(const char* dir, Session** out) {
     se->x = nr_read_wav(path, &se->n, &se->rate);
     snprintf(path, sizeof(path), "%s.tsv", se->base);
     se->gate_db = -20;
-    se->n_prompts = nr_read_prompts(path, &se->prompts, &se->gate_db);
+    se->room_db = -70;
+    se->n_prompts = nr_read_prompts(path, &se->prompts, &se->gate_db,
+                                    &se->room_db);
     if (!se->x || se->n_prompts <= 0) {
       fprintf(stderr, "skipping %s: can't read it\n", se->base);
       continue;
@@ -158,6 +161,7 @@ static void run(Session* s, int n, NrParams p, bool trigger_set,
   for (int i = 0; i < n; i++) {
     NrParams sp = p;
     if (!trigger_set) sp.trigger_db = s[i].gate_db;
+    sp.room_db = s[i].room_db;
     nr_learn_session(&model, s[i].x, s[i].n, s[i].rate, s[i].prompts,
                      s[i].n_prompts, &sp, i);
   }
@@ -183,6 +187,7 @@ static void run(Session* s, int n, NrParams p, bool trigger_set,
               .by_session = by_session, .verbose = verbose && !quiet};
     NrParams sp = p;
     if (!trigger_set) sp.trigger_db = s[i].gate_db;
+    sp.room_db = s[i].room_db;
     NrStream* st = malloc(sizeof(NrStream));
     nr_stream_init(st, s[i].rate, sp, test_fn, &t);
     t.hop = st->f.hop;
