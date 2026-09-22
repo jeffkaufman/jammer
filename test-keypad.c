@@ -616,11 +616,13 @@ static void test_drones() {
           key->arg == keys[i].endpoint,
           "%s isn't the %s key", keys[i].cap, keys[i].name);
 
-    // Cleared exactly like the drone it's a second copy of.
+    // Cleared like the drone it's a second copy of, except that it starts
+    // on Warm Pad rather than Rock Organ.
     int e = keys[i].endpoint, o = keys[i].like;
-    CHECK(c->voices[e] == c->voices[o] && c->chord[e] == c->chord[o] &&
-          c->shorter[e] == c->shorter[o],
+    CHECK(c->chord[e] == c->chord[o] && c->shorter[e] == c->shorter[o],
           "%s should start out like the first one", keys[i].name);
+    CHECK(c->voices[o] == 18 && c->voices[e] == 89,
+          "%s should start on Warm Pad", keys[i].name);
     CHECK(is_drone(e) && holds_bass_note(e),
           "%s should count as a drone", keys[i].name);
 

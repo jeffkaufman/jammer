@@ -757,13 +757,13 @@ void clear_jawharp() {
   select_voice(c, 67);
 }
 
-void clear_drone_bass() {
-  select_voice(c, 18);
+void clear_drone_bass(int voice) {
+  select_voice(c, voice);
   c->shorter[c->selected_endpoint] = true;
 }
 
-void clear_drone_chord() {
-  select_voice(c, 18);
+void clear_drone_chord(int voice) {
+  select_voice(c, voice);
   c->chord[c->selected_endpoint] = true;
   c->shorter[c->selected_endpoint] = true;
 }
@@ -889,10 +889,12 @@ void clear_endpoint() {
   case ENDPOINT_LOW: clear_low(); break;
   case ENDPOINT_HI: clear_high(); break;
   case ENDPOINT_OVERLAY: clear_overlay(); break;
-  case ENDPOINT_DRONE_BASS: clear_drone_bass(); break;
-  case ENDPOINT_DRONE_CHORD: clear_drone_chord(); break;
-  case ENDPOINT_DRONE_BASS_2: clear_drone_bass(); break;
-  case ENDPOINT_DRONE_CHORD_2: clear_drone_chord(); break;
+  // The first drones start on Rock Organ, the second on Warm Pad, so that
+  // layering them is two different sounds out of the box.
+  case ENDPOINT_DRONE_BASS: clear_drone_bass(18); break;
+  case ENDPOINT_DRONE_CHORD: clear_drone_chord(18); break;
+  case ENDPOINT_DRONE_BASS_2: clear_drone_bass(89); break;
+  case ENDPOINT_DRONE_CHORD_2: clear_drone_chord(89); break;
   }
 
   update_fade(c->selected_endpoint);

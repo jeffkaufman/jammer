@@ -134,6 +134,7 @@ the physical keyboard in the middle, and what it actually does underneath:
   treatment, so they can run together -- see below.
 * **`8` and `9`** (green) are Pad Bass and Pad Chord: a second drone bass and
   drone chord, over the first pair on `I` and `O`, for layering two pads.
+  They start on Warm Pad, where the first pair start on Rock Organ.
 * **QWERTY row** (green) turns endpoints on and off.  Hold shift to pick which
   endpoint the modifier keys act on instead of toggling it; the selected one
   gets a yellow outline whether or not it's switched on.
