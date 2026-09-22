@@ -28,6 +28,10 @@
 // than after a pause long enough for the recognizer to call the sentence
 // done.
 //
+// Numbers have a faster way in too: numrec.h, which knows only one to seven,
+// in your voice, and hears them within about a tenth of a second of the word
+// ending.  See "The fast path" below.
+//
 // Everything that touches the recognizer runs on speech_queue: the timer, and
 // the result handler, via the recognizer's own queue.
 //
@@ -38,6 +42,7 @@
 
 #include "speechwords.h"
 #include "speechgate.h"
+#include "numrec.h"
 
 // ---------------------------------------------------------------------------
 // The ring
@@ -53,9 +58,16 @@ static float speech_ring[SPEECH_RING_FRAMES];
 static _Atomic unsigned speech_ring_write;
 static _Atomic unsigned speech_ring_read;
 static _Atomic int speech_listening;  // the tap only copies while this is set
+static _Atomic int speech_recording;  // ... or this: numtrain.h is recording
+// Everything the microphone sends, ungated, as it's drained: numtrain.h's
+// recorder while it's recording.  Speech queue.
+static void (*speech_record_hook)(const float* samples, int n) = NULL;
 
 static void speech_tap(const float* samples, int frames) {
-  if (!atomic_load_explicit(&speech_listening, memory_order_relaxed)) return;
+  if (!atomic_load_explicit(&speech_listening, memory_order_relaxed) &&
+      !atomic_load_explicit(&speech_recording, memory_order_relaxed)) {
+    return;
+  }
   unsigned write = atomic_load_explicit(&speech_ring_write,
                                         memory_order_relaxed);
   unsigned read = atomic_load_explicit(&speech_ring_read,
@@ -243,7 +255,14 @@ static uint64_t speech_armed_deadline;  // made anyway if no beat by then
 
 // The next beat's notes are about to play: make whatever's armed first.
 // Called by arpeggiate with the lock held.
+static int speech_fast_armed;  // a fast number for the next beat, or 0
 static void speech_before_beat(void) {
+  if (speech_fast_armed) {
+    SwAction action = {SW_NUMBER, speech_fast_armed};
+    printf("timing: fast number made on the beat\n");
+    speech_apply_locked(&action);
+    speech_fast_armed = 0;
+  }
   if (speech_n_armed == 0) return;
   printf("timing: made on the beat, %ldms from when it was due\n",
          (long)(((int64_t)now() - (int64_t)speech_armed_due) / 1000000));
@@ -298,9 +317,18 @@ static void speech_wake_at(uint64_t when, void (*fn)(void)) {
                  speech_queue, ^{ fn(); });
 }
 
+static uint64_t speech_fast_deadline;  // made anyway if no beat by then
+
 static void speech_run_pending(void) {
   // An armed change whose beat never came.
   LOCK();
+  if (speech_fast_armed && now() >= speech_fast_deadline) {
+    printf("timing: the feet stopped before its beat; fast number made "
+           "anyway\n");
+    SwAction action = {SW_NUMBER, speech_fast_armed};
+    speech_apply_locked(&action);
+    speech_fast_armed = 0;
+  }
   if (speech_n_armed && now() >= speech_armed_deadline) {
     printf("timing: the feet stopped before its beat; made anyway\n");
     for (int i = 0; i < speech_n_armed; i++) {
@@ -385,8 +413,11 @@ static void speech_run_pending(void) {
   speech_moved_due = 0;
 }
 
+static bool speech_fast_claims(const SwAction* action);
+
 // Heard, and to happen on the beat two beats after the talking stops.
 static void speech_queue_action(const SwAction* action) {
+  if (speech_fast_claims(action)) return;
   if (speech_n_pending < SPEECH_MAX_PENDING) {
     speech_pending[speech_n_pending++] = *action;
   }
@@ -414,6 +445,153 @@ static void speech_queue_action(const SwAction* action) {
          (int64_t)now() < one_beat ? "made it" : "been too late");
   fflush(stdout);
   speech_run_pending();  // in case it's already due
+}
+
+// ---------------------------------------------------------------------------
+// The fast path
+//
+// numrec.h hears a bare number within about a tenth of a second of the word
+// ending, having learned your voice from numtrain.h's recordings.  It's fed
+// the same microphone as Apple's recognizer, before the gate -- it has its
+// own, set from the same menu -- and only while speech recognition is on.
+//
+// What it hears goes in on the very next beat, the soonest it can be heard,
+// since the rhythm parts only play on beats; or, with the feet stopped, at
+// once.  Apple's recognizer hears the same word a while later: a number from
+// it within SPEECH_FAST_CLAIM_S of one the fast path took is that word again,
+// and is dropped.  A number the fast path wasn't sure of it leaves to Apple.
+// ---------------------------------------------------------------------------
+
+#define SPEECH_FAST_CLAIM_S 3
+
+static NrModel* speech_fast_model;  // speech queue; NULL until learned
+static NrStream* speech_fast_stream;
+static char speech_fast_state[64] = "fast: learning";
+static int speech_fast_unclaimed;   // fast numbers Apple hasn't reported yet
+static uint64_t speech_fast_at;
+
+// A number from Apple's recognizer that the fast path already took.
+static bool speech_fast_claims(const SwAction* action) {
+  if (action->kind != SW_NUMBER || speech_fast_unclaimed == 0) return false;
+  if (now() - speech_fast_at > SPEECH_FAST_CLAIM_S * NS_PER_SEC) {
+    speech_fast_unclaimed = 0;
+    return false;
+  }
+  speech_fast_unclaimed--;
+  printf("apple heard %d too; the fast path already took it\n",
+         action->value);
+  fflush(stdout);
+  return true;
+}
+
+static void speech_fast_take(int number, int quiet_ms) {
+  speech_fast_unclaimed++;
+  speech_fast_at = now();
+  bool feet;
+  speech_due_beat(&feet);
+  bool known;
+  uint64_t beat = speech_beat_ns(&known);
+  SwAction action = {SW_NUMBER, number};
+  LOCK();
+  snprintf(speech_heard_text, sizeof(speech_heard_text), "%d (fast)",
+           number);
+  if (feet) {
+    speech_fast_armed = number;
+    speech_fast_deadline = now() + beat * 3 / 2;
+    snprintf(speech_last_action, sizeof(speech_last_action), "%d …",
+             number);
+  } else {
+    speech_apply_locked(&action);
+  }
+  UNLOCK();
+  printf("fast: heard %d, %dms after the word ended%s\n", number, quiet_ms,
+         feet ? "; on the next beat" : "; no beat, made now");
+  fflush(stdout);
+}
+
+static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
+                                  long long end, bool clear, int quiet,
+                                  bool final) {
+  (void)ctx;
+  if (!speech_fast_model || !clear) return true;
+  float feat[NR_MAX_FRAMES + 2 * NR_PAD][NR_DIM];
+  int n = nr_utterance(s, onset, end, feat);
+  NrResult r = nr_classify(speech_fast_model, feat, n, &s->p, -1, 0, 0);
+  if (r.label >= 0 && quiet >= speech_fast_model->wait[r.label]) {
+    // A tick's worth on top: that's how long the audio waited in the ring.
+    speech_fast_take(r.label + 1, quiet * 10 + SPEECH_TICK_MS);
+    return true;
+  }
+  if (final && r.nearest >= 0 && r.nearest != NR_OTHER) {
+    printf("fast: maybe %s (%.2f, runner-up %.2f), but %s; leaving it to "
+           "apple\n", NR_WORDS[r.nearest], r.dist, r.runner_up,
+           r.why ? r.why : "?");
+    fflush(stdout);
+  }
+  return final;
+}
+
+// Learn from every recording numtrain.h has made, off the speech queue since
+// it reads them all, then hand the result over.  At startup, and again after
+// each new recording.
+static void speech_fast_learn(void) {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+    NSURL* support = [[NSFileManager.defaultManager
+      URLsForDirectory:NSApplicationSupportDirectory
+             inDomains:NSUserDomainMask] firstObject];
+    NSURL* dir =
+      [support URLByAppendingPathComponent:@"net.jefftk.jammer/numbers"];
+    NSArray<NSURL*>* files = [NSFileManager.defaultManager
+      contentsOfDirectoryAtURL:dir includingPropertiesForKeys:nil
+                       options:0 error:nil];
+    NrModel* model = calloc(1, sizeof(NrModel));
+    NrParams p = nr_default_params(SPEECH_GATE_DEFAULT_DB);
+    int session = 0;
+    for (NSURL* file in files) {
+      if (![file.pathExtension isEqualToString:@"wav"]) continue;
+      long long n;
+      double rate;
+      float* x = nr_read_wav(file.path.UTF8String, &n, &rate);
+      NrPrompt* prompts = NULL;
+      float gate_db = SPEECH_GATE_DEFAULT_DB;
+      int n_prompts = nr_read_prompts(
+        [file.URLByDeletingPathExtension URLByAppendingPathExtension:@"tsv"]
+          .path.UTF8String, &prompts, &gate_db);
+      if (x && n_prompts > 0) {
+        // A little below the gate it was recorded with, so the quieter
+        // words are learned too: which prompt was up says what they were.
+        NrParams sp = p;
+        sp.trigger_db = gate_db - 6;
+        nr_learn_session(model, x, n, rate, prompts, n_prompts, &sp,
+                         session++);
+      }
+      free(x);
+      free(prompts);
+    }
+    int numbers = 0;
+    for (int i = 0; i < model->n; i++) {
+      numbers += model->t[i].label != NR_OTHER;
+    }
+    nr_model_finish(model, &p);
+    dispatch_async(speech_queue, ^{
+      if (speech_fast_model) {
+        nr_model_free(speech_fast_model);
+        free(speech_fast_model);
+      }
+      speech_fast_model = numbers > 0 ? model : NULL;
+      if (numbers > 0) {
+        snprintf(speech_fast_state, sizeof(speech_fast_state),
+                 "fast: %d numbers learned", numbers);
+      } else {
+        nr_model_free(model);
+        free(model);
+        snprintf(speech_fast_state, sizeof(speech_fast_state),
+                 "fast: no recordings");
+      }
+      printf("speech %s from %d sessions\n", speech_fast_state, session);
+      fflush(stdout);
+    });
+  });
 }
 
 static void speech_end_task(void);
@@ -570,11 +748,16 @@ static void speech_drain(void) {
     if (v > peak) peak = v;
   }
   atomic_store_explicit(&speech_ring_read, write, memory_order_release);
+  if (speech_record_hook) speech_record_hook(in, (int)available);
 
   LOCK();
   if (peak > speech_level) speech_level = peak;
   speech_gate.threshold = (float)pow(10, speech_gate_db / 20);
+  speech_fast_stream->p.trigger_db = (float)speech_gate_db;
   UNLOCK();
+  if (speech_request && speech_fast_model) {
+    nr_stream_push(speech_fast_stream, in, (int)available);
+  }
 
   long long loud_before = speech_gate.last_loud;
   int n_out = sg_process(&speech_gate, in, (int)available, out);
@@ -638,7 +821,8 @@ static void speech_tick(void) {
     speech_set_state("recognizer unavailable");
   } else if (speech_task && now() - speech_error_at > 5 * NS_PER_SEC) {
     char state[160];
-    snprintf(state, sizeof(state), "listening, %s", speech_dictionary_state);
+    snprintf(state, sizeof(state), "listening, %s, %s",
+             speech_dictionary_state, speech_fast_state);
     speech_set_state(state);
   }
 
@@ -770,6 +954,11 @@ static void speech_start(double sample_rate) {
                 channels:1
              interleaved:NO];
   sg_init(&speech_gate, sample_rate);
+  speech_fast_stream = malloc(sizeof(NrStream));
+  nr_stream_init(speech_fast_stream, sample_rate,
+                 nr_default_params(SPEECH_GATE_DEFAULT_DB),
+                 speech_fast_utterance, NULL);
+  speech_fast_learn();
   whistle_input_tap = speech_tap;
   before_beat_hook = speech_before_beat;
   speech_hints = speech_make_hints();

@@ -46,6 +46,7 @@ static pthread_mutex_t jammer_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // Wants the lock, so here rather than with the other includes.
 #include "speech.h"
+#include "numtrain.h"
 
 // Which device a CoreMIDI source is, passed through as the connection refCon.
 typedef enum {
@@ -1050,6 +1051,7 @@ static void flash_from_speech(int key) {
 @property(strong) NSMenu* whistleMenu;
 @property(strong) NSMenu* speechMenu;
 @property(strong) NSTextField* speechGateCaption;
+@property(strong) NtWindowController* numberSamples;
 @property(strong) NSMenuItem* whistleVolumeItem;
 @property(strong) NSSlider* whistleVolumeSlider;
 - (void)rebuildAudioMenu;
@@ -1340,6 +1342,20 @@ static void flash_from_speech(int key) {
            action:nil keyEquivalent:@""];
   note.enabled = NO;
   [menu addItem:note];
+
+  [menu addItem:[NSMenuItem separatorItem]];
+  NSMenuItem* record = [[NSMenuItem alloc]
+    initWithTitle:@"Record Number Samples..."
+           action:@selector(recordNumberSamples:) keyEquivalent:@""];
+  record.target = self;
+  [menu addItem:record];
+}
+
+// Samples of your voice saying the numbers, for the fast recognizer; see
+// numtrain.h.
+- (void)recordNumberSamples:(id)sender {
+  if (!self.numberSamples) self.numberSamples = [NtWindowController new];
+  [self.numberSamples show];
 }
 
 // A 0-9 knob as a submenu, with what each step actually means beside it where

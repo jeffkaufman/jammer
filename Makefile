@@ -53,7 +53,7 @@ SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h \
             jammermidilib.h voices.h common.h whistle.h whistleinput.h \
-            speech.h speechwords.h Info.plist
+            speech.h speechwords.h numrec.h numtrain.h Info.plist
 
 jammer-mac: $(MAC_SRCS) $(WHISTLE_OBJS)
 	@test -n "$(FLUIDSYNTH)" || \
@@ -101,7 +101,7 @@ app: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
 
 clean-mac:
 	rm -rf jammer-mac $(APP) audition pads speechphrases speechmodel \
-	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build
+	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
 audition: audition.c macapi.h common.h
@@ -128,6 +128,11 @@ speechmodel: speechmodel.swift
 SPEECH_MODEL := speech-model.bin
 $(SPEECH_MODEL): speechphrases speechmodel
 	./speechphrases | ./speechmodel $(SPEECH_MODEL)
+
+# How well the fast number recognizer does on your recordings; see the top of
+# numrec-eval.c.
+numrec-eval: numrec-eval.c numrec.h
+	clang numrec-eval.c -o numrec-eval -std=gnu11 -Wall -O2
 
 # Hear pads as the drone bass and drone chord would play them; see the top
 # of pads.c.

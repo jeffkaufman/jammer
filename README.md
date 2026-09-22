@@ -222,6 +222,25 @@ land on, so it's made the moment it's heard.  Talk
 again before then and it waits for you to finish.  The speech row shows a
 change that's waiting with "…", and jammer's output logs the timing of each.
 
+Numbers also have a faster way in than Apple's recognizer: `numrec.h`, which
+knows only one to seven, in your voice, and hears them 40-120ms after the
+word ends -- as soon as it can be sure the word is over, which for "six",
+with its "k", is longer than for "two".  What it hears goes in on the very
+next beat rather than two beats on, and Apple's recognizer hearing the same
+number a moment later is ignored.  Anything it isn't sure of it leaves to
+Apple.  It only takes a whole word that follows a moment of quiet, so "press
+room two" doesn't count.
+
+It learns your voice from recordings: Speech Recognition > Record Number
+Samples... shows one word at a time in a big window for about four minutes
+-- the numbers, then words it should learn to ignore, then talking, then
+quiet -- and saves the raw microphone and the prompts' timings to
+`~/Library/Application Support/net.jefftk.jammer/numbers/` (`numtrain.h`).
+Every recording there is learned at startup and after each new one; more
+sessions, and ones made with the band playing, make it better.  `make
+numrec-eval && ./numrec-eval` says how well it does on them.  The speech row
+says how many numbers it has learned.
+
 `F5` from here hands the choice back to the feet, and `F9` or `esc` end it.
 The words are `speechwords.h` and the chords `nashville_picks_chord`.
 
