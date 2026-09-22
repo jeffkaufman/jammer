@@ -256,6 +256,40 @@ static NSString* note_name(int note) {
             NSCharacterSet.whitespaceCharacterSet];
 }
 
+// Fonts are looked up once per size and weight and kept.  macOS has, rarely,
+// handed back nil for a system font mid-performance, and a nil font in an
+// attributes dictionary throws, which AppKit treats as fatal inside drawRect.
+// So fall back to plainer fonts, and cache whatever works so it can't
+// disappear later.  May still return nil; the drawing code copes.
+static NSFont* jammer_font(CGFloat size, NSFontWeight weight, bool mono) {
+  static NSMutableDictionary<NSString*, NSFont*>* cache;
+  if (!cache) cache = [NSMutableDictionary dictionary];
+  NSString* cache_key =
+    [NSString stringWithFormat:@"%d %.2f %.3f", mono, size, weight];
+  NSFont* font = cache[cache_key];
+  if (font) return font;
+
+  if (mono) font = [NSFont monospacedSystemFontOfSize:size weight:weight];
+  if (!font) font = [NSFont systemFontOfSize:size weight:weight];
+  if (!font) font = [NSFont systemFontOfSize:size];
+  if (!font) font = [NSFont userFontOfSize:size];
+  if (font) cache[cache_key] = font;
+  return font;
+}
+
+static NSFont* mono_font(CGFloat size, NSFontWeight weight) {
+  return jammer_font(size, weight, true);
+}
+
+static NSFont* ui_font(CGFloat size, NSFontWeight weight) {
+  return jammer_font(size, weight, false);
+}
+
+static CGFloat text_width(NSString* s, NSFont* font) {
+  if (!s || !font) return 0;
+  return [s sizeWithAttributes:@{NSFontAttributeName: font}].width;
+}
+
 @implementation JammerView
 
 - (BOOL)isFlipped { return YES; }
@@ -319,6 +353,7 @@ static NSString* note_name(int note) {
               font:(NSFont*)font
              color:(NSColor*)color
            centered:(BOOL)centered {
+  if (!s || !font || !color) return;  // a blank label beats a crash on stage
   NSMutableParagraphStyle* style =
     [[NSMutableParagraphStyle defaultParagraphStyle] mutableCopy];
   style.alignment = centered ? NSTextAlignmentCenter : NSTextAlignmentLeft;
@@ -335,6 +370,7 @@ static NSString* note_name(int note) {
               inRect:(NSRect)rect
                 font:(NSFont*)font
                color:(NSColor*)color {
+  if (!s || !font) return;
   NSInteger lines = [[s componentsSeparatedByString:@"\n"] count];
   CGFloat text_h = lines * font.pointSize * 1.22;
   [self drawString:s
@@ -399,8 +435,7 @@ static NSString* note_name(int note) {
   [self drawString:@(key->cap)
             inRect:NSMakeRect(r.origin.x + 6, r.origin.y + 3,
                               r.size.width - 10, cap_size + 5)
-              font:[NSFont monospacedSystemFontOfSize:cap_size
-                                               weight:NSFontWeightBold]
+              font:mono_font(cap_size, NSFontWeightBold)
              color:cap_color
           centered:NO];
 
@@ -454,9 +489,8 @@ static NSString* note_name(int note) {
   if (!shortname) {
     [self drawCentered:text
                 inRect:body
-                  font:[NSFont systemFontOfSize:
-                                 clamped(r.size.height * 0.19, 9, 24)
-                                         weight:NSFontWeightSemibold]
+                  font:ui_font(clamped(r.size.height * 0.19, 9, 24),
+                                NSFontWeightSemibold)
                  color:text_color];
     return;
   }
@@ -469,15 +503,13 @@ static NSString* note_name(int note) {
   [self drawCentered:@(shortname)
               inRect:NSMakeRect(body.origin.x, body.origin.y,
                                 body.size.width, short_h)
-                font:[NSFont systemFontOfSize:short_size
-                                       weight:NSFontWeightHeavy]
+                font:ui_font(short_size, NSFontWeightHeavy)
                color:text_color];
   [self drawCentered:text
               inRect:NSMakeRect(body.origin.x, body.origin.y + short_h,
                                 body.size.width, body.size.height - short_h)
-                font:[NSFont systemFontOfSize:
-                               clamped(r.size.height * 0.145, 8.5, 17)
-                                       weight:NSFontWeightSemibold]
+                font:ui_font(clamped(r.size.height * 0.145, 8.5, 17),
+                              NSFontWeightSemibold)
                color:[text_color colorWithAlphaComponent:0.82]];
 }
 
@@ -491,12 +523,10 @@ static NSString* note_name(int note) {
 
   // Line 1: the key, which is a button -- click it to pick another -- then
   // the mode, tempo and air.
-  NSFont* note_font = [NSFont monospacedSystemFontOfSize:30
-                                                  weight:NSFontWeightBold];
+  NSFont* note_font = mono_font(30, NSFontWeightBold);
   NSString* note_text = [NSString stringWithFormat:@"%@ ▾",
                          note_name(snapshot.root_note)];
-  CGFloat note_w =
-    [note_text sizeWithAttributes:@{NSFontAttributeName: note_font}].width;
+  CGFloat note_w = text_width(note_text, note_font);
 
   root_note_rect = NSMakeRect(VIEW_PAD, 8, note_w + 26, 44);
   NSBezierPath* pill = [NSBezierPath bezierPathWithRoundedRect:root_note_rect
@@ -519,8 +549,7 @@ static NSString* note_name(int note) {
   CGFloat rest_x = NSMaxX(root_note_rect) + 18;
   [self drawString:line
             inRect:NSMakeRect(rest_x, 14, b.size.width - rest_x - VIEW_PAD, 36)
-              font:[NSFont monospacedSystemFontOfSize:25
-                                               weight:NSFontWeightMedium]
+              font:mono_font(25, NSFontWeightMedium)
              color:[NSColor colorWithWhite:0.95 alpha:1]
           centered:NO];
 
@@ -541,8 +570,7 @@ static NSString* note_name(int note) {
 
   [self drawString:playing
             inRect:NSMakeRect(VIEW_PAD, 58, width, 26)
-              font:[NSFont monospacedSystemFontOfSize:19
-                                               weight:NSFontWeightMedium]
+              font:mono_font(19, NSFontWeightMedium)
              color:[NSColor colorWithSRGBRed:0.24 green:0.85
                                         blue:0.47 alpha:1]
           centered:NO];
@@ -556,8 +584,7 @@ static NSString* note_name(int note) {
 // One entry per MIDI source, with a dot that lights when something arrives and
 // the last message alongside it.
 - (void)drawMidiRow {
-  NSFont* font = [NSFont monospacedSystemFontOfSize:17
-                                             weight:NSFontWeightRegular];
+  NSFont* font = mono_font(17, NSFontWeightRegular);
   CGFloat x = VIEW_PAD;
   CGFloat y = 90;
 
@@ -596,7 +623,7 @@ static NSString* note_name(int note) {
             note_str(a->data1), a->data1 / 12 - 1, a->data2];
     }
 
-    CGFloat w = [text sizeWithAttributes:@{NSFontAttributeName: font}].width;
+    CGFloat w = text_width(text, font);
     [self drawString:text
               inRect:NSMakeRect(x, y, w + 6, 24)
                 font:font
@@ -609,8 +636,7 @@ static NSString* note_name(int note) {
 // Where the sound is going, and how loud, on a row of its own -- both are set
 // from the Audio Output menu and both are worth checking before a gig.
 - (void)drawAudioRow {
-  NSFont* font = [NSFont monospacedSystemFontOfSize:17
-                                             weight:NSFontWeightRegular];
+  NSFont* font = mono_font(17, NSFontWeightRegular);
   CGFloat y = 120;
 
   NSString* audio = [NSString stringWithFormat:@"♪ %s   vol %d%%",
@@ -629,8 +655,7 @@ static NSString* note_name(int note) {
 // whistle is broken" otherwise, and a level meter is how you set the gate and
 // the full-blow level from the menu without guessing.
 - (void)drawWhistleRow {
-  NSFont* font = [NSFont monospacedSystemFontOfSize:17
-                                             weight:NSFontWeightRegular];
+  NSFont* font = mono_font(17, NSFontWeightRegular);
   CGFloat y = 150;
   NSColor* whistle_color = [NSColor colorWithSRGBRed:1.00 green:0.42
                                                 blue:0.66 alpha:1];
@@ -695,8 +720,7 @@ static NSString* note_name(int note) {
 // did about them.  Without this a recognizer that isn't working looks the
 // same as one hearing nothing it knows.
 - (void)drawSpeechRow {
-  NSFont* font = [NSFont monospacedSystemFontOfSize:17
-                                             weight:NSFontWeightRegular];
+  NSFont* font = mono_font(17, NSFontWeightRegular);
   CGFloat y = 180;
   NSColor* color = [NSColor colorWithSRGBRed:0.45 green:0.78
                                         blue:1.00 alpha:1];
@@ -709,8 +733,7 @@ static NSString* note_name(int note) {
     : strncmp(snapshot.speech_state, "off", 3) == 0
       ? [color colorWithAlphaComponent:0.5]
       : [NSColor colorWithSRGBRed:0.80 green:0.45 blue:0.45 alpha:1];
-  NSDictionary* attrs = @{NSFontAttributeName: font};
-  CGFloat state_w = [state sizeWithAttributes:attrs].width;
+  CGFloat state_w = text_width(state, font);
   [self drawString:state
             inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
               font:font
@@ -781,8 +804,7 @@ static NSString* note_name(int note) {
 
 - (void)showRootNotePicker {
   NSMenu* menu = [[NSMenu alloc] initWithTitle:@"Key"];
-  menu.font = [NSFont monospacedSystemFontOfSize:16
-                                          weight:NSFontWeightMedium];
+  menu.font = mono_font(16, NSFontWeightMedium);
   for (int i = 0; i < 12; i++) {
     int note = to_root(i);
     NSMenuItem* item = [menu addItemWithTitle:note_name(note)
@@ -1390,8 +1412,7 @@ static void flash_from_speech(int key) {
                                                 action:NULL
                                          keyEquivalent:@""];
   NSMenu* submenu = [[NSMenu alloc] initWithTitle:title];
-  submenu.font = [NSFont monospacedSystemFontOfSize:13
-                                             weight:NSFontWeightRegular];
+  submenu.font = mono_font(13, NSFontWeightRegular);
   for (int note = whistle_lowest_note(); note <= whistle_highest_note();
        note++) {
     NSString* label = [NSString stringWithFormat:@"%@%d",
