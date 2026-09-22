@@ -102,7 +102,7 @@ static const Key KEYS[] = {
   // Drum Some, with a whistled note choosing the chord instead of the feet.
   // F8 used to arm three-digit root-note entry, which the status bar's note
   // picker does now, so it sends its own pseudo-note rather than F8's.
-  {kVK_F8, WHISTLE_PICKS, 0, "F8", NULL, "SPEECH\nRECOG", GROUP_GLOBAL,
+  {kVK_F8, WHISTLE_PICKS, 0, "F8", "SR", "SPEECH\nRECOG", GROUP_GLOBAL,
    LIT_GLOBAL_FLAG, GLOBAL_WHISTLE_PICKS, NOLABEL, 0, 9, 1},
   {kVK_F9, F9, 0, "F9", "DCN", "DRUM\nCHOOSES", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
    GLOBAL_DRUM_CHOOSES, NOLABEL, 0, 10, 1},

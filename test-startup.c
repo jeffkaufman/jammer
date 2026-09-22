@@ -18,6 +18,7 @@
 
 static int cc11[16], cc7[16], prog[16], bank[16];
 static bool saw_cc11[16];
+static int note_ons[16];  // how many note-ons each channel has been sent
 
 uint64_t now(void) {
   struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -29,6 +30,7 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   if (action == MIDI_CC && note == 0x0b) { cc11[endpoint] = velocity;
                                            saw_cc11[endpoint] = true; }
   if (action == MIDI_CC && note == 0x07) cc7[endpoint] = velocity;
+  if (action == MIDI_ON) note_ons[endpoint]++;
 }
 void choose_voice(int channel, int bank_num, int voice) {
   prog[channel] = voice;
@@ -112,6 +114,48 @@ int main(void) {
   }
   CHECK(cc11[CHANNEL_PITCHED_KICK] == MAX_FADE,
         "pitched-kick channel still silent after reset following a fade-out");
+
+  // Changing a sounding drone's voice has to strike its note again: a program
+  // change doesn't reach notes already sounding, and the old note has just
+  // been silenced.  It used to be left off, because the drone still thought
+  // the note was sounding.
+  c->selected_endpoint = ENDPOINT_DRONE_BASS;
+  toggle_endpoint(ENDPOINT_DRONE_BASS);
+  CHECK(c->on[ENDPOINT_DRONE_BASS], "the drone should be on");
+  int before = note_ons[ENDPOINT_DRONE_BASS];
+  select_voice(c, 89);  // warm pad
+  CHECK(note_ons[ENDPOINT_DRONE_BASS] > before,
+        "changing the drone's voice left it silent");
+  toggle_endpoint(ENDPOINT_DRONE_BASS);
+
+  // A chord picked by voice, or a key change, reaches the drones at once --
+  // bass and chord both -- with no beat needed to carry it.
+  handle_keypad(MIDI_ON, WHISTLE_PICKS, 64);  // F8: the whistle/voice choosing
+  CHECK(whistle_chooses_notes, "F8 should switch on the whistle choosing");
+  for (int e = ENDPOINT_DRONE_BASS; e <= ENDPOINT_DRONE_CHORD; e++) {
+    c->selected_endpoint = e;
+    if (!c->on[e]) toggle_endpoint(e);
+  }
+  int bass_before = note_ons[ENDPOINT_DRONE_BASS];
+  int chord_before = note_ons[ENDPOINT_DRONE_CHORD];
+  nashville_picks_chord(4);
+  CHECK(note_ons[ENDPOINT_DRONE_BASS] > bass_before,
+        "the drone bass didn't move to the IV");
+  CHECK(note_ons[ENDPOINT_DRONE_CHORD] > chord_before,
+        "the drone chord didn't move to the IV");
+  bass_before = note_ons[ENDPOINT_DRONE_BASS];
+  chord_before = note_ons[ENDPOINT_DRONE_CHORD];
+  nashville_picks_chord(6);
+  CHECK(note_ons[ENDPOINT_DRONE_BASS] > bass_before &&
+        note_ons[ENDPOINT_DRONE_CHORD] > chord_before,
+        "the drones didn't move to the vi");
+  bass_before = note_ons[ENDPOINT_DRONE_BASS];
+  int vi = active_note();
+  change_key(root_note + 2);
+  CHECK(note_ons[ENDPOINT_DRONE_BASS] > bass_before,
+        "a key change didn't reach the drone bass");
+  CHECK(active_note() == to_root(vi + 2) && active_chord() == to_root(vi + 2),
+        "a key change should move the vi with it, not leave it behind");
 
   if (failures) { printf("\n%d failure(s)\n", failures); return 1; }
   printf("\nstartup tests passed: every endpoint audible\n");

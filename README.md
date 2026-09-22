@@ -227,9 +227,8 @@ comes in on the three, however long the recognizer took.  On the beat itself
 just before its notes, since arriving a few milliseconds after it would only
 be heard on the next note.  Heard too late for its beat -- recognition
 sometimes takes longer than two beats -- it goes on the next beat instead: a
-beat late, but still on a beat.  With the pedals stopped it's timed from the
-last tempo, and with no tempo at all it's two beats at 116 BPM after you
-stopped.  Talk
+beat late, but still on a beat.  With the pedals stopped there's no beat to
+land on, so it's made the moment it's heard.  Talk
 again before then and it waits for you to finish.  The speech row shows a
 change that's waiting with "…", and jammer's output logs the timing of each.
 

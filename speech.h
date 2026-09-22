@@ -217,10 +217,8 @@ static void speech_apply_locked(const SwAction* action) {
 // little early, up to SPEECH_EARLY_FRACTION of a beat, still counts.
 //
 // If the feet have stopped -- no pedal hit in the last beat and a half --
-// there's no beat to wait for, so it's made on a timer a millisecond before
-// the beat the grid says would have come.  If they stop in the half beat
-// after it's armed, it's made half a beat late.  With no tempo at all, two
-// beats at 116 BPM after the talking stopped, less the millisecond.
+// there's no beat to land on, so it's made the moment it's heard, talking or
+// not.  If they stop in the half beat after it's armed, it's made then.
 // ---------------------------------------------------------------------------
 
 #define SPEECH_BEATS_AFTER 2
@@ -312,7 +310,25 @@ static void speech_run_pending(void) {
   }
   UNLOCK();
 
-  if (speech_n_pending == 0 || speech_gate_open) return;  // still talking
+  if (speech_n_pending == 0) return;
+
+  // No beat to land on: now.
+  bool feet;
+  speech_due_beat(&feet);
+  if (!feet) {
+    printf("timing: no beat; made %ldms after you stopped\n",
+           speech_ms_since_stop());
+    LOCK();
+    for (int i = 0; i < speech_n_pending; i++) {
+      speech_apply_locked(&speech_pending[i]);
+    }
+    UNLOCK();
+    speech_n_pending = 0;
+    speech_moved_due = 0;
+    return;
+  }
+
+  if (speech_gate_open) return;  // still talking
   bool known;
   uint64_t beat = speech_beat_ns(&known);
   bool on_grid;

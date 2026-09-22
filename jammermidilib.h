@@ -728,7 +728,15 @@ void maybe_end_pitched_kick() {
   if (now() >= pitched_kick_off_at) end_pitched_kick();
 }
 
+void drone_endpoint_off(int endpoint);
+
 void select_voice(struct Configuration* c, int voice) {
+  // A held note has to be struck again to sound in the new voice, and a
+  // drone only strikes a note it doesn't think is already sounding -- so it
+  // has to forget this one, or changing a pad's voice silences it.
+  if (holds_bass_note(c->selected_endpoint)) {
+    drone_endpoint_off(c->selected_endpoint);
+  }
   endpoint_notes_off(c->selected_endpoint);
   c->voices[c->selected_endpoint] = voice;
   reload_voice_setting(c);
@@ -1516,7 +1524,15 @@ void nashville_picks_chord(int number) {
 }
 
 // Play in another key: the root the bass lines and drones are built on.
+// When the drum, the whistle or a voice has picked a chord, that chord moves
+// with the key -- the IV stays the IV -- or everything built on it would stay
+// in the old key until the next chord was picked.
 void change_key(int pitch_class) {
+  int shift = to_root(pitch_class) - root_note;
+  current_drum_pedal_note = to_root(current_drum_pedal_note + shift);
+  last_drum_pedal_note = to_root(last_drum_pedal_note + shift);
+  chord_note = to_root(chord_note + shift);
+  prev_chord_note = to_root(prev_chord_note + shift);
   root_note = to_root(pitch_class);
   fifth_note = to_root(root_note + 7);
   update_bass(/*force_refresh=*/false);
@@ -2389,14 +2405,15 @@ uint64_t tick_n = 0;
 uint64_t subtick_n = 0;
 void jml_tick() {
 
-  // play startup chime
+  // play startup chime, quietly: it's to say the rig is up, not to be heard
+  // across the room
   if (tick_n == 0) {
-    psend_midi(MIDI_ON, 28, 100, ENDPOINT_LOW);
+    psend_midi(MIDI_ON, 28, 30, ENDPOINT_LOW);
   } else if (tick_n == 500) {
-    psend_midi(MIDI_OFF, 28, 100, ENDPOINT_LOW);
-    psend_midi(MIDI_ON, 33, 100, ENDPOINT_LOW);
+    psend_midi(MIDI_OFF, 28, 30, ENDPOINT_LOW);
+    psend_midi(MIDI_ON, 33, 30, ENDPOINT_LOW);
   } else if (tick_n == 2000) {
-    psend_midi(MIDI_OFF, 33, 100, ENDPOINT_LOW);
+    psend_midi(MIDI_OFF, 33, 30, ENDPOINT_LOW);
   }
 
   // Called every TICK_MS
