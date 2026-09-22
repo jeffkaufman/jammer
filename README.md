@@ -153,29 +153,19 @@ keyboard keys with the mouse too, shift-clicking to select.
 
 Unlike the Pi, there's no three-digit entry on `F8` or `delete`: the root note
 comes from that picker, and manual per-voice volumes aren't something worth
-typing blind.  `F8` is the whistle choosing the chord instead -- see below.
+typing blind.  `F8` is speech recognition instead -- see below.
 
-### The whistle picks the chord
+### Speech recognition
 
-`F8` is Drum Some (`F5`) with the whistle choosing the chord instead of pedals
-1, 3 and 4, which go back to only keeping time.  Whistle a single clear note
-and it snaps to whichever of Drum Some's four chords has the nearest root --
-pedal 3, 4, 1, or 3+4 -- in the current key and in the mode the arrow keys
-picked.  In D major those are D, G, B and A.  A note exactly between two roots
-changes nothing.
+`F8` is Drum Some (`F5`) with your voice choosing the chord instead of pedals
+1, 3 and 4, which go back to only keeping time.  It listens on the whistle's
+microphone, which has to be set up, though the whistle bass doesn't have to
+be on.
 
-A note counts once it's lasted 150ms and then stopped: the chord changes when
-you stop whistling, not when you start, so a scoop into the note can't pick
-the chord it passed through.  Its pitch is the average over the note,
-weighted to the middle.  "Clear" and "above the background" are the
-whistle's own gate, in the Whistle menu; the whistle's microphone has to be
-set up, but the whistle bass doesn't have to be on.
-
-You can also say a Nashville number, one to seven, into the same microphone:
-the chord goes straight to that degree of the major key on the root -- 1 I,
-2 ii, 3 iii, 4 IV, 5 V, 6 vi, 7 vii° -- whatever the arrow keys say.  Only the
-words and digits count, not "to" or "for", so talking to the room doesn't
-change chords.  It's Apple's on-device speech recognition (`speech.h`); the
+Say a Nashville number, one to seven, and the chord goes to that degree of
+the major key on the root -- 1 I, 2 ii, 3 iii, 4 IV, 5 V, 6 vi, 7 vii° --
+whatever the arrow keys say.  Only the words and digits count, not "to" or
+"for", so talking to the room doesn't change chords.  It's Apple's on-device speech recognition (`speech.h`); the
 first time `F8` goes on, macOS asks permission.  So that a bare `jammer-mac`
 can ask, `Info.plist` is linked into it, which also means running it from a
 terminal now shares `Jammer.app`'s saved settings.
@@ -233,9 +223,7 @@ again before then and it waits for you to finish.  The speech row shows a
 change that's waiting with "…", and jammer's output logs the timing of each.
 
 `F5` from here hands the choice back to the feet, and `F9` or `esc` end it.
-The note tracking is `whistlenote.h`; the snapping is
-`drum_some_pedal_for_note` in `jammermidilib.h`; the words are
-`speechwords.h` and the chords `nashville_picks_chord`.
+The words are `speechwords.h` and the chords `nashville_picks_chord`.
 
 ### Building
 

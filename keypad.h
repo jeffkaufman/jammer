@@ -44,11 +44,11 @@ static bool global_flag(int flag) {
   switch (flag) {
   case GLOBAL_JIG:                return jig_time;
   case GLOBAL_DRUM_CHOOSES:       return drum_chooses_notes;
-  // Drum Some is on underneath the whistle choosing, but it's F8 that lights
-  // for that: F5 lit means the feet are choosing.
+  // Drum Some is on underneath speech choosing, but it's F8 that lights for
+  // that: F5 lit means the feet are choosing.
   case GLOBAL_DRUM_CHOOSES_SOME:
-    return drum_chooses_some_notes && !whistle_chooses_notes;
-  case GLOBAL_WHISTLE_PICKS:      return whistle_chooses_notes;
+    return drum_chooses_some_notes && !speech_chooses_notes;
+  case GLOBAL_SPEECH_PICKS:       return speech_chooses_notes;
   case GLOBAL_ALL_DRUMS_DOWNBEAT: return allow_all_drums_downbeat;
   case GLOBAL_FADED:              return fade_target == 0;
   }

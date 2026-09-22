@@ -117,7 +117,7 @@ typedef struct {
   char whistle_device[WHISTLE_DEVICE_NAME_MAX];
   char whistle_error[256];
 
-  // Speech, for the whistle choosing the chord.
+  // Speech recognition (F8).
   char speech_state[160];
   char speech_heard[200];
   char speech_action[64];
@@ -689,7 +689,7 @@ static NSString* note_name(int note) {
           centered:NO];
 }
 
-// Speech, for the whistle choosing the chord: whether it's listening, how
+// Speech recognition (F8): whether it's listening, how
 // loud what it's listening to is, what words it's hearing, and what it last
 // did about them.  Without this a recognizer that isn't working looks the
 // same as one hearing nothing it knows.
@@ -988,7 +988,6 @@ static void* tick_thread(void* unused) {
   while (true) {
     LOCK();
     jml_tick();
-    whistle_poll_picked_note();
     UNLOCK();
 
     next += TICK_MS * 1000000LL;
@@ -1033,7 +1032,7 @@ static void start_tick_thread() {
 @class JammerAppDelegate;
 static JammerAppDelegate* app_delegate;  // NSApp.delegate is weak; this owns it
 
-// "press ..." said to the whistle picking the chord (speech.h) strikes the key
+// "press ..." said with speech recognition on (speech.h) strikes the key
 // itself, on the beat; this is just the flash that shows it happened.
 static __weak JammerView* spoken_view;
 static void flash_from_speech(int key) {

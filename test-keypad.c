@@ -696,87 +696,20 @@ static void test_drones() {
         "the pitched kick is sitting on endpoint %d", CHANNEL_PITCHED_KICK);
 }
 
-// Feeds a steady pitch for a while, in 5ms blocks, the way the audio thread
-// would.  Returns true if a note finished during it.
-static bool feed_for(WhistleNoteTracker* t, double midi, double seconds,
-                     double* pitch) {
-  bool done = false;
-  double hz = midi > 0 ? 440.0 * pow(2, (midi - 69) / 12.0) : 0;
-  for (double s = 0; s < seconds - 1e-9; s += 0.005) {
-    if (wn_feed(t, midi > 0, hz, 0.005, pitch)) done = true;
-  }
-  return done;
-}
-
-// The whistle choosing the chord: turning a stream of pitches into notes, the
-// notes into Drum Some's chords, and the key that switches it.
-static void test_whistle_picks() {
-  WhistleNoteTracker t;
-  wn_reset(&t);
-  double pitch = -1;
-
-  // A scoop up from a whole tone below into an A, held, then released: the
-  // held note is what counts, and only once it has stopped.
-  CHECK(!feed_for(&t, 79, 0.04, &pitch), "reported during the scoop");
-  CHECK(!feed_for(&t, 80, 0.03, &pitch), "reported during the scoop");
-  CHECK(!feed_for(&t, 81, 0.40, &pitch), "reported while still sounding");
-  CHECK(!feed_for(&t, 0, 0.02, &pitch), "reported before the gap was long");
-  CHECK(feed_for(&t, 0, 0.10, &pitch), "a held note never finished");
-  CHECK(fabs(pitch - 81) < 0.25, "scoop into A came out as %.2f", pitch);
-
-  // Too short to count.
-  CHECK(!feed_for(&t, 81, 0.10, &pitch) && !feed_for(&t, 0, 0.2, &pitch),
-        "a 100ms blip counted as a note");
-
-  // The detector dropping out briefly doesn't split one note into two.
-  pitch = -1;
-  bool early = feed_for(&t, 76, 0.10, &pitch);
-  early |= feed_for(&t, 0, 0.02, &pitch);
-  early |= feed_for(&t, 76, 0.10, &pitch);
-  CHECK(!early, "a 20ms dropout ended the note");
-  CHECK(feed_for(&t, 0, 0.1, &pitch) && fabs(pitch - 76) < 0.25,
-        "the note either side of a dropout didn't count as one");
-
-  // Snapping, in D major: I D, IV G, V A, vi B.
+// F8, speech recognition: Drum Some with a spoken number choosing the chord
+// instead of the feet, and how it gives way to the other ways of choosing.
+static void test_speech_picks() {
   full_reset();
-  root_note = to_root(26);
+  root_note = to_root(26);  // D
   fifth_note = to_root(root_note + 7);
-  drum_chooses_some_notes = true;
-  musical_mode = MODE_MAJOR;
-  CHECK(drum_some_pedal_for_note(81) == MIDI_PEDAL_34, "A should be V");
-  CHECK(drum_some_pedal_for_note(79) == MIDI_PEDAL_4, "G should be IV");
-  CHECK(drum_some_pedal_for_note(74) == MIDI_PEDAL_3, "D should be I");
-  CHECK(drum_some_pedal_for_note(83) == MIDI_PEDAL_1, "B should be vi");
-  CHECK(drum_some_pedal_for_note(72) == MIDI_PEDAL_1,
-        "C is a semitone from B and a tone from D, so vi");
-  CHECK(drum_some_pedal_for_note(80) == -1,
-        "G# is between G and A; a tie should pick nothing");
-  // Minor: i D, bVII C, V A, bVI Bb.
-  musical_mode = MODE_MINOR;
-  CHECK(drum_some_pedal_for_note(82) == MIDI_PEDAL_34, "Bb should be bVI");
-  CHECK(drum_some_pedal_for_note(72) == MIDI_PEDAL_4, "C should be bVII");
-  // Freygish gives the I to two pedals; that isn't a tie.
-  musical_mode = MODE_BETH_COHENS;
-  CHECK(drum_some_pedal_for_note(74) >= 0, "D in Freygish should be the I");
-
-  // The key: F8 switches it on, with Drum Some underneath and lit as F8.
-  full_reset();
-  root_note = to_root(26);
-  fifth_note = to_root(root_note + 7);
-  whistle_picks_note(81);
-  CHECK(active_note() == root_note, "whistling did something with it off");
   press("F8");
-  CHECK(whistle_chooses_notes && drum_chooses_some_notes,
-        "F8 didn't switch on the whistle choosing");
+  CHECK(speech_chooses_notes && drum_chooses_some_notes,
+        "F8 didn't switch on speech choosing");
   CHECK(lit("F8") && !lit("F5"), "F8 should light, and F5 shouldn't");
 
-  whistle_picks_note(81);  // A
-  CHECK(active_note() == to_root(33), "whistling A didn't pick the V");
-  whistle_picks_note(83);  // B
+  nashville_picks_chord(6);
   CHECK(active_note() == to_root(35) && chord_type == CHORD_MINOR,
-        "whistling B didn't pick the vi, minor");
-  whistle_picks_note(80);  // G#, a tie
-  CHECK(active_note() == to_root(35), "a tie changed the chord");
+        "six should pick the vi, minor");
 
   // The feet keep time but don't choose.
   handle_feet(MIDI_ON, MIDI_PEDAL_3, 100);
@@ -785,7 +718,7 @@ static void test_whistle_picks() {
 
   // F5 hands the choice back to the feet, leaving Drum Some on.
   press("F5");
-  CHECK(!whistle_chooses_notes && drum_chooses_some_notes && lit("F5"),
+  CHECK(!speech_chooses_notes && drum_chooses_some_notes && lit("F5"),
         "F5 should switch to the feet choosing");
   handle_feet(MIDI_ON, MIDI_PEDAL_4, 100);
   CHECK(active_note() == to_root(26 + 5), "the feet didn't take over");
@@ -795,17 +728,17 @@ static void test_whistle_picks() {
   // F8 off takes Drum Some with it; F9 and escape both end it.
   press("F8");
   press("F8");
-  CHECK(!whistle_chooses_notes && !drum_chooses_some_notes,
+  CHECK(!speech_chooses_notes && !drum_chooses_some_notes,
         "F8 off should leave neither on");
   press("F8");
   press("F9");
-  CHECK(drum_chooses_notes && !whistle_chooses_notes &&
-        !drum_chooses_some_notes, "F9 should take over from the whistle");
+  CHECK(drum_chooses_notes && !speech_chooses_notes &&
+        !drum_chooses_some_notes, "F9 should take over from speech");
   press("F9");
   press("F8");
   press("esc");
-  CHECK(!whistle_chooses_notes && !drum_chooses_some_notes,
-        "escape should end the whistle choosing");
+  CHECK(!speech_chooses_notes && !drum_chooses_some_notes,
+        "escape should end speech choosing");
 }
 
 static SwAction next_action(const char* const* words, int n, int* consumed,
@@ -1187,12 +1120,6 @@ static void test_nashville_chords() {
   nashville_picks_chord(0);
   CHECK(active_note() == to_root(25), "out-of-range numbers did something");
 
-  // Numbers and whistled notes take turns.
-  musical_mode = MODE_MAJOR;
-  whistle_picks_note(81);  // A
-  CHECK(active_note() == to_root(33), "whistling after a number didn't work");
-  nashville_picks_chord(2);
-  CHECK(active_note() == to_root(28), "a number after whistling didn't work");
   press("esc");
 }
 
@@ -1216,7 +1143,7 @@ int main() {
   test_extra_footbasses();
   test_drones();
   test_whistle();
-  test_whistle_picks();
+  test_speech_picks();
   test_nashville_numbers();
   test_spoken_presses();
   test_nashville_chords();

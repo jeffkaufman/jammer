@@ -94,10 +94,10 @@
 #define DOWN (112)
 #define RIGHT (113)
 #define TAB (114)
-// Not a key kbd.py has: the Mac's F8 sends this to switch the whistle to
+// Not a key kbd.py has: the Mac's F8 sends this to switch speech to
 // choosing the notes.  F8 itself still arms root-note entry on the Pi.  127
 // because the values past TAB are the lowercase letters, which are taken.
-#define WHISTLE_PICKS (127)
+#define SPEECH_PICKS (127)
 
 #define MODE_MAJOR 1
 #define MODE_MIXO 2
@@ -401,12 +401,12 @@ bool jig_time;
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
 bool drum_chooses_some_notes;
-// Drum Some with the whistle choosing instead of the feet: a whistled note
-// picks whichever of Drum Some's four chords it's nearest, and pedals 1, 3
-// and 4 go back to only keeping time.  drum_chooses_some_notes stays on
-// underneath, since everything downstream of the choice is Drum Some's.  The
-// whistle is Mac-only, so on the Pi nothing ever sets this.
-bool whistle_chooses_notes;
+// Drum Some with speech choosing instead of the feet: a spoken Nashville
+// number picks the chord (nashville_picks_chord, from speech.h), and pedals
+// 1, 3 and 4 go back to only keeping time.  drum_chooses_some_notes stays on
+// underneath, since everything downstream of the choice is Drum Some's.
+// Speech is Mac-only, so on the Pi nothing ever sets this.
+bool speech_chooses_notes;
 int musical_mode;
 int most_recent_drum_pedal;
 uint64_t most_recent_choosy_drum_ts;
@@ -948,7 +948,7 @@ void clear_status() {
 
   drum_chooses_notes = false;
   drum_chooses_some_notes = false;
-  whistle_chooses_notes = false;
+  speech_chooses_notes = false;
   musical_mode = MODE_MAJOR;
   most_recent_drum_pedal = MIDI_PEDAL_2;
   most_recent_choosy_drum_ts = 0;
@@ -1394,7 +1394,7 @@ void count_drum_hit(int note_in) {
   // affect the most recent pedal; otherwise we want to use all
   // pedals.
   if (drum_chooses_notes ||
-      (drum_chooses_some_notes && !whistle_chooses_notes &&
+      (drum_chooses_some_notes && !speech_chooses_notes &&
        (note_in == MIDI_PEDAL_1 ||
 	note_in == MIDI_PEDAL_3 ||
 	note_in == MIDI_PEDAL_4))) {
@@ -1447,59 +1447,7 @@ void count_drum_hit(int note_in) {
   }
 }
 
-// Drum Some's four choices: pedal 3, pedal 4, pedal 1, and 3 and 4 together.
-// Pedals 1+3 and 4+1 pick chords too, but they are chords you reach by
-// combining, and the whistle only has the one note to offer.
-static const int DRUM_SOME_PEDALS[] = {
-  MIDI_PEDAL_3, MIDI_PEDAL_4, MIDI_PEDAL_1, MIDI_PEDAL_34,
-};
-#define N_DRUM_SOME_PEDALS \
-  ((int)(sizeof(DRUM_SOME_PEDALS) / sizeof(DRUM_SOME_PEDALS[0])))
-
-// Semitones between two notes' pitch classes, the short way round.
-static int pitch_class_distance(int a, int b) {
-  int d = ((a - b) % 12 + 12) % 12;
-  return d > 6 ? 12 - d : d;
-}
-
-// Which of Drum Some's pedals a whistled MIDI note is nearest to, by pitch
-// class against the root each would pick in the current key and mode, or -1
-// if it falls exactly between two different roots.  A tie is left alone
-// rather than guessed at: the note that sits between two chords is the one
-// most likely to have been a passing note.  Two pedals landing on the same
-// root isn't a tie -- Freygish gives the I to both 3 and 1.
-int drum_some_pedal_for_note(int midi_note) {
-  int best_pedal = -1, best_root = -1, best_distance = 99;
-  bool tied = false;
-  for (int i = 0; i < N_DRUM_SOME_PEDALS; i++) {
-    int ignored;
-    int root = pedal_note(DRUM_SOME_PEDALS[i], &ignored);
-    int distance = pitch_class_distance(midi_note, root);
-    if (distance < best_distance) {
-      best_pedal = DRUM_SOME_PEDALS[i];
-      best_root = root;
-      best_distance = distance;
-      tied = false;
-    } else if (distance == best_distance &&
-               pitch_class_distance(root, best_root) != 0) {
-      tied = true;
-    }
-  }
-  return tied ? -1 : best_pedal;
-}
-
-// A whistled note has finished: pick the chord it's nearest, exactly as if
-// that pedal had been pressed in Drum Some.
-void whistle_picks_note(int midi_note) {
-  if (!whistle_chooses_notes) return;
-  int pedal = drum_some_pedal_for_note(midi_note);
-  if (pedal < 0) return;
-  most_recent_drum_pedal = pedal;
-  update_drum_pedal_note();
-  update_bass(/*force_refresh=*/false);
-}
-
-// A spoken Nashville number, 1-7, while the whistle is choosing: that degree
+// A spoken Nashville number, 1-7, while speech is choosing: that degree
 // of the major scale on the root, with the chord the major key puts there --
 // I ii iii IV V vi vii-diminished.  Always the major key, whatever the arrow
 // keys say, the way a number chart reads; the arrows still steer what the
@@ -1510,7 +1458,7 @@ void nashville_picks_chord(int number) {
     CHORD_MAJOR, CHORD_MINOR, CHORD_MINOR, CHORD_MAJOR, CHORD_MAJOR,
     CHORD_MINOR, CHORD_DIM,
   };
-  if (!whistle_chooses_notes || number < 1 || number > 7) return;
+  if (!speech_chooses_notes || number < 1 || number > 7) return;
 
   // What update_drum_pedal_note does with a pedal's note, minus the pedal.
   int note = to_root(root_note + DEGREE[number - 1]);
@@ -1524,7 +1472,7 @@ void nashville_picks_chord(int number) {
 }
 
 // Play in another key: the root the bass lines and drones are built on.
-// When the drum, the whistle or a voice has picked a chord, that chord moves
+// When the drum or a voice has picked a chord, that chord moves
 // with the key -- the IV stays the IV -- or everything built on it would stay
 // in the old key until the next chord was picked.
 void change_key(int pitch_class) {
@@ -2013,11 +1961,11 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     toggle_ducked();
     return;
   case F5:
-    // From the whistle choosing, this hands the choice back to the feet
-    // rather than switching Drum Some off: asking for Drum Some is asking for
-    // the feet to choose.
-    if (whistle_chooses_notes) {
-      whistle_chooses_notes = false;
+    // From speech choosing, this hands the choice back to the feet rather
+    // than switching Drum Some off: asking for Drum Some is asking for the
+    // feet to choose.
+    if (speech_chooses_notes) {
+      speech_chooses_notes = false;
       return;
     }
     drum_chooses_some_notes = !drum_chooses_some_notes;
@@ -2025,12 +1973,12 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       most_recent_drum_pedal = MIDI_PEDAL_3;
     }
     return;
-  case WHISTLE_PICKS:
-    whistle_chooses_notes = !whistle_chooses_notes;
+  case SPEECH_PICKS:
+    speech_chooses_notes = !speech_chooses_notes;
     // It is Drum Some underneath, so it comes and goes with it, and it can't
     // share the job with the drum picking every note.
-    drum_chooses_some_notes = whistle_chooses_notes;
-    if (whistle_chooses_notes) {
+    drum_chooses_some_notes = speech_chooses_notes;
+    if (speech_chooses_notes) {
       drum_chooses_notes = false;
       most_recent_drum_pedal = MIDI_PEDAL_3;
     }
@@ -2049,8 +1997,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case F9:
     drum_chooses_notes = !drum_chooses_notes;
-    if (drum_chooses_notes && whistle_chooses_notes) {
-      whistle_chooses_notes = false;
+    if (drum_chooses_notes && speech_chooses_notes) {
+      speech_chooses_notes = false;
       drum_chooses_some_notes = false;
     }
     if (drum_chooses_notes) {

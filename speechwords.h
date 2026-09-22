@@ -1,8 +1,7 @@
 #ifndef JML_SPEECH_WORDS_H
 #define JML_SPEECH_WORDS_H
 
-// What the speech recognizer's words mean, for the whistle choosing the
-// chord:
+// What the speech recognizer's words mean, with speech recognition on (F8):
 //
 //   four                  a bare Nashville number, 1-7, picks a chord
 //   press foot bass       strikes that button, as if clicked

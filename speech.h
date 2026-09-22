@@ -1,7 +1,7 @@
 #ifndef JML_SPEECH_H
 #define JML_SPEECH_H
 
-// Speaking to the rig while the whistle chooses the chord: say "four" and it
+// Speaking to the rig, with speech recognition on (F8): say "four" and it
 // goes to the IV, "press foot bass" and that button is struck, "change key to
 // A" or "change mode to minor".  See
 // nashville_picks_chord for what each number means, speechwords.h for how the
@@ -23,7 +23,7 @@
 // hears takes effect two beats after the talking stops, so it lands in time
 // however long the recognizer took.
 //
-// It only listens while the whistle is choosing (F8).  Partial results are
+// It only listens while speech recognition is on (F8).  Partial results are
 // acted on as they arrive, so a number lands a moment after it's said rather
 // than after a pause long enough for the recognizer to call the sentence
 // done.
@@ -606,7 +606,7 @@ static void speech_tick(void) {
   speech_run_pending();
 
   LOCK();
-  bool wanted = whistle_chooses_notes && whistle_available;
+  bool wanted = speech_chooses_notes && whistle_available;
   UNLOCK();
 
   // Asked for the first time the mode is switched on, not at launch, so
