@@ -213,8 +213,8 @@ language model at startup, cached under `~/Library/Caches/com.jefftk.jammer`.
 `make run-mac` and `make app` build it.  The same phrases go to the
 recognizer as hint words too.  On top of that, once "press" or "change key to"
 has been said, sound-alikes count -- "base" for "bass", "for" for 4 -- though
-never for a bare number.  The speech row says whether it's listening with the
-dictionary, and shows the words it's hearing.
+never for a bare number.  The speech row shows the words it's hearing, and flags
+it while the dictionary is still loading or couldn't be loaded.
 
 Speaking is played, not just said.  Only what's loud enough to be said right
 into the microphone reaches the recognizer -- the gate, set from the Speech
@@ -248,7 +248,7 @@ quiet -- and saves the raw microphone and the prompts' timings to
 `~/Library/Application Support/com.jefftk.jammer/numbers/` (`numtrain.h`).
 Every recording there is learned at startup and after each new one; more
 sessions, and ones made with the band playing, make it better.  `make
-numrec-eval && ./numrec-eval` says how well it does on them.  The speech row
+numrec-eval && ./numrec-eval` says how well it does on them.  Jammer's output
 says how many numbers it has learned.
 
 It also learns from playing.  Whenever Apple's recognizer and the fast one

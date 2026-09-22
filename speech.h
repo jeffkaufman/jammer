@@ -147,7 +147,9 @@ static char speech_dictionary_state[128] = "no dictionary";
 // to silence, or hearing words it doesn't act on.
 // ---------------------------------------------------------------------------
 
-static char speech_state[160] = "off";  // why it is or isn't listening
+// Why it is or isn't listening, for the speech row: empty when it's off
+// or listening normally, since NR and SR already say that much.
+static char speech_state[160] = "";
 static char speech_heard_text[200];     // the transcript, the latest end
 static char speech_last_action[64];     // what it last did
 static float speech_level;              // peak fed to it since last read
@@ -905,6 +907,7 @@ static void speech_tick(void) {
   bool wanted = (speech_chooses_notes || speech_commands_on) &&
                 whistle_available;
   bool numbers = speech_chooses_notes, commands = speech_commands_on;
+  bool switched_on = numbers || commands;
   UNLOCK();
 
   // Asked at launch, so the prompt doesn't interrupt the first time F3 or F8
@@ -925,10 +928,11 @@ static void speech_tick(void) {
   bool on = wanted;
   wanted = wanted && speech_authorized && speech_recognizer.isAvailable;
 
+  // Only what's worth knowing mid-song: what's keeping it from hearing you.
+  // Which modes are on is on the NR and SR keys, and the details of the
+  // dictionary and the fast recognizer go to stdout.
   if (!on) {
-    speech_set_state(whistle_available
-                       ? "off"
-                       : "off: no whistle microphone");
+    speech_set_state(switched_on ? "no microphone" : "");
   } else if (!speech_authorized) {
     speech_set_state(speech_asked
       ? "not authorized: System Settings > Privacy & Security > Speech "
@@ -936,13 +940,9 @@ static void speech_tick(void) {
   } else if (!speech_recognizer.isAvailable) {
     speech_set_state("recognizer unavailable");
   } else if (speech_task && now() - speech_error_at > 5 * NS_PER_SEC) {
-    char state[160];
-    snprintf(state, sizeof(state), "listening for %s, %s%s%s",
-             numbers && commands ? "numbers and commands"
-               : numbers ? "numbers" : "commands",
-             speech_dictionary_state, numbers ? ", " : "",
-             numbers ? speech_fast_state : "");
-    speech_set_state(state);
+    speech_set_state(speech_dictionary ? "listening"
+      : strncmp(speech_dictionary_state, "loading", 7) == 0
+        ? "listening: loading" : "listening: no dict");
   }
 
   atomic_store_explicit(&speech_listening, wanted ? 1 : 0,

@@ -207,7 +207,7 @@ static void take_snapshot(Snapshot* s) {
 
 // Sized so the whole status block stays readable from a few feet back with
 // the window maximized on a laptop screen.
-#define STATUS_HEIGHT 242.0
+#define STATUS_HEIGHT 212.0
 #define KEY_GAP 4.0
 #define VIEW_PAD 14.0
 
@@ -759,27 +759,30 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   CGFloat y = 180;
   NSColor* color = [NSColor colorWithSRGBRed:0.45 green:0.78
                                         blue:1.00 alpha:1];
+  NSColor* warn_color = [NSColor colorWithSRGBRed:0.80 green:0.45
+                                             blue:0.45 alpha:1];
   bool listening = strncmp(snapshot.speech_state, "listening", 9) == 0;
   CGFloat x = VIEW_PAD;
 
-  NSString* state = [NSString stringWithFormat:@"speech: %s",
-                     snapshot.speech_state];
-  NSColor* state_color = listening ? color
-    : strncmp(snapshot.speech_state, "off", 3) == 0
-      ? [color colorWithAlphaComponent:0.5]
-      : [NSColor colorWithSRGBRed:0.80 green:0.45 blue:0.45 alpha:1];
-  [self drawString:state
-            inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
-              font:font
-             color:state_color
-          centered:NO];
-  if (!listening) return;
+  // Off says nothing, and anything else that isn't listening is a problem.
+  if (!listening) {
+    if (!snapshot.speech_state[0]) return;
+    [self drawString:[NSString stringWithFormat:@"speech: %s",
+                      snapshot.speech_state]
+              inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD,
+                                24)
+                font:font
+               color:warn_color
+            centered:NO];
+    return;
+  }
 
-  // What it's hearing gets a row of its own, so the state above -- whose
-  // length changes as the dictionary loads and numbers are learned -- can't
-  // push it around.
-  y += 30;
-  x = VIEW_PAD + 18;
+  [self drawString:@"speech"
+            inRect:NSMakeRect(x, y, 80, 24)
+              font:font
+             color:color
+          centered:NO];
+  x += text_width(@"speech ", font) + 4;
 
   // The meter: -60dBFS to 0, which is where speech into a vocal mic lives,
   // with the gate's threshold marked on it.  Bright while the gate is open,
@@ -805,6 +808,18 @@ static CGFloat text_width(NSString* s, NSFont* font) {
              color:color
           centered:NO];
   x += 96;
+
+  // Room for "loading" or "no dict", while there's no dictionary to hear
+  // the words it's listening for with.
+  const char* warning = snapshot.speech_state[9] == ':'
+    ? snapshot.speech_state + 11 : "";
+  NSString* warn = [NSString stringWithFormat:@"%-7s", warning];
+  [self drawString:warn
+            inRect:NSMakeRect(x, y, 90, 24)
+              font:font
+             color:warn_color
+          centered:NO];
+  x += text_width(warn, font) + 16;
 
   // The last action in a slot of its own ahead of the words, which run on
   // to the end of the row.
