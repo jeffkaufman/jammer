@@ -249,7 +249,7 @@ static void run(Session* s, int n, NrParams p, bool trigger_set,
 int main(int argc, char** argv) {
   char dir[1024];
   snprintf(dir, sizeof(dir),
-           "%s/Library/Application Support/net.jefftk.jammer/numbers",
+           "%s/Library/Application Support/com.jefftk.jammer/numbers",
            getenv("HOME") ?: ".");
   NrParams p = nr_default_params(-20);
   bool by_session = false, sweep = false, verbose = false, trigger_set = false;

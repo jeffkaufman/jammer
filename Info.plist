@@ -5,7 +5,7 @@
 <dict>
   <key>CFBundleName</key><string>Jammer</string>
   <key>CFBundleDisplayName</key><string>Jammer</string>
-  <key>CFBundleIdentifier</key><string>net.jefftk.jammer</string>
+  <key>CFBundleIdentifier</key><string>com.jefftk.jammer</string>
   <key>CFBundleExecutable</key><string>jammer</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>1</string>

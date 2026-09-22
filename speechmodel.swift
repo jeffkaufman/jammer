@@ -43,7 +43,7 @@ for byte in input.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
 
 let data = SFCustomLanguageModelData(
   locale: Locale(identifier: "en-US"),
-  identifier: "net.jefftk.jammer.speech",
+  identifier: "com.jefftk.jammer.speech",
   version: String(hash, radix: 16))
 
 let templates = SFCustomLanguageModelData.TemplatePhraseCountGenerator()

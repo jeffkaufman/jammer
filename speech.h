@@ -600,7 +600,7 @@ static void speech_fast_learn(void) {
       URLsForDirectory:NSApplicationSupportDirectory
              inDomains:NSUserDomainMask] firstObject];
     NSURL* dir =
-      [support URLByAppendingPathComponent:@"net.jefftk.jammer/numbers"];
+      [support URLByAppendingPathComponent:@"com.jefftk.jammer/numbers"];
     NSArray<NSURL*>* files = [NSFileManager.defaultManager
       contentsOfDirectoryAtURL:dir includingPropertiesForKeys:nil
                        options:0 error:nil];
@@ -1020,7 +1020,7 @@ static void speech_prepare_dictionary(void) {
       URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask]
       firstObject];
     NSURL* dir = [caches URLByAppendingPathComponent:
-      [NSString stringWithFormat:@"net.jefftk.jammer/speech-%016llx",
+      [NSString stringWithFormat:@"com.jefftk.jammer/speech-%016llx",
                                  (unsigned long long)hash]];
     [NSFileManager.defaultManager createDirectoryAtURL:dir
                            withIntermediateDirectories:YES

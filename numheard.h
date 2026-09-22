@@ -7,7 +7,7 @@
 // go that Apple heard as "six" -- the audio is kept, labeled with what Apple
 // heard, for the fast one to learn from:
 //
-//   ~/Library/Application Support/net.jefftk.jammer/numbers/heard/
+//   ~/Library/Application Support/com.jefftk.jammer/numbers/heard/
 //     heard-YYYYMMDD-HHMMSS-mmm.wav   the raw microphone, as numtrain.h's
 //     heard-YYYYMMDD-HHMMSS-mmm.tsv   one prompt, at 0: what Apple heard
 //
@@ -84,7 +84,7 @@ static NSURL* nh_dir(void) {
     URLsForDirectory:NSApplicationSupportDirectory
            inDomains:NSUserDomainMask] firstObject];
   return [support
-    URLByAppendingPathComponent:@"net.jefftk.jammer/numbers/heard"];
+    URLByAppendingPathComponent:@"com.jefftk.jammer/numbers/heard"];
 }
 
 // ---------------------------------------------------------------------------

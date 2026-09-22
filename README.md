@@ -209,7 +209,7 @@ so renaming a button renames it for the recognizer too; `speechmodel.swift`
 (Swift, since that's the only way Apple offers) turns them into training data,
 `speech-model.bin`, with pronunciations for the unusual words from
 `SW_PRONUNCIATIONS` in `speechwords.h`; and the app compiles it into a custom
-language model at startup, cached under `~/Library/Caches/net.jefftk.jammer`.
+language model at startup, cached under `~/Library/Caches/com.jefftk.jammer`.
 `make run-mac` and `make app` build it.  The same phrases go to the
 recognizer as hint words too.  On top of that, once "press" or "change key to"
 has been said, sound-alikes count -- "base" for "bass", "for" for 4 -- though
@@ -245,7 +245,7 @@ It learns your voice from recordings: Speech Recognition > Record Number
 Samples... shows one word at a time in a big window for about four minutes
 -- the numbers, then words it should learn to ignore, then talking, then
 quiet -- and saves the raw microphone and the prompts' timings to
-`~/Library/Application Support/net.jefftk.jammer/numbers/` (`numtrain.h`).
+`~/Library/Application Support/com.jefftk.jammer/numbers/` (`numtrain.h`).
 Every recording there is learned at startup and after each new one; more
 sessions, and ones made with the band playing, make it better.  `make
 numrec-eval && ./numrec-eval` says how well it does on them.  The speech row

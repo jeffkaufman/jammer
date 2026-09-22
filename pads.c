@@ -338,7 +338,7 @@ static int check_levels(void) {
 // Where the sound comes out -- the same as audition.c
 // ---------------------------------------------------------------------------
 
-#define JAMMER_APP_ID CFSTR("net.jefftk.jammer")
+#define JAMMER_APP_ID CFSTR("com.jefftk.jammer")
 
 static bool app_audio_device(char* buf, size_t len) {
   CFPropertyListRef value =

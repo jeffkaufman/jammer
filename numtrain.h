@@ -9,7 +9,7 @@
 //
 // What's recorded is the raw microphone, before the gate, so that the gate
 // can be tried at any level afterwards.  Each session is two files in
-// ~/Library/Application Support/net.jefftk.jammer/numbers/:
+// ~/Library/Application Support/com.jefftk.jammer/numbers/:
 //
 //   session-YYYYMMDD-HHMMSS.wav   32-bit float, mono, the rig's sample rate
 //   session-YYYYMMDD-HHMMSS.tsv   when each prompt went up, in samples:
@@ -181,7 +181,7 @@ static void nt_begin(void) {
     URLsForDirectory:NSApplicationSupportDirectory
            inDomains:NSUserDomainMask] firstObject];
   NSURL* dir =
-    [support URLByAppendingPathComponent:@"net.jefftk.jammer/numbers"];
+    [support URLByAppendingPathComponent:@"com.jefftk.jammer/numbers"];
   [NSFileManager.defaultManager createDirectoryAtURL:dir
                          withIntermediateDirectories:YES
                                           attributes:nil

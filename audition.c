@@ -346,7 +346,7 @@ static const char* program_name(int program) {
 // out of whatever the jammer is already plugged into.  --device and
 // $JAMMER_AUDIO_DEVICE override it, and both take any substring of a device
 // name.
-#define JAMMER_APP_ID CFSTR("net.jefftk.jammer")
+#define JAMMER_APP_ID CFSTR("com.jefftk.jammer")
 
 static bool app_audio_device(char* buf, size_t len) {
   CFPropertyListRef value =
