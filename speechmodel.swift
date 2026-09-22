@@ -50,10 +50,8 @@ let templates = SFCustomLanguageModelData.TemplatePhraseCountGenerator()
 for (name, values) in classes { templates.define(className: name, values: values) }
 templates.insert(template: "press <button>", count: 50000)
 templates.insert(template: "select <button>", count: 10000)
-for verb in ["change", "set"] {
-  templates.insert(template: "\(verb) key to <key>", count: 10000)
-  templates.insert(template: "\(verb) mode to <mode>", count: 10000)
-}
+templates.insert(template: "change key to <key>", count: 10000)
+templates.insert(template: "change mode to <mode>", count: 10000)
 data.insert(phraseCountGenerator: templates)
 
 for number in numbers {

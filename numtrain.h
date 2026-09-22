@@ -38,8 +38,9 @@ typedef struct {
 #define NT_PHRASE_SECONDS 2.5
 
 // Things that start an utterance and aren't a number, which it must not
-// mistake for one.  The lead-in words, especially: "set" and "select" start
-// like "six" and "seven".
+// mistake for one.  The lead-in words, especially, and words that start like
+// numbers: "select" and "set" like "six" and "seven" -- "set" isn't a lead-in
+// any more, but it's still a word you might say.
 static const char* NT_REJECT_WORDS[] = {
   "press", "change", "select", "set", "okay", "yeah", "hey", "and",
   "let's go", "wait", "stop", "again", "one more time", "last time",

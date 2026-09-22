@@ -10,7 +10,10 @@
 //   press foot bass       strikes that button, as if clicked
 //   select foot bass      ... or shift-clicked
 //   change key to B flat  as picking it from the key at the top left
-//   change mode to minor  as the arrow keys ("set" works for "change" too)
+//   change mode to minor  as the arrow keys
+//
+// Only "change", not "set": "set" sounds too much like "seven" to the fast
+// number recognizer (numrec.h).
 //
 // Plain C, apart from speech.h, so test-keypad.c can reach it.
 //
@@ -303,8 +306,8 @@ static SwAction sw_next_action(const char* const* words, int n_words,
   // The lead-ins, and the ways the recognizer has been heard writing them.
   static const char* PRESS[] = {"press|pressed|presses"};
   static const char* SELECT[] = {"select|selects|selected"};
-  static const char* KEY[] = {"change|set", "key|keys", "to|too|2?"};
-  static const char* MODE[] = {"change|set", "mode|modes|mowed", "to|too|2?"};
+  static const char* KEY[] = {"change", "key|keys", "to|too|2?"};
+  static const char* MODE[] = {"change", "mode|modes|mowed", "to|too|2?"};
   SwVocab keys = sw_key_vocab();
   const struct {
     const char* const* lead;

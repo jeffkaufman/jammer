@@ -974,10 +974,10 @@ static void test_spoken_presses() {
         "'pressed pad cord' should be pad chord");
   CHECK(strcmp(PHRASE(true, "for"), "") == 0,
         "a bare 'for' mustn't pick the IV");
-  CHECK(strcmp(PHRASE(false, "set", "mode", "to", "minor", "now"),
-               "mode=3") == 0, "'set' works like 'change'");
-  CHECK(strcmp(PHRASE(true, "set", "key", "too", "F", "sharp"),
-               "key=6") == 0, "set key too F sharp");
+  CHECK(strcmp(PHRASE(true, "set", "mode", "to", "minor"), "") == 0,
+        "'set' isn't a lead-in: it sounds too much like 'seven'");
+  CHECK(strcmp(PHRASE(true, "change", "key", "too", "F", "sharp"),
+               "key=6") == 0, "change key too F sharp");
 
   // Changing key and mode.
   CHECK(strcmp(PHRASE(false, "change", "key", "to", "A", "now"),
