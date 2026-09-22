@@ -205,7 +205,7 @@ static void take_snapshot(Snapshot* s) {
 
 // Sized so the whole status block stays readable from a few feet back with
 // the window maximized on a laptop screen.
-#define STATUS_HEIGHT 212.0
+#define STATUS_HEIGHT 242.0
 #define KEY_GAP 4.0
 #define VIEW_PAD 14.0
 
@@ -527,7 +527,8 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSFont* note_font = mono_font(30, NSFontWeightBold);
   NSString* note_text = [NSString stringWithFormat:@"%@ ▾",
                          note_name(snapshot.root_note)];
-  CGFloat note_w = text_width(note_text, note_font);
+  // Sized for the widest name, so what follows doesn't move with the key.
+  CGFloat note_w = text_width(@"C# ▾", note_font);
 
   root_note_rect = NSMakeRect(VIEW_PAD, 8, note_w + 26, 44);
   NSBezierPath* pill = [NSBezierPath bezierPathWithRoundedRect:root_note_rect
@@ -542,11 +543,16 @@ static CGFloat text_width(NSString* s, NSFont* font) {
                 font:note_font
                color:[NSColor colorWithWhite:0.97 alpha:1]];
 
+  // Every field in the status rows keeps a fixed number of columns, blank
+  // when there's nothing to show, so a value changing never shoves the rest
+  // of its row sideways.
   NSMutableString* line = [NSMutableString string];
   if (snapshot.bpm > 0) {
-    [line appendFormat:@"%d bpm   ", snapshot.bpm];
+    [line appendFormat:@"%3d bpm   ", snapshot.bpm];
+  } else {
+    [line appendString:@"          "];
   }
-  [line appendFormat:@"air %d", snapshot.air];
+  [line appendFormat:@"air %3d", snapshot.air];
   CGFloat rest_x = NSMaxX(root_note_rect) + 18;
   [self drawString:line
             inRect:NSMakeRect(rest_x, 14, b.size.width - rest_x - VIEW_PAD, 36)
@@ -554,20 +560,21 @@ static CGFloat text_width(NSString* s, NSFont* font) {
              color:[NSColor colorWithWhite:0.95 alpha:1]
           centered:NO];
 
-  // Line 2: which endpoints are making sound right now.
+  // Line 2: which endpoints are making sound right now, each in a place of
+  // its own.
   NSMutableString* playing = [NSMutableString stringWithString:@"on: "];
-  bool any = false;
-  for (int i = 0; i < N_ENDPOINTS; i++) {
-    if (snapshot.on[i]) {
-      [playing appendFormat:@"%s%s", any ? "   " : "", ENDPOINT_NAMES[i]];
-      any = true;
+  bool any = snapshot.whistle_on;
+  for (int i = 0; i < N_ENDPOINTS; i++) any = any || snapshot.on[i];
+  for (int i = 0; i <= N_ENDPOINTS; i++) {
+    const char* name = i < N_ENDPOINTS ? ENDPOINT_NAMES[i] : "Whistle";
+    bool on = i < N_ENDPOINTS ? snapshot.on[i] : snapshot.whistle_on;
+    if (!any && i == 0) {
+      [playing appendFormat:@"%-*s", (int)strlen(name), "-"];
+    } else {
+      [playing appendFormat:@"%-*s", (int)strlen(name), on ? name : ""];
     }
+    if (i < N_ENDPOINTS) [playing appendString:@"  "];
   }
-  if (snapshot.whistle_on) {
-    [playing appendFormat:@"%sWhistle", any ? "   " : ""];
-    any = true;
-  }
-  if (!any) [playing appendString:@"—"];
 
   [self drawString:playing
             inRect:NSMakeRect(VIEW_PAD, 58, width, 26)
@@ -611,18 +618,20 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 6, 12, 12)] fill];
     x += 18;
 
-    NSMutableString* text =
-      [NSMutableString stringWithUTF8String:source_kind_name(kinds[i])];
+    char value[32];
     if (!a->connected) {
-      [text appendString:@" --"];
+      snprintf(value, sizeof(value), "--");
     } else if (a->count == 0) {
-      [text appendString:@" (silent)"];
+      snprintf(value, sizeof(value), "(silent)");
     } else if ((a->status & 0xf0) == MIDI_CC) {
-      [text appendFormat:@" cc%d=%d", a->data1, a->data2];
+      snprintf(value, sizeof(value), "cc%d=%d", a->data1, a->data2);
     } else {
-      [text appendFormat:@" %s%d v%d",
-            note_str(a->data1), a->data1 / 12 - 1, a->data2];
+      snprintf(value, sizeof(value), "%s%d v%d",
+               note_str(a->data1), a->data1 / 12 - 1, a->data2);
     }
+    // Wide enough for "cc127=127" and "C#-1 v127".
+    NSString* text = [NSString stringWithFormat:@"%-7s %-9s",
+                      source_kind_name(kinds[i]), value];
 
     CGFloat w = text_width(text, font);
     [self drawString:text
@@ -640,7 +649,7 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSFont* font = mono_font(17, NSFontWeightRegular);
   CGFloat y = 120;
 
-  NSString* audio = [NSString stringWithFormat:@"♪ %s   vol %d%%",
+  NSString* audio = [NSString stringWithFormat:@"♪ %s   vol %3d%%",
                      snapshot.audio_device, (int)(snapshot.gain * 100 + 0.5)];
   [self drawString:audio
             inRect:NSMakeRect(VIEW_PAD, y,
@@ -688,22 +697,27 @@ static CGFloat text_width(NSString* s, NSFont* font) {
 
   NSMutableString* text = [NSMutableString stringWithString:@"whistle "];
   [text appendFormat:@"%s", snapshot.whistle_on ? "on " : "off"];
-  [text appendFormat:@"  %s",
+  // Wide enough for "eight-oh-eight".
+  [text appendFormat:@"  %-14s",
         WHISTLE_VOICES[snapshot.whistle_voice].preset];
+  char octave[16] = "";
   if (snapshot.whistle_octave != 0) {
-    [text appendFormat:@" %+doct", snapshot.whistle_octave];
+    snprintf(octave, sizeof(octave), "%+doct", snapshot.whistle_octave);
   }
+  [text appendFormat:@" %-5s", octave];
   // The level the detector heard while a note was sounding, which is the
   // number the full-blow knob is set against.
-  [text appendFormat:@"   lvl %.3f", snapshot.whistle_level];
+  [text appendFormat:@"   lvl %5.3f", snapshot.whistle_level];
+  char heard[16] = "";
   if (snapshot.whistle_voiced && snapshot.whistle_freq > 0) {
     int midi = whistle_hz_to_note(snapshot.whistle_freq);
-    [text appendFormat:@"   %s%d", note_str(midi), midi / 12 - 1];
+    snprintf(heard, sizeof(heard), "%s%d", note_str(midi), midi / 12 - 1);
   }
-  [text appendFormat:@"   ♪ %s  vol %d%%", snapshot.whistle_device,
+  [text appendFormat:@"   %-4s", heard];
+  [text appendFormat:@"   ♪ %s  vol %3d%%", snapshot.whistle_device,
         (int)(snapshot.whistle_gain * 100 + 0.5)];
   // What the whistle adds on top of fluidsynth's own output latency.
-  [text appendFormat:@"  +%.1fms", snapshot.whistle_latency_ms];
+  [text appendFormat:@"  +%5.1fms", snapshot.whistle_latency_ms];
   if (snapshot.whistle_dropouts > 0) {
     [text appendFormat:@"   %d dropouts", snapshot.whistle_dropouts];
   }
@@ -734,14 +748,18 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     : strncmp(snapshot.speech_state, "off", 3) == 0
       ? [color colorWithAlphaComponent:0.5]
       : [NSColor colorWithSRGBRed:0.80 green:0.45 blue:0.45 alpha:1];
-  CGFloat state_w = text_width(state, font);
   [self drawString:state
             inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
               font:font
              color:state_color
           centered:NO];
   if (!listening) return;
-  x += state_w + 16;
+
+  // What it's hearing gets a row of its own, so the state above -- whose
+  // length changes as the dictionary loads and numbers are learned -- can't
+  // push it around.
+  y += 30;
+  x = VIEW_PAD + 18;
 
   // The meter: -60dBFS to 0, which is where speech into a vocal mic lives,
   // with the gate's threshold marked on it.  Bright while the gate is open,
@@ -768,11 +786,15 @@ static CGFloat text_width(NSString* s, NSFont* font) {
           centered:NO];
   x += 96;
 
-  NSMutableString* text = [NSMutableString string];
-  [text appendFormat:@"heard: \"%s\"", snapshot.speech_heard];
-  if (snapshot.speech_action[0]) {
-    [text appendFormat:@"   → %s", snapshot.speech_action];
+  // The last action in a slot of its own ahead of the words, which run on
+  // to the end of the row.
+  NSString* action = @(snapshot.speech_action);
+  if (action.length > 24) {
+    action = [[action substringToIndex:23] stringByAppendingString:@"…"];
   }
+  NSString* text = [NSString stringWithFormat:@"→ %@%*s   heard: \"%s\"",
+                    action, (int)(24 - action.length), "",
+                    snapshot.speech_heard];
   [self drawString:text
             inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
               font:font

@@ -927,7 +927,7 @@ static void speech_tick(void) {
 
   if (!on) {
     speech_set_state(whistle_available
-                       ? "off: F3 for numbers, F8 for commands"
+                       ? "off"
                        : "off: no whistle microphone");
   } else if (!speech_authorized) {
     speech_set_state(speech_asked
