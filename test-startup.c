@@ -65,6 +65,7 @@ int main(void) {
   CHECK(silent == 0, "%d of %d endpoints left with expression 0 (silent)",
         silent, N_ENDPOINTS);
   for (int i = 0; i < N_ENDPOINTS; i++) {
+    if (i == ENDPOINT_FLEX) continue;  // its expression is its breath
     CHECK(cc11[i] == MAX_FADE, "endpoint %d expression is %d, want %d",
           i, cc11[i], MAX_FADE);
     if (i != ENDPOINT_DRUM) {
@@ -109,9 +110,35 @@ int main(void) {
   CHECK(cc11[ENDPOINT_LOW] == 0, "fade-out should reach expression 0");
   full_reset();
   for (int i = 0; i < N_ENDPOINTS; i++) {
+    if (i == ENDPOINT_FLEX) continue;  // its expression is its breath
     CHECK(cc11[i] == MAX_FADE,
           "endpoint %d still silent after reset following a fade-out", i);
   }
+
+  // Flex's expression is its breath, and the fade has to reach it anyway:
+  // breathing into it mid-fade used to put it straight back to full.
+  handle_cc(CC_BREATH, 100);
+  int breathing = cc11[ENDPOINT_FLEX];
+  CHECK(breathing > 0, "breath should open up flex");
+  fade_target = 0;
+  for (int i = 0; i < MAX_FADE + 10; i++) {
+    progress_fades();
+    forward_air();
+  }
+  handle_cc(CC_BREATH, 100);
+  CHECK(cc11[ENDPOINT_FLEX] == 0,
+        "flex is at %d after a fade out, with breath; want 0",
+        cc11[ENDPOINT_FLEX]);
+  fade_target = MAX_FADE;
+  for (int i = 0; i < MAX_FADE + 10; i++) {
+    progress_fades();
+    forward_air();
+  }
+  handle_cc(CC_BREATH, 100);
+  CHECK(cc11[ENDPOINT_FLEX] == breathing,
+        "flex should be back to %d after fading in, is %d", breathing,
+        cc11[ENDPOINT_FLEX]);
+  handle_cc(CC_BREATH, 0);
   CHECK(cc11[CHANNEL_PITCHED_KICK] == MAX_FADE,
         "pitched-kick channel still silent after reset following a fade-out");
 

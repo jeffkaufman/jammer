@@ -831,6 +831,9 @@ void clear_overlay() {
 }
 
 void update_fade(int endpoint) {
+  // Flex's expression is its breath, sent from flex_val(), which has the fade
+  // folded in.  Setting it to the bare fade here would fight that.
+  if (endpoint == ENDPOINT_FLEX) return;
   psend_midi(MIDI_CC, CC_11, fade_value, endpoint);
 }
 
@@ -986,12 +989,16 @@ void voices_reset() {
 int flex_base = 0;
 int flex_breath = 0;
 int last_flex_val = 1;
+// Flex's expression: the breath, and the fade on top of it.  Flex uses
+// expression for its breath, which is the channel the fade works through
+// everywhere else, so here the two are multiplied rather than one of them
+// overwriting the other -- otherwise the next breath undid the fade out.
 int flex_val() {
   int val = flex_breath;
   if (c->flex_min) {
     val += 60;
   }
-  return val;
+  return val * fade_value / MAX_FADE;
 }
 
 // Only some endpoints use this, and some only use it some of the time:
