@@ -95,6 +95,7 @@ typedef struct {
   int air;
   int bpm;
   bool on[N_ENDPOINTS];
+  bool pans[N_ENDPOINTS];  // channel swapped (F2)
   MidiActivity midi[N_SOURCE_KINDS];
   uint64_t now_ns;
   char audio_device[256];
@@ -146,6 +147,7 @@ static void take_snapshot(Snapshot* s) {
   s->bpm = current_beat_ns > 0 ? (int)(60 * NS_PER_SEC / current_beat_ns) : 0;
   for (int i = 0; i < N_ENDPOINTS; i++) {
     s->on[i] = c->on[i];
+    s->pans[i] = c->pans[i];
   }
   memcpy(s->midi, midi_activity, sizeof(s->midi));
   s->now_ns = now();
@@ -441,6 +443,24 @@ static CGFloat text_width(NSString* s, NSFont* font) {
           centered:NO];
 
   if (unbound) return;
+
+  // An endpoint that's been channel swapped carries F2's tag in the corner,
+  // since otherwise the only way to tell is to select it and look at F2.
+  if (key->lit == LIT_EP_ON && snapshot.pans[key->arg]) {
+    NSFont* tag_font = mono_font(cap_size * 0.85, NSFontWeightBold);
+    NSString* tag = @"CH";
+    CGFloat tag_w = text_width(tag, tag_font) + 8;
+    CGFloat tag_h = cap_size + 2;
+    NSRect tag_rect = NSMakeRect(NSMaxX(r) - tag_w - 5, r.origin.y + 4,
+                                 tag_w, tag_h);
+    [group_color(GROUP_MODIFIER) setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:tag_rect xRadius:3 yRadius:3]
+      fill];
+    [self drawCentered:tag
+                inRect:tag_rect
+                  font:tag_font
+                 color:[NSColor colorWithWhite:0.06 alpha:1]];
+  }
 
   // What it does, under the cap letter.
   const char* label = key->label;
