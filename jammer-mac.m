@@ -1118,6 +1118,55 @@ static void start_tick_thread() {
 }
 
 // ---------------------------------------------------------------------------
+// The output block size
+//
+// fluidsynth's CoreAudio driver never asks for a block size, so its client
+// inherits the device's -- and that block is what sets the pace for the whole
+// rig, the whistle's ring included.  A 512-frame default costs 10.7ms on the
+// way out and forces the ring to hold another 10.7ms on the way in.
+// Measured, asking for 64 takes the whistle from 13.3ms of added latency to
+// 4.0ms and cuts the synth's own output latency with it.
+//
+// This is the way in because the other one doesn't work: setting
+// audio.period-size makes the driver open happily and never pull a sample
+// (see macapi.h; still true, re-measured).  $JAMMER_OUTPUT_BUFFER overrides
+// it, and 0 leaves the device alone.
+//
+// Asked of every device the synth opens, not just the one at launch: one
+// picked from the Audio Output menu would otherwise play at its own default
+// for the rest of the night.
+// ---------------------------------------------------------------------------
+
+static int output_buffer_frames(void) {
+  const char* env = getenv("JAMMER_OUTPUT_BUFFER");
+  return env ? atoi(env) : 64;
+}
+
+// Before the synth opens `wanted`.  Resolved to a full name first, the same
+// way set_audio_device does, so "Scarlett" gets its small block too.
+static void prepare_output_device(const char* wanted, char* resolved,
+                                  size_t resolved_len) {
+  resolve_audio_device(wanted, resolved, resolved_len);
+  whistle_output_device = kAudioObjectUnknown;
+  whistle_prepare_output_device(resolved, output_buffer_frames());
+}
+
+// After.  The failure this is guarding against is a device that opens and
+// then never asks for a sample, which is how the buffering settings misbehave
+// on CoreAudio and would be silence on stage.  set_audio_device already
+// checks for it and backs off fluidsynth's own settings, but it cannot undo a
+// block size that belongs to the device, so that is checked here.
+static void check_output_device(const char* resolved) {
+  if (whistle_output_device == kAudioObjectUnknown || audio_is_flowing()) {
+    return;
+  }
+  printf("no audio with a %d-frame output block; putting the device back\n",
+         output_buffer_frames());
+  whistle_restore_buffer_frames(whistle_output_device);
+  set_audio_device(resolved);
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
@@ -1213,9 +1262,21 @@ static void flash_from_speech(int key) {
 - (void)chooseAudioDevice:(NSMenuItem*)item {
   const char* wanted = item.representedObject
     ? [item.representedObject UTF8String] : "default";
-  LOCK();
-  set_audio_device(wanted);
-  UNLOCK();
+  // Not under the lock, for the reason in chooseWhistleDevice: checking that
+  // the new device is pulling samples sleeps, and every MIDI message would
+  // wait behind it.  Nothing here needs the lock -- fluidsynth is thread-safe
+  // and fl_driver is only ever touched from the main thread.
+  AudioDeviceID previous = whistle_output_device;
+  char resolved[256];
+  prepare_output_device(wanted, resolved, sizeof(resolved));
+  set_audio_device(resolved);
+  check_output_device(resolved);
+  // The old device is no longer ours, so its block size goes back -- unless
+  // the microphone is still on it.
+  if (previous != kAudioObjectUnknown && previous != whistle_output_device &&
+      previous != whistle_input_device) {
+    whistle_restore_buffer_frames(previous);
+  }
   [NSUserDefaults.standardUserDefaults setObject:item.representedObject
                                           forKey:@"audioDevice"];
   [self rebuildAudioMenu];
@@ -1738,36 +1799,12 @@ int main(int argc, const char** argv) {
     double mic_rate = mic != kAudioObjectUnknown ? whistle_device_rate(mic) : 0;
     if (mic_rate > 0) synth_sample_rate = mic_rate;
 
-    // Before the synth opens it: fluidsynth's CoreAudio driver never asks for
-    // a block size, so its client inherits the device's -- and that block is
-    // what sets the pace for the whole rig, the whistle's ring included.  A
-    // 512-frame default costs 10.7ms on the way out and forces the ring to
-    // hold another 10.7ms on the way in.  Measured, asking for 64 takes the
-    // whistle from 13.3ms of added latency to 4.0ms and cuts the synth's own
-    // output latency with it.
-    //
-    // This is the way in because the other one doesn't work: setting
-    // audio.period-size makes the driver open happily and never pull a sample
-    // (see macapi.h; still true, re-measured).  $JAMMER_OUTPUT_BUFFER
-    // overrides it, and 0 leaves the device alone.
-    const char* out_buffer = getenv("JAMMER_OUTPUT_BUFFER");
-    const char* out_device = device ? device : "default";
-    whistle_prepare_output_device(out_device, out_buffer ? atoi(out_buffer)
-                                                         : 64);
-
+    // Before the synth opens the device, and checked after: see "The output
+    // block size" above.
+    char out_device[256];
+    prepare_output_device(device, out_device, sizeof(out_device));
     start_synth(soundfont, out_device);
-
-    // The failure this is guarding against is a device that opens and then
-    // never asks for a sample, which is how the buffering settings misbehave
-    // on CoreAudio and would be silence on stage.  set_audio_device already
-    // checks for it and backs off fluidsynth's own settings, but it cannot
-    // undo a block size that belongs to the device, so that is checked here.
-    if (!audio_is_flowing()) {
-      printf("no audio with a %s-frame output block; putting the device back\n",
-             out_buffer ? out_buffer : "64");
-      whistle_restore_buffer_frames(whistle_output_device);
-      set_audio_device(out_device);
-    }
+    check_output_device(out_device);
 
     // Which preset each voice key plays, looked up by name -- see
     // whistle_resolve_voices.  Then the microphone, then the mix: the hook is

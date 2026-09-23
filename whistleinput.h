@@ -301,7 +301,9 @@ static bool whistle_request_rate(AudioDeviceID device, double rate) {
 // rather than assumed -- see "The device is borrowed, not taken" in
 // whistle-synth's mac/README.md.  It is restored anyway, on the principle
 // that what we changed we put back.
-// One slot per direction: at most an input and an output are ever touched.
+// One slot per direction: at most an input and an output are held at once.
+// A slot is free again once it's been put back (frames 0), since switching
+// devices from the menus lets go of one and takes another.
 static struct {
   AudioDeviceID device;
   UInt32 frames;
@@ -309,13 +311,20 @@ static struct {
 static int whistle_saved_frames_count;
 
 static void whistle_remember_frames(AudioDeviceID device, UInt32 frames) {
+  int free_slot = -1;
   for (int i = 0; i < whistle_saved_frames_count; i++) {
-    if (whistle_saved_frames[i].device == device) return;  // only the first
+    if (!whistle_saved_frames[i].frames) {
+      if (free_slot < 0) free_slot = i;
+    } else if (whistle_saved_frames[i].device == device) {
+      return;  // only the first
+    }
   }
-  if (whistle_saved_frames_count >= 2) return;
-  whistle_saved_frames[whistle_saved_frames_count].device = device;
-  whistle_saved_frames[whistle_saved_frames_count].frames = frames;
-  whistle_saved_frames_count++;
+  if (free_slot < 0) {
+    if (whistle_saved_frames_count >= 2) return;
+    free_slot = whistle_saved_frames_count++;
+  }
+  whistle_saved_frames[free_slot].device = device;
+  whistle_saved_frames[free_slot].frames = frames;
 }
 
 static void whistle_request_buffer_frames(AudioDeviceID device, int frames) {
@@ -414,10 +423,11 @@ static void whistle_prepare_output_device(const char* name, int frames) {
       whistle_copy_cfstring(ids[i], kAudioObjectPropertyName, device_name,
                             sizeof(device_name));
       // fluidsynth reports "default" for the system default, which is the
-      // one case where there is no name to match.
+      // one case where there is no name to match.  Otherwise matched the way
+      // fluidsynth matches, ignoring case, so it's the device it will open.
       bool matches = strcmp(name, "default") == 0
         ? ids[i] == whistle_default_output()
-        : strcmp(device_name, name) == 0;
+        : strcasecmp(device_name, name) == 0;
       if (matches && whistle_output_channels(ids[i]) > 0) {
         whistle_output_device = ids[i];
         whistle_request_buffer_frames(ids[i], frames);
