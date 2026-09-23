@@ -272,13 +272,20 @@ static int speech_n_armed;
 static uint64_t speech_armed_due;       // the beat it's meant for, roughly
 static uint64_t speech_armed_deadline;  // made anyway if no beat by then
 
+// A fast number waiting for its time, or 0, and that time: a beat after it
+// began to be said.  A pedal beat from speech_fast_earliest on makes it
+// there, so a kick a hair ahead of its time still plays it.  Under the lock.
+static int speech_fast_armed;
+static uint64_t speech_fast_due;
+static uint64_t speech_fast_earliest;
+
 // The next beat's notes are about to play: make whatever's armed first.
 // Called by arpeggiate with the lock held.
-static int speech_fast_armed;  // a fast number for the next beat, or 0
 static void speech_before_beat(void) {
-  if (speech_fast_armed) {
+  if (speech_fast_armed && now() >= speech_fast_earliest) {
     SwAction action = {SW_NUMBER, speech_fast_armed};
-    printf("timing: fast number made on the beat\n");
+    printf("timing: fast number made on the beat, %ldms from its time\n",
+           (long)(((int64_t)now() - (int64_t)speech_fast_due) / 1000000));
     speech_apply_locked(&action);
     speech_fast_armed = 0;
   }
@@ -336,18 +343,24 @@ static void speech_wake_at(uint64_t when, void (*fn)(void)) {
                  speech_queue, ^{ fn(); });
 }
 
-static uint64_t speech_fast_deadline;  // made anyway if no beat by then
-
-static void speech_run_pending(void) {
-  // An armed change whose beat never came.
+// A fast number whose time has come, if no beat has made it already.
+static void speech_run_fast(void) {
   LOCK();
-  if (speech_fast_armed && now() >= speech_fast_deadline) {
-    printf("timing: the feet stopped before its beat; fast number made "
-           "anyway\n");
+  if (speech_fast_armed && now() >= speech_fast_due) {
+    printf("timing: fast number made at its time, %ldms late\n",
+           (long)(((int64_t)now() - (int64_t)speech_fast_due) / 1000000));
     SwAction action = {SW_NUMBER, speech_fast_armed};
     speech_apply_locked(&action);
     speech_fast_armed = 0;
   }
+  UNLOCK();
+}
+
+static void speech_run_pending(void) {
+  speech_run_fast();
+
+  // An armed change whose beat never came.
+  LOCK();
   if (speech_n_armed && now() >= speech_armed_deadline) {
     printf("timing: the feet stopped before its beat; made anyway\n");
     for (int i = 0; i < speech_n_armed; i++) {
@@ -481,9 +494,13 @@ static void speech_queue_action(const SwAction* action) {
 // own, set from the same menu -- and only while number recognition (F3) is
 // on.
 //
-// What it hears goes in on the very next beat, the soonest it can be heard,
-// since the rhythm parts only play on beats; or, with the feet stopped, at
-// once.  Apple's recognizer hears the same word a while later: a number from
+// What it hears goes in a beat after you started saying it -- you start on
+// the beat, so that's the next one -- or the moment it's heard, if that's
+// later.  The beat is the feet's while they're going, and otherwise
+// SPEECH_DEFAULT_BPM's rather than whatever they last went at.  With the feet
+// going, a pedal beat up to a quarter of a beat ahead of that time makes it,
+// inside the beat before its notes, so a kick a hair early still plays the new
+// chord rather than the old one.  Apple's recognizer hears the same word a while later: a number from
 // it within SPEECH_FAST_CLAIM_S of one the fast path took is that word again,
 // and is dropped.  A number the fast path wasn't sure of it leaves to Apple.
 // ---------------------------------------------------------------------------
@@ -524,32 +541,45 @@ static bool speech_fast_claims(const SwAction* action) {
   return true;
 }
 
-static bool speech_fast_take(int number, int quiet_ms) {
+// `quiet_ms` since the word ended, `said_ms` since it began.
+static bool speech_fast_take(int number, int quiet_ms, int said_ms) {
   LOCK();
   bool numbers = speech_chooses_notes;
   UNLOCK();
   if (!numbers) return false;  // F3 just went off
   speech_fast_unclaimed++;
-  speech_fast_at = now();
+  uint64_t t = now();
+  speech_fast_at = t;
   bool feet;
   speech_due_beat(&feet);
-  bool known;
-  uint64_t beat = speech_beat_ns(&known);
+  uint64_t beat = feet ? speech_beat_ns(NULL)
+                       : 60 * NS_PER_SEC / SPEECH_DEFAULT_BPM;
+  uint64_t due = t - (uint64_t)said_ms * 1000000 + beat;
+  bool made = t >= due;
   SwAction action = {SW_NUMBER, number};
   LOCK();
   snprintf(speech_heard_text, sizeof(speech_heard_text), "%d (fast)",
            number);
-  if (feet) {
+  if (made) {
+    speech_fast_armed = 0;  // this one's newer than any still waiting
+    speech_apply_locked(&action);
+  } else {
     speech_fast_armed = number;
-    speech_fast_deadline = now() + beat * 3 / 2;
+    speech_fast_due = due;
+    speech_fast_earliest = feet ? due - beat / 4 : due;
     snprintf(speech_last_action, sizeof(speech_last_action), "%d …",
              number);
-  } else {
-    speech_apply_locked(&action);
   }
   UNLOCK();
-  printf("fast: heard %d, %dms after the word ended%s\n", number, quiet_ms,
-         feet ? "; on the next beat" : "; no beat, made now");
+  if (!made) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(due - t)),
+                   speech_queue, ^{ speech_run_fast(); });
+  }
+  printf("fast: heard %d, %dms after the word began and %dms after it "
+         "ended; %s %ldms from now (%.0f bpm%s)\n", number, said_ms,
+         quiet_ms, made ? "a beat had gone by, made now," : "due",
+         (long)(((int64_t)due - (int64_t)t) / 1000000),
+         60.0 * NS_PER_SEC / beat, feet ? "" : ", no feet");
   fflush(stdout);
   return true;
 }
@@ -578,7 +608,10 @@ static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
   }
   if (r.label >= 0 && quiet >= speech_fast_model->wait[r.label]) {
     // A tick's worth on top: that's how long the audio waited in the ring.
-    if (speech_fast_take(r.label + 1, quiet * 10 + SPEECH_TICK_MS)) {
+    // Frames are 10ms, and the one just finished is the quiet's last.
+    int quiet_ms = quiet * 10 + SPEECH_TICK_MS;
+    int said_ms = (int)(end - onset + 1) * 10 + quiet_ms;
+    if (speech_fast_take(r.label + 1, quiet_ms, said_ms)) {
       nh_fast_judged(s, onset, end, r.label + 1);
     }
     return true;

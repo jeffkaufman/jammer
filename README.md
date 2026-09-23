@@ -236,9 +236,11 @@ change that's waiting with "…", and jammer's output logs the timing of each.
 Numbers also have a faster way in than Apple's recognizer: `numrec.h`, which
 knows only one to seven, in your voice, and hears them 40-120ms after the
 word ends -- as soon as it can be sure the word is over, which for "six",
-with its "k", is longer than for "two".  What it hears goes in on the very
-next beat rather than two beats on, and Apple's recognizer hearing the same
-number a moment later is ignored.  Anything it isn't sure of it leaves to
+with its "k", is longer than for "two".  What it hears goes in a beat after
+you started saying it -- start on the beat and that's the next one -- or the
+moment it's heard, if that's later.  The beat is the pedals' while they're
+going, and 116 BPM's otherwise.  Apple's recognizer hearing the same number
+a moment later is ignored.  Anything it isn't sure of it leaves to
 Apple.  It only takes a whole word that follows a moment of quiet, so "press
 room two" doesn't count.
 
