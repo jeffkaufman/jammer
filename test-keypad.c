@@ -783,6 +783,13 @@ static void test_whistle() {
         "esc shouldn't touch the setup knobs");
   whistle_gate = 5;
   whistle_level_full = 5;
+
+  // The gate knob sits five steps up from whistle-synth's: its 0, 11.9x the
+  // room, is 5 here, and every step is still 2dB.
+  CHECK(fabs(whistle_gate_margin(5) - 1.5 * pow(10, 0.9)) < 1e-9,
+        "gate 5 should be whistle-synth's 0");
+  CHECK(fabs(whistle_gate_margin(9) / whistle_gate_margin(8) -
+             pow(10, -0.1)) < 1e-9, "gate steps should be 2dB apart");
 }
 
 // The second drones on 8 and 9, and the drones' own list of pads on the voice

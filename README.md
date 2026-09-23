@@ -442,7 +442,9 @@ is also what happens if the device you pinned isn't plugged in.
 
 Everything else here describes the microphone and the room rather than the
 tune, so none of it is on a key: the gate (how many times the
-room noise a note has to be -- the same number on any microphone), the
+room noise a note has to be -- the same number on any microphone -- from
+4.7x at 9 to 37.7x at 0, 2dB a step; five steps stricter than whistle-synth's
+own knob, whose 0 is 5 here, since that ran out on a loud stage), the
 full-blow level (set it a bit above the level the status row shows while you
 whistle hard), and the range of notes to believe.  Plus "Raw input", which
 passes the microphone straight through for checking that it's live at all.

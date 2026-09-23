@@ -1310,7 +1310,7 @@ static void flash_from_speech(int key) {
   whistle_publish();
   UNLOCK();
   [NSUserDefaults.standardUserDefaults setInteger:item.tag
-                                           forKey:@"whistleGate"];
+                                           forKey:@"whistleGateStep"];
   [self rebuildWhistleMenu];
 }
 
@@ -1574,7 +1574,7 @@ static void flash_from_speech(int key) {
                         action:@selector(chooseWhistleGate:)
                         detail:^NSString*(int step) {
     return [NSString stringWithFormat:@"%d — %.1f× the room", step,
-            1.5 * pow(10.0, 0.1 * (9 - step))];
+            whistle_gate_margin(step)];
   }]];
 
   // Set this a bit above the level the status row shows while you whistle
@@ -1711,8 +1711,15 @@ int main(int argc, const char** argv) {
     if ([defaults objectForKey:@"speechGate"]) {
       speech_gate_db = [defaults doubleForKey:@"speechGate"];
     }
-    if ([defaults objectForKey:@"whistleGate"]) {
-      whistle_gate = (int)[defaults integerForKey:@"whistleGate"];
+    // "whistleGate" is the knob before it moved up WHISTLE_GATE_SHIFT
+    // steps: carried over to the step that gates the same, as near as the
+    // top of the knob allows, and kept under a new name from then on.
+    if ([defaults objectForKey:@"whistleGateStep"]) {
+      whistle_gate = (int)[defaults integerForKey:@"whistleGateStep"];
+    } else if ([defaults objectForKey:@"whistleGate"]) {
+      whistle_gate = MIN(9, (int)[defaults integerForKey:@"whistleGate"] +
+                            WHISTLE_GATE_SHIFT);
+      [defaults setInteger:whistle_gate forKey:@"whistleGateStep"];
     }
     if ([defaults objectForKey:@"whistleLevel"]) {
       whistle_level_full = (int)[defaults integerForKey:@"whistleLevel"];

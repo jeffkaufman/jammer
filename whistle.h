@@ -94,6 +94,17 @@ static int whistle_octave;       // -SYNTH_OCTAVE_SHIFT..+SYNTH_OCTAVE_SHIFT
 static int whistle_volume;       // 0-9, the engine's own volume knob
 static int whistle_gate = 5;     // 0-9, how far above the room a note must be
 
+// The gate knob as a margin over the room noise: 2dB a step, higher numbers
+// gating less, as whistle-synth's own knob (engine_set_gate) -- but five
+// steps further up, so its 0, 11.9x the room, is 5 here, and 0 here is
+// 37.7x.  Its range ran out on a loud stage.  Past its 0, so set on the
+// detector directly rather than through engine_set_gate, which clamps to
+// its own knob.
+#define WHISTLE_GATE_SHIFT 5
+static double whistle_gate_margin(int step) {
+  return 1.5 * pow(10.0, 0.1 * (9 + WHISTLE_GATE_SHIFT - step));
+}
+
 // 0-9, what counts as blowing full tilt.  whistle-synth's own app starts this
 // at 5, which is 0.22 -- a vocal mic at the lip.  Against fluidsynth that
 // costs 7dB even with a good microphone, because the voice spends the
@@ -378,7 +389,8 @@ static void whistle_apply_controls(int frames, double sample_rate) {
   int gate = atomic_load_explicit(&whistle_pub_gate, memory_order_relaxed);
   if (gate != whistle_applied_gate) {
     whistle_applied_gate = gate;
-    engine_set_gate(&whistle_engine, gate);
+    pitch_set_gate(&whistle_engine.detector,
+                   (float)whistle_gate_margin(gate));
   }
   int level_full = atomic_load_explicit(&whistle_pub_level_full,
                                         memory_order_relaxed);
