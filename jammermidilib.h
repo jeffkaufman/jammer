@@ -293,28 +293,21 @@ static int drone_voice_for_note(int note) {
   return -1;
 }
 
-// The Breath Gate's own voices: percussion the breath plays by moving
-// (macapi.h), in place of a pad.  Guiro and Washboard on voice keys the
-// drones leave empty; the rest, prototypes for now, over some of the
-// drones' pads.  Negative, so none of them can be taken for a program.
+// The Breath Gate's own voices, on the three voice keys the drones leave
+// empty: percussion the breath plays by moving (macapi.h), in place of a
+// pad.  Negative, so none of them can be taken for a program.
 #define VOICE_GUIRO (-1)
 #define VOICE_WASHBOARD (-2)
-#define VOICE_MANDOLIN (-3)
-#define VOICE_CUICA (-4)
-#define VOICE_TALKING_DRUM (-5)
-#define VOICE_GUIRA (-6)
+#define VOICE_GUIRA (-3)
 static const struct {
   char note;
   int voice;
   const char* label;
   unsigned fx;  // what it has the Mac's audio play
 } BREATH_VOICES[] = {
+  {'B', VOICE_GUIRA,     "Guira",       BREATH_FX_GUIRA},
   {'N', VOICE_GUIRO,     "Guiro",       BREATH_FX_GUIRO},
   {'M', VOICE_WASHBOARD, "Wash\nboard", BREATH_FX_WASHBOARD},
-  {'A', VOICE_MANDOLIN,  "Muted\nMando", BREATH_FX_MANDOLIN},
-  {'S', VOICE_CUICA,     "Cuica",       BREATH_FX_CUICA},
-  {'D', VOICE_TALKING_DRUM, "Talking\nDrum", BREATH_FX_TALKING_DRUM},
-  {'G', VOICE_GUIRA,     "Guira",       BREATH_FX_GUIRA},
 };
 #define N_BREATH_VOICES \
   ((int)(sizeof(BREATH_VOICES) / sizeof(BREATH_VOICES[0])))
@@ -464,7 +457,7 @@ unsigned breath_fx;
 // struck again -- not even for a new chord -- until the breath next opens
 // the gate: see breath_gate_breath.
 bool breath_gate_rested = true;
-static void (*breath_hook)(const BreathState* state) = NULL;
+static void (*breath_hook)(int breath, unsigned fx) = NULL;
 void update_breath_fx(void);
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
@@ -1095,27 +1088,19 @@ int pitch = MIDI_MAX / 2;
 
 int breath = 0;  // current value from breath controller
 
-char active_chord();
-
 // Tell the Mac's audio what the breath is doing and how hard you're blowing:
-// the sweeps that are on, the Breath Gate's percussion if it's on and on one
-// of those voices, and the chord for the mandolin -- what the drones are
-// playing, with the third the chord or the mode gives it.
+// the sweeps that are on, and the Breath Gate's percussion if it's on and on
+// one of those voices.
 void update_breath_fx(void) {
-  if (!breath_hook) return;
-  BreathState state = {breath, breath_fx, active_chord(), 4, 7};
+  unsigned fx = breath_fx;
   if (c->on[ENDPOINT_BREATH]) {
     for (int i = 0; i < N_BREATH_VOICES; i++) {
       if (c->voices[ENDPOINT_BREATH] == BREATH_VOICES[i].voice) {
-        state.fx |= BREATH_VOICES[i].fx;
+        fx |= BREATH_VOICES[i].fx;
       }
     }
   }
-  int type = drum_chooses_notes || drum_chooses_some_notes ? chord_type :
-             musical_mode == MODE_MINOR ? CHORD_MINOR : CHORD_MAJOR;
-  if (type == CHORD_MINOR || type == CHORD_DIM) state.chord_third = 3;
-  if (type == CHORD_DIM) state.chord_fifth = 6;
-  breath_hook(&state);
+  if (breath_hook) breath_hook(breath, fx);
 }
 
 // Every breath after a rest starts the Breath Gate's chord afresh, so the
@@ -1131,13 +1116,6 @@ void breath_gate_breath(void) {
     breath_gate_rested = false;
     update_bass(/*force_refresh=*/true);
   }
-}
-
-// The arrow keys, or speech: the mode, and so the third the mandolin's
-// strings are tuned to.
-void set_musical_mode(int mode) {
-  musical_mode = mode;
-  update_breath_fx();
 }
 
 void toggle_breath_fx(unsigned fx) {
@@ -1703,7 +1681,6 @@ void update_bass(bool force_refresh) {
     }
     current_note[endpoint] = note_out;
   }
-  update_breath_fx();  // the mandolin follows the chord
 }
 
 char mapping(unsigned char note_in) {
@@ -2207,16 +2184,16 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     }
     return;
   case UP:
-    set_musical_mode(MODE_MAJOR);
+    musical_mode = MODE_MAJOR;
     return;
   case LEFT:
-    set_musical_mode(MODE_MIXO);
+    musical_mode = MODE_MIXO;
     return;
   case DOWN:
-    set_musical_mode(MODE_MINOR);
+    musical_mode = MODE_MINOR;
     return;
   case RIGHT:
-    set_musical_mode(MODE_BETH_COHENS);
+    musical_mode = MODE_BETH_COHENS;
     return;
   case F8:
     root_note = to_root(val);

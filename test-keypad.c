@@ -393,13 +393,9 @@ static void test_kick_duck() {
 // it all off.
 static int told_breath;
 static unsigned told_fx;
-static int told_chord[3];
-static void record_breath(const BreathState* state) {
-  told_breath = state->breath;
-  told_fx = state->fx;
-  told_chord[0] = state->chord_root;
-  told_chord[1] = state->chord_third;
-  told_chord[2] = state->chord_fifth;
+static void record_breath(int breath, unsigned fx) {
+  told_breath = breath;
+  told_fx = fx;
 }
 
 static void test_breath_fx() {
@@ -429,7 +425,7 @@ static void test_breath_fx() {
 }
 
 // The Breath Gate on `: a drone chord like Dc, starting on Warm Pad, whose
-// voice keys are the drones' pads plus its own percussion on N and M.  On
+// voice keys are the drones' pads plus its own percussion on B, N and M.  On
 // one of those it plays no notes, and the Mac's audio is told to play it
 // instead -- only while it's on.
 static void test_breath_gate() {
@@ -466,14 +462,10 @@ static void test_breath_gate() {
   CHECK(current_note[ENDPOINT_BREATH] != -1,
         "the next breath didn't strike it again");
 
-  CHECK(drone_key_is_dead(key_for_cap("B")),
-        "B should be empty on the Breath Gate too");
-  const char* caps[] = {"N", "M", "A", "S", "D", "G"};
-  unsigned fxs[] = {BREATH_FX_GUIRO, BREATH_FX_WASHBOARD, BREATH_FX_MANDOLIN,
-                    BREATH_FX_CUICA, BREATH_FX_TALKING_DRUM, BREATH_FX_GUIRA};
-  const char* labels[] = {"Guiro", "Wash\nboard", "Muted\nMando", "Cuica",
-                          "Talking\nDrum", "Guira"};
-  for (int i = 0; i < 6; i++) {
+  const char* caps[] = {"B", "N", "M"};
+  unsigned fxs[] = {BREATH_FX_GUIRA, BREATH_FX_GUIRO, BREATH_FX_WASHBOARD};
+  const char* labels[] = {"Guira", "Guiro", "Wash\nboard"};
+  for (int i = 0; i < 3; i++) {
     const Key* k = key_for_cap(caps[i]);
     CHECK(!drone_key_is_dead(k), "%s should be alive on the Breath Gate",
           caps[i]);
@@ -491,7 +483,7 @@ static void test_breath_gate() {
   press("`");
   CHECK(told_fx == 0, "switching it off didn't stop its percussion");
   press("`");
-  CHECK(told_fx == BREATH_FX_GUIRA, "switching it back on didn't");
+  CHECK(told_fx == BREATH_FX_WASHBOARD, "switching it back on didn't");
 
   // Back on a pad, it holds the chord again.
   press("Z");
@@ -499,16 +491,14 @@ static void test_breath_gate() {
         current_note[ENDPOINT_BREATH] != -1, "Z didn't put Warm Pad back");
   handle_cc(CC_BREATH, 0);
 
-  // The mandolin is told the chord: what the drones play, with its third.
-  CHECK(told_chord[0] == active_chord() && told_chord[1] == 4 &&
-        told_chord[2] == 7,
-        "the mandolin should get a major chord on the root");
-  press("↓");
-  CHECK(told_chord[1] == 3, "in minor the mandolin's third should be minor");
-  // F is a pad again on the Breath Gate.
-  CHECK(breath_voice_for_note('F') < 0 && drone_voice_for_note('F') >= 0,
-        "F should be back to its pad");
-  press("↑");
+  // The rest of the voice keys are the drones' pads, as on any drone.
+  const char* pads[] = {"A", "S", "D", "F", "G", "H", "Z", "X", "C", "V"};
+  for (int i = 0; i < 10; i++) {
+    const Key* k = key_for_cap(pads[i]);
+    CHECK(breath_voice_for_note(k->note) < 0 &&
+          drone_voice_for_note(k->note) >= 0,
+          "%s should pick a pad on the Breath Gate", pads[i]);
+  }
 
   // The other drones still leave B, N and M empty.
   select_ep("9");

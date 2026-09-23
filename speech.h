@@ -209,7 +209,7 @@ static void speech_apply_locked(const SwAction* action) {
   switch (action->kind) {
   case SW_NUMBER: nashville_picks_chord(action->value); break;
   case SW_KEY: change_key(action->value); break;
-  case SW_MODE: set_musical_mode(action->value); break;  // as the arrows
+  case SW_MODE: musical_mode = action->value; break;  // as the arrow keys
   case SW_PRESS:
   case SW_SELECT: {
     const Key* key = &KEYS[action->value];

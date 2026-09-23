@@ -64,20 +64,8 @@ enum {
   BREATH_FX_SWEEP_PEAK = 1 << 2,
   BREATH_FX_GUIRO = 1 << 3,
   BREATH_FX_WASHBOARD = 1 << 4,
-  BREATH_FX_MANDOLIN = 1 << 5,
-  BREATH_FX_CUICA = 1 << 6,
-  BREATH_FX_TALKING_DRUM = 1 << 7,
-  BREATH_FX_GUIRA = 1 << 8,
+  BREATH_FX_GUIRA = 1 << 5,
 };
-
-// What the Mac's breath effects are told: the breath, which BREATH_FX_* are
-// on, and the chord the mandolin's strings are tuned to -- a MIDI note for its
-// root, and its third and fifth as semitones above that.
-typedef struct {
-  int breath;
-  unsigned fx;
-  int chord_root, chord_third, chord_fifth;
-} BreathState;
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0

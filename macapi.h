@@ -89,18 +89,10 @@ static volatile int audio_block_frames = 0;
 
 static _Atomic int audio_breath;
 static _Atomic unsigned audio_breath_fx;
-// The mandolin's chord: the root's MIDI note, then the third and fifth above it
-// in semitones, a byte each.
-static _Atomic unsigned audio_chord;
 
-static void breath_set(const BreathState* state) {
-  atomic_store_explicit(&audio_breath, state->breath, memory_order_relaxed);
-  atomic_store_explicit(&audio_breath_fx, state->fx, memory_order_relaxed);
-  atomic_store_explicit(&audio_chord,
-                        (unsigned)state->chord_root << 16 |
-                        (unsigned)state->chord_third << 8 |
-                        (unsigned)state->chord_fifth,
-                        memory_order_relaxed);
+static void breath_set(int breath, unsigned fx) {
+  atomic_store_explicit(&audio_breath, breath, memory_order_relaxed);
+  atomic_store_explicit(&audio_breath_fx, fx, memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -404,9 +396,9 @@ static void apply_sweeps(float* left, float* right, int len,
 // ---------------------------------------------------------------------------
 // Breath instruments
 //
-// The Breath Gate's percussion voices (N and M, and for now A, S, D and G,
-// with it selected): played by moving the breath rather than by how hard it is, so
-// holding it steady is silence and every sound is set off by a movement.
+// The Breath Gate's percussion voices (B, N and M with it selected): played
+// by moving the breath rather than by how hard it is, so holding it steady is
+// silence and every sound is set off by a movement.
 // Their own sound rather than fluidsynth's, like the whistle, and summed in
 // after the sweeps and Kick Duck, so neither touches them.
 //
@@ -417,20 +409,6 @@ static void apply_sweeps(float* left, float* right, int len,
 //                 longer, higher, inharmonic rings.
 //   Guira         the same, a wire brush over a punched metal cylinder: each
 //                 ridge a "tsch" of many tines.
-//   Mandolin      the ridges are courses of an electric mandolin, tuned to
-//                 the chord the drones are playing, root, third and fifth
-//                 up from the mandolin's low G: breathe up and it strums up,
-//                 down and it strums down.  Played with the palm resting on
-//                 the strings, so each note is a short, dull "chk" at its
-//                 pitch rather than a ring.  Plucked strings, Karplus-Strong,
-//                 two to a course a few cents apart, through a pickup's
-//                 presence and a little overdrive.
-//   Cuica         the samba friction drum: a squeaking, vocal tone while the
-//                 breath moves, louder the faster, its pitch how far into the
-//                 breath it is -- up-strokes whoop up and down-strokes fall.
-//   Talking Drum  struck at the start of each stroke, harder the quicker the
-//                 stroke starts, and its pitch bends with the breath while it
-//                 rings.
 //
 // All follow the breath through a little slack, BREATH_BACKLASH, so the
 // controller wavering by a step while it's held doesn't rattle or click.
@@ -444,29 +422,6 @@ static void apply_sweeps(float* left, float* right, int len,
 #define GUIRO_LEVEL 0.2
 #define WASHBOARD_LEVEL 0.25
 #define GUIRA_LEVEL 0.08
-
-#define MANDO_COURSES 8           // across the breath's range
-#define MANDO_LOWEST 55           // G3, the mandolin's low string
-#define MANDO_RING_MS 150         // muted: each note's gone in this long
-#define MANDO_DAMP 0.45           // the palm on the strings: lower is duller
-#define MANDO_DETUNE_CENTS 2      // each string of a course, either way
-#define MANDO_DRIVE 2.0
-#define MANDO_LEVEL 0.07
-
-#define CUICA_LOW_HZ 250
-#define CUICA_HIGH_HZ 900
-#define CUICA_FULL_SPEED 4.0      // ranges a second for full voice
-#define CUICA_LEVEL 0.07
-
-#define TALK_LOW_HZ 90
-#define TALK_HIGH_HZ 180
-#define TALK_MOVING 0.4           // ranges a second: slower is at rest
-#define TALK_FULL_SPEED 4.0       // a stroke this quick strikes hardest
-#define TALK_LISTEN_MS 8          // how long into a stroke it's judged
-#define TALK_LEVEL 0.02
-#define TALK_RISE_MS 1.5          // a strike's rise, so it doesn't click
-
-#define SPEED_SMOOTH_MS 8         // how the breath's speed is smoothed
 
 // A bandpass state-variable filter, normalized to 0dB at its peak.  Mono.
 typedef struct {
@@ -602,285 +557,6 @@ static void play_scraper(Scraper* s, BreathPlayer* p, const ScraperSound* sound,
   }
 }
 
-// The breath's speed, in ranges a second, smoothed; signed.
-static double breath_speed(double* speed, double moved, double sample_rate) {
-  double ks = 1 - exp(-1 / (sample_rate * SPEED_SMOOTH_MS / 1000));
-  *speed += (moved * sample_rate - *speed) * ks;
-  return *speed;
-}
-
-static double midi_hz(double note) {
-  return 440 * pow(2, (note - 69) / 12);
-}
-
-// The mandolin: plucked strings, each a delay line round which a burst of
-// noise is filtered a little more each trip (Karplus-Strong).  The filter is
-// the palm: a lowpass, so the highs die first, and a loss each trip set so
-// every note is gone in MANDO_RING_MS whatever its pitch.  Tuned exactly by
-// an allpass for the part of the delay the line and the lowpass don't make.
-#define MANDO_MAX_DELAY 2048
-typedef struct {
-  float line[MANDO_MAX_DELAY];
-  int len, pos;
-  double lp;                 // the palm's lowpass
-  double keep;               // kept each trip round
-  double ap, ap_in, ap_out;  // the allpass: coefficient and state
-} KsString;
-
-typedef struct {
-  KsString strings[MANDO_COURSES][2];
-  Bandpass presence;
-  int zone;      // how many courses are below the breath
-  bool started;  // zone is known: nothing to pluck on the first frame
-} Mandolin;
-
-static BreathPlayer mando_player;
-static Mandolin mando;
-
-// A first-order allpass's delay at w, in samples.
-static double allpass_delay(double c, double w) {
-  return -(atan2(-sin(w), c + cos(w)) - atan2(-c * sin(w), 1 + c * cos(w))) /
-         w;
-}
-
-static void mando_pluck(KsString* k, double hz, double sample_rate) {
-  double w = 2 * M_PI * hz / sample_rate;
-  // The lowpass's own delay at this pitch, and how much it lets through.
-  double r = 1 - MANDO_DAMP;
-  double lp_delay = atan2(r * sin(w), 1 - r * cos(w)) / w;
-  double lp_gain = MANDO_DAMP / sqrt(1 - 2 * r * cos(w) + r * r);
-  double delay = sample_rate / hz - lp_delay;
-  int len = (int)floor(delay);
-  double frac = delay - len;
-  // Keep the allpass's share between 0.1 and 1.1 samples, where it's tame.
-  if (frac < 0.1) {
-    len--;
-    frac++;
-  }
-  if (len < 2) len = 2;
-  if (len > MANDO_MAX_DELAY) len = MANDO_MAX_DELAY;
-  // (1 - d) / (1 + d) delays by d only at the bottom of the range: nudge it
-  // until it's right at this pitch.
-  double want = frac;
-  for (int i = 0; i < 4; i++) {
-    frac += want - allpass_delay((1 - frac) / (1 + frac), w);
-  }
-  bool retune = len != k->len;
-  k->len = len;
-  k->pos = 0;
-  k->ap = (1 - frac) / (1 + frac);
-  k->keep = fmin(0.999, pow(10, -3 * 1000 / (hz * MANDO_RING_MS)) / lp_gain);
-  if (retune) k->lp = k->ap_in = k->ap_out = 0;
-  // The pick: bright noise, on top of what's left of the last note.
-  // Without its average, which would otherwise sit in the line as an
-  // offset the loop hardly loses.
-  double amp = 0.85 + 0.15 * (breath_noise() + 1) / 2;
-  static double burst[MANDO_MAX_DELAY];
-  double pick = 0, mean = 0;
-  for (int i = 0; i < len; i++) {
-    pick += (breath_noise() - pick) * 0.8;
-    burst[i] = pick;
-    mean += pick / len;
-  }
-  for (int i = 0; i < len; i++) {
-    k->line[i] = (float)((retune ? 0 : 0.2 * k->line[i]) +
-                         amp * (burst[i] - mean));
-  }
-}
-
-static double mando_string_run(KsString* k) {
-  if (k->len == 0) return 0;
-  double out = k->line[k->pos];
-  k->lp += (out - k->lp) * MANDO_DAMP;
-  double ap = k->ap * k->lp + k->ap_in - k->ap * k->ap_out;
-  k->ap_in = k->lp;
-  k->ap_out = ap;
-  k->line[k->pos] = (float)(k->keep * ap);
-  if (++k->pos >= k->len) k->pos = 0;
-  return out;
-}
-
-static void play_mandolin(float* left, float* right, int len, bool playing,
-                          double blown, double sample_rate) {
-  double k = 1 - exp(-1 / (sample_rate * BREATH_PLAY_SMOOTH_MS / 1000));
-  unsigned chord = atomic_load_explicit(&audio_chord, memory_order_relaxed);
-  // Up from the drones' root to the mandolin's range.
-  int root = (int)(chord >> 16);
-  while (root < MANDO_LOWEST) root += 12;
-  int tones[3] = {0, (int)(chord >> 8 & 0xff), (int)(chord & 0xff)};
-  double spread = pow(2, MANDO_DETUNE_CENTS / 1200.0);
-  bandpass_set(&mando.presence, 2500, 0.9, sample_rate);
-  for (int i = 0; i < len; i++) {
-    breath_player_move(&mando_player, playing ? blown : 0, k);
-    // Course n sits at (n + 0.5) / MANDO_COURSES of the breath's range.
-    int zone = (int)floor(mando_player.stick * MANDO_COURSES + 0.5);
-    if (zone < 0) zone = 0;
-    if (zone > MANDO_COURSES) zone = MANDO_COURSES;
-    if (!mando.started) {
-      mando.zone = zone;
-      mando.started = true;
-    }
-    while (playing && zone != mando.zone) {
-      // Up through the next course, or down through the one below.
-      int n = zone > mando.zone ? mando.zone++ : --mando.zone;
-      double hz = midi_hz(root + tones[n % 3] + 12 * (n / 3));
-      mando_pluck(&mando.strings[n][0], hz * spread, sample_rate);
-      mando_pluck(&mando.strings[n][1], hz / spread, sample_rate);
-    }
-    double y = 0;
-    for (int n = 0; n < MANDO_COURSES; n++) {
-      y += mando_string_run(&mando.strings[n][0]) +
-           mando_string_run(&mando.strings[n][1]);
-    }
-    // The pickup's presence, and the amp pushed a little.
-    y += 0.6 * bandpass_run(&mando.presence, y);
-    y = tanh(MANDO_DRIVE * y) / MANDO_DRIVE;
-    left[i] += (float)(y * MANDO_LEVEL);
-    right[i] += (float)(y * MANDO_LEVEL);
-  }
-}
-
-// The cuica: a sawtooth, tamed at its corners (polyBLEP) so it doesn't
-// alias, with a little friction noise, through two resonances that follow
-// its pitch.
-typedef struct {
-  double speed, amp, phase;
-  Bandpass body[2];
-} Cuica;
-
-static BreathPlayer cuica_player;
-static Cuica cuica;
-
-static double polyblep(double t, double dt) {
-  if (t < dt) {
-    t /= dt;
-    return t + t - t * t - 1;
-  }
-  if (t > 1 - dt) {
-    t = (t - 1) / dt;
-    return t * t + t + t + 1;
-  }
-  return 0;
-}
-
-static void play_cuica(float* left, float* right, int len, bool playing,
-                       double blown, double sample_rate) {
-  double k = 1 - exp(-1 / (sample_rate * BREATH_PLAY_SMOOTH_MS / 1000));
-  double up = 1 - exp(-1 / (sample_rate * 0.004));
-  double down = 1 - exp(-1 / (sample_rate * 0.030));
-  for (int i = 0; i < len; i++) {
-    double moved = breath_player_move(&cuica_player, playing ? blown : 0, k);
-    double speed = fabs(breath_speed(&cuica.speed, moved, sample_rate));
-    double target = playing ? pow(fmin(1, speed / CUICA_FULL_SPEED), 0.7) : 0;
-    cuica.amp += (target - cuica.amp) * (target > cuica.amp ? up : down);
-    // Where it is in the breath is the pitch, with the wobble of a stick
-    // that catches and slips.
-    double hz = CUICA_LOW_HZ *
-      pow((double)CUICA_HIGH_HZ / CUICA_LOW_HZ, cuica_player.stick) *
-      (1 + 0.004 * breath_noise());
-    double dt = hz / sample_rate;
-    cuica.phase += dt;
-    if (cuica.phase >= 1) cuica.phase -= 1;
-    double saw = 2 * cuica.phase - 1 - polyblep(cuica.phase, dt);
-    double x = 0.8 * saw + 0.15 * breath_noise();
-    bandpass_set(&cuica.body[0], hz, 3, sample_rate);
-    bandpass_set(&cuica.body[1], hz * 3, 5, sample_rate);
-    double y = cuica.amp * (0.9 * bandpass_run(&cuica.body[0], x) +
-                            0.4 * bandpass_run(&cuica.body[1], x));
-    left[i] += (float)(y * CUICA_LEVEL);
-    right[i] += (float)(y * CUICA_LEVEL);
-  }
-}
-
-// The talking drum: a membrane's first four modes, sine partials whose pitch
-// is wherever the breath is while they ring, and a tick of noise for the
-// stick.
-#define TALK_MODES 4
-static const double TALK_RATIO[TALK_MODES] = {1, 1.59, 2.14, 2.30};
-static const double TALK_RING_MS[TALK_MODES] = {350, 180, 120, 90};
-static const double TALK_MIX[TALK_MODES] = {1, 0.5, 0.35, 0.25};
-
-typedef struct {
-  double speed;
-  int stroke;        // which way it's going: 1, -1, or 0 at rest
-  int listen;        // frames left to judge a new stroke by, or 0
-  double stroke_peak;
-  double phase[TALK_MODES], amp[TALK_MODES];
-  // A strike rises to this over TALK_RISE_MS rather than jumping there,
-  // which is a step in the waveform wherever it happens to be -- a click,
-  // most of all when struck again while it's still ringing.  0 once there.
-  double rise_to[TALK_MODES];
-  double tick, tick_rise_to;
-  Bandpass stick;
-} TalkingDrum;
-
-static BreathPlayer talk_player;
-static TalkingDrum talk;
-
-static void play_talking_drum(float* left, float* right, int len,
-                              bool playing, double blown,
-                              double sample_rate) {
-  double k = 1 - exp(-1 / (sample_rate * BREATH_PLAY_SMOOTH_MS / 1000));
-  double ring[TALK_MODES];
-  for (int m = 0; m < TALK_MODES; m++) {
-    ring[m] = exp(-1 / (sample_rate * TALK_RING_MS[m] / 1000));
-  }
-  double tick_decay = exp(-1 / (sample_rate * 0.004));
-  double rise = 1000 / (sample_rate * TALK_RISE_MS);
-  bandpass_set(&talk.stick, 500, 1.5, sample_rate);
-  for (int i = 0; i < len; i++) {
-    double moved = breath_player_move(&talk_player, playing ? blown : 0, k);
-    double speed = breath_speed(&talk.speed, moved, sample_rate);
-    int way = speed > TALK_MOVING ? 1 : speed < -TALK_MOVING ? -1 : 0;
-    if (playing && way != 0 && way != talk.stroke) {
-      // A stroke starts, from rest or turning round: listen to how quick
-      // it is for a few milliseconds, then strike.
-      talk.listen = (int)(sample_rate * TALK_LISTEN_MS / 1000);
-      talk.stroke_peak = 0;
-    }
-    talk.stroke = way;
-    if (talk.listen > 0) {
-      talk.stroke_peak = fmax(talk.stroke_peak, fabs(speed));
-      if (--talk.listen == 0) {
-        double hit = 0.35 + 0.65 * fmin(1, talk.stroke_peak / TALK_FULL_SPEED);
-        for (int m = 0; m < TALK_MODES; m++) {
-          talk.rise_to[m] = fmax(talk.amp[m], hit * TALK_MIX[m]);
-        }
-        talk.tick_rise_to = fmax(talk.tick, hit);
-      }
-    }
-    double hz = TALK_LOW_HZ *
-      pow((double)TALK_HIGH_HZ / TALK_LOW_HZ, talk_player.stick);
-    double y = 0;
-    for (int m = 0; m < TALK_MODES; m++) {
-      talk.phase[m] += hz * TALK_RATIO[m] / sample_rate;
-      if (talk.phase[m] >= 1) talk.phase[m] -= 1;
-      y += talk.amp[m] * sin(2 * M_PI * talk.phase[m]);
-      if (talk.rise_to[m] > 0) {
-        talk.amp[m] += talk.rise_to[m] * rise;
-        if (talk.amp[m] >= talk.rise_to[m]) {
-          talk.amp[m] = talk.rise_to[m];
-          talk.rise_to[m] = 0;
-        }
-      } else {
-        talk.amp[m] *= ring[m];
-      }
-    }
-    y += 0.25 * bandpass_run(&talk.stick, breath_noise() * talk.tick);
-    if (talk.tick_rise_to > 0) {
-      talk.tick += talk.tick_rise_to * rise;
-      if (talk.tick >= talk.tick_rise_to) {
-        talk.tick = talk.tick_rise_to;
-        talk.tick_rise_to = 0;
-      }
-    } else {
-      talk.tick *= tick_decay;
-    }
-    left[i] += (float)(y * TALK_LEVEL);
-    right[i] += (float)(y * TALK_LEVEL);
-  }
-}
-
 static void play_breath_instruments(float* left, float* right, int len,
                                     double sample_rate) {
   unsigned fx = atomic_load_explicit(&audio_breath_fx, memory_order_relaxed);
@@ -904,21 +580,6 @@ static void play_breath_instruments(float* left, float* right, int len,
                         sample_rate, len)) {
     play_scraper(&guira, &guira_player, &GUIRA_SOUND, left, right, len, on,
                  blown, sample_rate);
-  }
-  on = fx & BREATH_FX_MANDOLIN;
-  if (breath_player_run(&mando_player, on, &mando, sizeof(mando),
-                        sample_rate, len)) {
-    play_mandolin(left, right, len, on, blown, sample_rate);
-  }
-  on = fx & BREATH_FX_CUICA;
-  if (breath_player_run(&cuica_player, on, &cuica, sizeof(cuica),
-                        sample_rate, len)) {
-    play_cuica(left, right, len, on, blown, sample_rate);
-  }
-  on = fx & BREATH_FX_TALKING_DRUM;
-  if (breath_player_run(&talk_player, on, &talk, sizeof(talk), sample_rate,
-                        len)) {
-    play_talking_drum(left, right, len, on, blown, sample_rate);
   }
 }
 
