@@ -43,7 +43,7 @@ enum {
 enum {
   GLOBAL_JIG, GLOBAL_DRUM_CHOOSES, GLOBAL_DRUM_CHOOSES_SOME,
   GLOBAL_ALL_DRUMS_DOWNBEAT, GLOBAL_FADED, GLOBAL_SPEECH_PICKS,
-  GLOBAL_SPEECH_COMMANDS,
+  GLOBAL_SPEECH_COMMANDS, GLOBAL_KICK_DUCK,
 };
 
 // Colour families, so related keys read as a group.
@@ -134,7 +134,11 @@ static const Key KEYS[] = {
   {kVK_ANSI_3, 'u', 'v', "3", "FB3", "Skip\nBass", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_FOOTBASS_3, NOLABEL, 1, 3, 1},
   {-1, 0, 0, "4", FILLER, 1, 4, 1},
-  {-1, 0, 0, "5", FILLER, 1, 5, 1},
+  // Each kick ducks the pads, drones and the rest, for the pump of a
+  // sidechained mix; the kick, foot basses and arp stay as they are.
+  // Whole-rig, like JIG next to it, rather than an endpoint.
+  {kVK_ANSI_5, KICK_DUCK, 0, "5", "KD", "KICK\nDUCK", GROUP_GLOBAL,
+   LIT_GLOBAL_FLAG, GLOBAL_KICK_DUCK, NOLABEL, 1, 5, 1},
   {-1, 0, 0, "6", FILLER, 1, 6, 1},
   {-1, 0, 0, "7", FILLER, 1, 7, 1},
   // A second drone bass and chord, for layering two pads.  They sit over I

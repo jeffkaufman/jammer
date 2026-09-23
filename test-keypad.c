@@ -337,8 +337,55 @@ static void test_globals() {
   press("/");
   CHECK(fade_target == MAX_FADE && !lit("/"), "/ didn't fade back in");
 
+  press("5");
+  CHECK(kick_duck && lit("5"), "5 didn't toggle kick duck");
+
   press("esc");
-  CHECK(!jig_time && !drum_chooses_notes, "escape didn't reset");
+  CHECK(!jig_time && !drum_chooses_notes && !kick_duck,
+        "escape didn't reset");
+}
+
+// Kick Duck is set off by the rig's kick sounding, and by the kick pedal
+// whether or not the drum is on: only while it's on, and once per hit.
+static int kicks_ducked;
+static void count_kick_duck(uint64_t beat_ns) {
+  CHECK(beat_ns > 0, "a duck needs a beat to come back up over");
+  kicks_ducked++;
+}
+
+static void test_kick_duck() {
+  full_reset();
+  kick_hook = count_kick_duck;
+  c->on[ENDPOINT_DRUM] = true;
+  c->downbeat[ENDPOINT_DRUM] = true;  // the kick; the drum clears to hats
+  arpeggiate_drum(0, now());
+  CHECK(kicks_ducked == 0, "a kick ducked with Kick Duck off");
+  press("5");
+  arpeggiate_drum(0, now());
+  CHECK(kicks_ducked == 1, "a kick didn't duck with Kick Duck on");
+  arpeggiate_drum(72 / 2, now());
+  CHECK(kicks_ducked == 1, "the upbeat has no kick, so shouldn't duck");
+  c->downbeat[ENDPOINT_DRUM] = false;
+  arpeggiate_drum(0, now());
+  CHECK(kicks_ducked == 1, "no kick on the downbeat, so no duck");
+
+  // The pedals playing a drum synth of their own, with the drum here off.
+  last_kick_duck_ns = 0;
+  c->on[ENDPOINT_DRUM] = false;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+  CHECK(kicks_ducked == 2, "the kick pedal didn't duck with the drum off");
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  CHECK(kicks_ducked == 2, "the snare pedal shouldn't duck");
+
+  // The pedal and the drum's kick on the same hit are one duck.
+  last_kick_duck_ns = 0;
+  c->on[ENDPOINT_DRUM] = true;
+  c->downbeat[ENDPOINT_DRUM] = true;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+  arpeggiate_drum(0, now());
+  CHECK(kicks_ducked == 3, "one hit ducked %d times", kicks_ducked - 2);
+  kick_hook = NULL;
+  full_reset();
 }
 
 // The kit table asks for bank 128, but it's the platform's choose_voice that
@@ -385,6 +432,16 @@ static void test_percussion_bank_reaches_the_synth() {
   fluid_synth_get_program(fl_synth, CHANNEL_DRUM, &sfont, &bank, &program);
   CHECK(bank == PERCUSSION_BANK && program == KITS[KIT_RIM].program,
         "going back to a Standard kit left the drum channel on %d-%d",
+        bank, program);
+
+  // The kick has a channel of its own, for Kick Duck, which has to follow
+  // the drum channel's kit.
+  CHECK(CHANNEL_KICK != CHANNEL_DRUM && CHANNEL_KICK >= N_ENDPOINTS &&
+        CHANNEL_KICK != CHANNEL_PITCHED_KICK,
+        "the kick's channel should be a spare one of its own");
+  fluid_synth_get_program(fl_synth, CHANNEL_KICK, &sfont, &bank, &program);
+  CHECK(bank == PERCUSSION_BANK && program == KITS[KIT_RIM].program,
+        "the kick's channel is on %d-%d, not the drum channel's kit",
         bank, program);
 
   delete_fluid_synth(fl_synth);
@@ -1175,6 +1232,7 @@ int main() {
   test_musical_mode();
   test_drum_picks_notes_defaults();
   test_globals();
+  test_kick_duck();
   test_percussion_bank_reaches_the_synth();
   test_extra_footbasses();
   test_drones();

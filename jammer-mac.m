@@ -1756,6 +1756,7 @@ int main(int argc, const char** argv) {
     // safe to install before there is an engine, since it checks.
     whistle_resolve_voices();
     audio_mix_hook = whistle_mix;
+    kick_hook = kick_duck_hit;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
     speech_start(synth_sample_rate);
 

@@ -17,6 +17,11 @@
 #include <time.h>
 #include <math.h>
 #include <fluidsynth.h>
+#include <stdatomic.h>
+
+// Its own channel here, rather than the drum channel's: see Kick Duck below.
+// Mirrors the drum channel's program and controllers, so it sounds the same.
+#define CHANNEL_KICK 14
 
 #include "common.h"
 
@@ -72,6 +77,145 @@ double synth_sample_rate = 44100;
 // whistle_input_start.  Set here because this is the only place that knows.
 static volatile int audio_block_frames = 0;
 
+// ---------------------------------------------------------------------------
+// Kick Duck
+//
+// Everything fluidsynth plays but the kick, turned down on each kick and
+// brought back up over the beat: the pump of a sidechained mix, set off by
+// each kick as it's played rather than by a beat worked out ahead of time, so
+// it follows the feet and a kick left out is a pump left out.  The kick pedal
+// counts whether or not the rig's kick is on (jammermidilib.h's
+// kick_duck_kick), since the pedals may be playing another synth's drums.  Done on the
+// audio rather than with CC11, which the fades, the breath and Pulse already
+// share, so it's smooth and lands on the sample.
+//
+// The rhythm parts that play with the kick aren't ducked either -- the foot
+// basses and the arp -- so they hit with it rather than being pushed down by
+// it.
+//
+// For that the synth renders each MIDI channel to a stereo pair of its own
+// (start_synth), and the mix happens here: those channels as they are, and
+// the rest ducked.  The whistle is summed in after, by audio_mix_hook, so
+// it isn't ducked; it isn't fluidsynth's.
+// ---------------------------------------------------------------------------
+
+#define SYNTH_CHANNELS 16
+#define KICK_DUCK_DEPTH 0.788f   // taken off at the bottom: about -13.5dB
+#define KICK_DUCK_ATTACK_MS 5    // down this fast, so it doesn't click
+#define KICK_DUCK_RELEASE 0.6    // back up over this much of a beat
+#define KICK_DUCK_FRAMES 1024    // rendered this many at a time
+
+// Set on each kick while Kick Duck is on, with the length of the beat it's
+// in, which is how long the duck takes to come back up.
+static _Atomic unsigned kick_duck_hits;
+static _Atomic uint64_t kick_duck_beat_ns;
+
+// Called by jammermidilib.h's kick_hook, under jammer's lock.
+static void kick_duck_hit(uint64_t beat_ns) {
+  atomic_store_explicit(&kick_duck_beat_ns, beat_ns, memory_order_relaxed);
+  atomic_fetch_add_explicit(&kick_duck_hits, 1, memory_order_release);
+}
+
+// The audio thread's own.
+static float synth_channel_bufs[2 * SYNTH_CHANNELS][KICK_DUCK_FRAMES];
+static unsigned kick_duck_seen;
+static double kick_duck_pos = -1;  // frames into the duck, or -1 if none
+static double kick_duck_from;      // the gain its attack started from
+static double kick_duck_attack, kick_duck_release;  // in frames
+static double kick_duck_gain = 1;
+
+// Endpoints are channels (common.h), so these are the foot basses and arp.
+static bool kick_duck_exempt(int channel) {
+  switch (channel) {
+  case CHANNEL_KICK:
+  case CHANNEL_PITCHED_KICK:
+  case ENDPOINT_FOOTBASS:
+  case ENDPOINT_FOOTBASS_2:
+  case ENDPOINT_FOOTBASS_3:
+  case ENDPOINT_ARP:
+    return true;
+  }
+  return false;
+}
+
+// The duck's gain for the next frame.
+static float kick_duck_step(void) {
+  if (kick_duck_pos < 0) return 1;
+  double bottom = 1 - KICK_DUCK_DEPTH;
+  if (kick_duck_pos < kick_duck_attack) {
+    kick_duck_gain = kick_duck_from +
+      (bottom - kick_duck_from) * kick_duck_pos / kick_duck_attack;
+  } else if (kick_duck_pos < kick_duck_attack + kick_duck_release) {
+    // A raised cosine back up, so it leaves the bottom and arrives at the
+    // top gently.
+    double x = (kick_duck_pos - kick_duck_attack) / kick_duck_release;
+    kick_duck_gain = 1 - KICK_DUCK_DEPTH * 0.5 * (1 + cos(M_PI * x));
+  } else {
+    kick_duck_gain = 1;
+    kick_duck_pos = -1;
+    return 1;
+  }
+  kick_duck_pos++;
+  return (float)kick_duck_gain;
+}
+
+// fluid_synth_process, with every channel but the exempt ones ducked.  Up to
+// KICK_DUCK_FRAMES at a time, since that's what the channel buffers hold.
+static int render_kick_ducked(fluid_synth_t* synth, int len, int nfx,
+                              float** fx, int nout, float** out,
+                              double sample_rate) {
+  unsigned hits = atomic_load_explicit(&kick_duck_hits, memory_order_acquire);
+  if (hits != kick_duck_seen) {
+    kick_duck_seen = hits;
+    double beat_s = (double)atomic_load_explicit(
+      &kick_duck_beat_ns, memory_order_relaxed) / 1e9;
+    kick_duck_from = kick_duck_gain;
+    kick_duck_attack = sample_rate * KICK_DUCK_ATTACK_MS / 1000;
+    kick_duck_release = sample_rate * beat_s * KICK_DUCK_RELEASE;
+    kick_duck_pos = 0;
+  }
+
+  float* bufs[2 * SYNTH_CHANNELS];
+  float* chunk_fx[nfx > 0 ? nfx : 1];
+  int result = FLUID_OK;
+  for (int done = 0; done < len; done += KICK_DUCK_FRAMES) {
+    int n = len - done < KICK_DUCK_FRAMES ? len - done : KICK_DUCK_FRAMES;
+    for (int i = 0; i < 2 * SYNTH_CHANNELS; i++) {
+      bufs[i] = synth_channel_bufs[i];
+      memset(bufs[i], 0, (size_t)n * sizeof(float));
+    }
+    for (int i = 0; i < nfx; i++) chunk_fx[i] = fx[i] + done;
+    result = fluid_synth_process(synth, n, nfx, chunk_fx,
+                                 2 * SYNTH_CHANNELS, bufs);
+    if (result != FLUID_OK || nout < 2) continue;
+
+    float* left = out[0] + done;
+    float* right = out[1] + done;
+    for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
+      if (kick_duck_exempt(ch)) continue;
+      for (int i = 0; i < n; i++) {
+        left[i] += bufs[2 * ch][i];
+        right[i] += bufs[2 * ch + 1][i];
+      }
+    }
+    if (kick_duck_pos >= 0) {
+      for (int i = 0; i < n; i++) {
+        float gain = kick_duck_step();
+        left[i] *= gain;
+        right[i] *= gain;
+      }
+    }
+    for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
+      if (!kick_duck_exempt(ch)) continue;
+      for (int i = 0; i < n; i++) {
+        left[i] += bufs[2 * ch][i];
+        right[i] += bufs[2 * ch + 1][i];
+      }
+    }
+  }
+  return result;
+}
+
 static int jammer_audio_render(void* data, int len, int nfx, float** fx,
                                int nout, float** out) {
   audio_frames_rendered += len;
@@ -85,8 +229,8 @@ static int jammer_audio_render(void* data, int len, int nfx, float** fx,
   for (int i = 0; i < nfx; i++) {
     memset(fx[i], 0, (size_t)len * sizeof(float));
   }
-  int result = fluid_synth_process((fluid_synth_t*)data, len, nfx, fx, nout,
-                                   out);
+  int result = render_kick_ducked((fluid_synth_t*)data, len, nfx, fx, nout,
+                                  out, synth_sample_rate);
   if (audio_mix_hook) {
     audio_mix_hook(out, nout, len, synth_sample_rate);
   }
@@ -285,8 +429,12 @@ void start_synth(const char* soundfont_path, const char* device) {
   }
   fluid_settings_setnum(fl_settings, "synth.sample-rate", synth_sample_rate);
   fluid_settings_setnum(fl_settings, "synth.gain", 1.0);
-  fluid_settings_setint(fl_settings, "synth.audio-channels", 1);
-  fluid_settings_setint(fl_settings, "synth.midi-channels", 16);
+  // A stereo pair for each MIDI channel, so Kick Duck can mix them itself.
+  // Put back to one before the driver is made, below: the CoreAudio driver
+  // reads the same setting as how many channels to open the device with.
+  fluid_settings_setint(fl_settings, "synth.audio-channels", SYNTH_CHANNELS);
+  fluid_settings_setint(fl_settings, "synth.audio-groups", SYNTH_CHANNELS);
+  fluid_settings_setint(fl_settings, "synth.midi-channels", SYNTH_CHANNELS);
   fluid_settings_setint(fl_settings, "synth.reverb.active", 0);
   fluid_settings_setint(fl_settings, "synth.chorus.active", 0);
   // Channel 9 is percussion, as on the Pi (ENDPOINT_DRUM == CHANNEL_DRUM == 9).
@@ -294,6 +442,8 @@ void start_synth(const char* soundfont_path, const char* device) {
 
   fl_synth = new_fluid_synth(fl_settings);
   if (!fl_synth) die("couldn't create fluidsynth synth");
+  fluid_settings_setint(fl_settings, "synth.audio-channels", 1);
+  fluid_synth_set_channel_type(fl_synth, CHANNEL_KICK, CHANNEL_TYPE_DRUM);
 
   fl_sfont_id = fluid_synth_sfload(fl_synth, soundfont_path, 1);
   if (fl_sfont_id == FLUID_FAILED) {
@@ -328,6 +478,10 @@ void send_midi(int action, int note, int velocity, int endpoint) {
 
   if (action == MIDI_CC) {
     fluid_synth_cc(fl_synth, channel, note, velocity);
+    // The kick's channel is the drum's, split off: same volume, pan, fade.
+    if (channel == CHANNEL_DRUM) {
+      fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
+    }
   } else if (action == MIDI_ON) {
     fluid_synth_noteon(fl_synth, channel, note, velocity);
   } else if (action == MIDI_OFF) {
@@ -364,6 +518,7 @@ void choose_voice(int channel, int bank, int voice) {
                                fallback_bank, fallback_voice);
   }
   printf("set endpoint #%d to voice %d-%d\n", channel, bank, voice);
+  if (channel == CHANNEL_DRUM) choose_voice(CHANNEL_KICK, bank, voice);
 }
 
 #endif

@@ -52,6 +52,7 @@ static bool global_flag(int flag) {
   case GLOBAL_SPEECH_COMMANDS:    return speech_commands_on;
   case GLOBAL_ALL_DRUMS_DOWNBEAT: return allow_all_drums_downbeat;
   case GLOBAL_FADED:              return fade_target == 0;
+  case GLOBAL_KICK_DUCK:          return kick_duck;
   }
   return false;
 }

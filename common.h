@@ -28,6 +28,14 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 // into.
 #define CHANNEL_PITCHED_KICK 15
 
+// The kick from a percussion set, on a channel of its own so that Kick Duck
+// can leave it out of what it ducks.  The Mac makes 14 a second percussion
+// channel for it (macapi.h); the Pi's fluidsynth has only the one, so there
+// it's the drum channel, as it always was.
+#ifndef CHANNEL_KICK
+#define CHANNEL_KICK CHANNEL_DRUM
+#endif
+
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
 #define ENDPOINT_DRONE_BASS 1

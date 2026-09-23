@@ -132,6 +132,15 @@ the physical keyboard in the middle, and what it actually does underneath:
 * **`2` and `3`** (green) are Bounce Bass and Skip Bass: two more foot
   basses, on top of the one on `W`.  Same bass line, different rhythmic
   treatment, so they can run together -- see below.
+* **`5`** (teal) is Kick Duck: each kick ducks everything else fluidsynth is
+  playing and brings it back up over the beat, for the pump of a sidechained
+  mix.  The kick, the foot basses (`W`, `2`, `3`) and the arp (`E`) stay out
+  of it, and so does the whistle, which isn't fluidsynth's.  It's set off by
+  the kick pedal, whether or not the drum is on here -- so it works with the
+  pedals playing a drum synth of their own -- and by the drum's kick when it
+  sounds on another pedal's beat.  Skip a kick and that pump is skipped too.
+  On the audio, not CC11, so it doesn't fight the fades, the breath or
+  Pulse.
 * **`8` and `9`** (green) are Pad Bass and Pad Chord: a second drone bass and
   drone chord, over the first pair on `I` and `O`, for layering two pads.
   They start on Warm Pad, where the first pair start on Rock Organ.

@@ -100,6 +100,8 @@
 // because the values past TAB are the lowercase letters, which are taken.
 #define SPEECH_COMMANDS (126)
 #define SPEECH_PICKS (127)
+// Nor this: the Mac's 5, Kick Duck.
+#define KICK_DUCK (125)
 
 #define MODE_MAJOR 1
 #define MODE_MIXO 2
@@ -400,6 +402,10 @@ uint64_t next_duck_peak_ns;
 uint64_t next_downbeat_ns;
 int last_fb_vel;
 bool jig_time;
+// Each kick, pedal or sounded, ducks what fluidsynth is playing, but for the
+// kick, the foot basses and the arp (the Mac's 5).  The
+// ducking itself is the Mac's, through kick_hook; the Pi has none.
+bool kick_duck;
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
 bool drum_chooses_some_notes;
@@ -955,6 +961,7 @@ void clear_status() {
   next_duck_peak_ns = 0;
 
   jig_time = false;
+  kick_duck = false;
   allow_all_drums_downbeat = false;
 
   drum_chooses_notes = false;
@@ -1189,6 +1196,22 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
   }
 }
 
+// Called on each kick while Kick Duck is on, with the length of the beat,
+// and the lock held.  NULL on the Pi.
+static void (*kick_hook)(uint64_t beat_ns) = NULL;
+uint64_t last_kick_duck_ns;
+
+// A kick, for Kick Duck: the kick pedal, whether or not the rig's own kick is
+// sounding -- the pedals may be playing a drum synth of their own -- and the
+// rig's kick, which can sound on another pedal's beat.  Most hits are both,
+// so the second within a few milliseconds of the first is the same one.
+void kick_duck_kick(uint64_t current_time) {
+  if (!kick_duck || !kick_hook) return;
+  if (current_time - last_kick_duck_ns < 50 * 1000000LL) return;
+  last_kick_duck_ns = current_time;
+  kick_hook(current_beat_ns ? current_beat_ns : 60 * NS_PER_SEC / 116);
+}
+
 void arpeggiate_drum(int subbeat, uint64_t current_time) {
   if (!c->on[ENDPOINT_DRUM]) return;
 
@@ -1197,11 +1220,12 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   const DrumKit* kit = &KITS[c->drum_voice];
 
   if (downbeat(subbeat) && c->downbeat[ENDPOINT_DRUM]) {
+    kick_duck_kick(current_time);
     if (kit->kick_program == NO_PITCHED_KICK) {
-      psend_midi(MIDI_ON,
-                 kit->kick,
-                 vel * kit->kick_vel,
-                 ENDPOINT_DRUM);
+      send_midi(MIDI_ON,
+                kit->kick,
+                vel * kit->kick_vel,
+                CHANNEL_KICK);
     } else {
       // Retrigger cleanly if the last one is somehow still held.
       end_pitched_kick();
@@ -2010,6 +2034,9 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '0':
     jig_time = !jig_time;
     return;
+  case KICK_DUCK:
+    kick_duck = !kick_duck;
+    return;
   case F10:
     allow_all_drums_downbeat = !allow_all_drums_downbeat;
     return;
@@ -2094,6 +2121,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   //printf("foot: %d %d\n", note_in, val);
   count_drum_hit(note_in);
+  if (note_in == MIDI_DRUM_IN_KICK) kick_duck_kick(now());
   if (drum_chooses_notes ||
       (drum_chooses_some_notes &&
        note_in != MIDI_DRUM_IN_KICK)) {
