@@ -527,6 +527,7 @@ static void nh_fast_judged(const NrStream* s, long long onset, long long end,
 static void nh_apple_word(int index, const char* text, int number);
 static void nh_tick(void);
 static bool nh_unreviewed(NSString* tsv);
+static bool nh_reviewed(NSString* tsv);
 
 static NrModel* speech_fast_model;  // speech queue; NULL until learned
 static int speech_fast_generation;  // counts the models it's had
@@ -640,62 +641,80 @@ static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
   return final;
 }
 
+// Everything numtrain.h has recorded and numheard.h has kept, learned into a
+// model, finished.  `sources`, if given, gets the .tsv each session number
+// came from, so numheard.h's review can find a recording again.  Reads them
+// all: never on the audio or speech queues.
+static NrModel* speech_fast_learn_all(NSMutableArray<NSString*>* sources,
+                                      int* sessions, int* clips) {
+  NSURL* support = [[NSFileManager.defaultManager
+    URLsForDirectory:NSApplicationSupportDirectory
+           inDomains:NSUserDomainMask] firstObject];
+  NSURL* dir =
+    [support URLByAppendingPathComponent:@"com.jefftk.jammer/numbers"];
+  NSArray<NSURL*>* files = [NSFileManager.defaultManager
+    contentsOfDirectoryAtURL:dir includingPropertiesForKeys:nil
+                     options:0 error:nil];
+  // numheard.h's clips, which are laid out as sessions of their own.
+  files = [files arrayByAddingObjectsFromArray:
+    [NSFileManager.defaultManager
+      contentsOfDirectoryAtURL:[dir URLByAppendingPathComponent:@"heard"]
+    includingPropertiesForKeys:nil options:0 error:nil] ?: @[]];
+  NrModel* model = calloc(1, sizeof(NrModel));
+  NrParams p = nr_default_params(SPEECH_GATE_DEFAULT_DB);
+  int session = 0;
+  *clips = 0;
+  for (NSURL* file in files) {
+    if (![file.pathExtension isEqualToString:@"wav"]) continue;
+    NSURL* tsv =
+      [file.URLByDeletingPathExtension URLByAppendingPathExtension:@"tsv"];
+    bool clip = [file.lastPathComponent hasPrefix:@"heard-"];
+    NSString* text = [NSString stringWithContentsOfURL:tsv
+                                              encoding:NSUTF8StringEncoding
+                                                 error:nil] ?: @"";
+    if (clip && nh_unreviewed(text)) continue;
+    long long n;
+    double rate;
+    float* x = nr_read_wav(file.path.UTF8String, &n, &rate);
+    NrPrompt* prompts = NULL;
+    NrReview* reviews = NULL;
+    float gate_db = SPEECH_GATE_DEFAULT_DB, room_db = p.room_db;
+    int n_prompts = nr_read_prompts(tsv.path.UTF8String, &prompts, &gate_db,
+                                    &room_db);
+    int n_reviews = nr_read_reviews(tsv.path.UTF8String, &reviews);
+    if (x && n_prompts > 0) {
+      // A little below the gate it was recorded with, so the quieter
+      // words are learned too: which prompt was up says what they were.
+      NrParams sp = p;
+      sp.trigger_db = gate_db - 6;
+      sp.room_db = room_db;
+      // A clip you've said the word of is reviewed as a whole.
+      nr_learn_session(model, x, n, rate, prompts, n_prompts, reviews,
+                       n_reviews, clip && nh_reviewed(text), &sp,
+                       session++);
+      [sources addObject:tsv.path];
+      if (clip) (*clips)++;
+    }
+    free(x);
+    free(prompts);
+    free(reviews);
+  }
+  *sessions = session;
+  nr_model_finish(model, &p);
+  return model;
+}
+
 // Learn from every recording numtrain.h has made, off the speech queue since
 // it reads them all, then hand the result over.  At startup, and again after
 // each new recording.
 static void speech_fast_learn(void) {
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-    NSURL* support = [[NSFileManager.defaultManager
-      URLsForDirectory:NSApplicationSupportDirectory
-             inDomains:NSUserDomainMask] firstObject];
-    NSURL* dir =
-      [support URLByAppendingPathComponent:@"com.jefftk.jammer/numbers"];
-    NSArray<NSURL*>* files = [NSFileManager.defaultManager
-      contentsOfDirectoryAtURL:dir includingPropertiesForKeys:nil
-                       options:0 error:nil];
-    // numheard.h's clips, which are laid out as sessions of their own.
-    files = [files arrayByAddingObjectsFromArray:
-      [NSFileManager.defaultManager
-        contentsOfDirectoryAtURL:[dir URLByAppendingPathComponent:@"heard"]
-      includingPropertiesForKeys:nil options:0 error:nil] ?: @[]];
-    NrModel* model = calloc(1, sizeof(NrModel));
-    NrParams p = nr_default_params(SPEECH_GATE_DEFAULT_DB);
-    int session = 0, clips = 0;
-    for (NSURL* file in files) {
-      if (![file.pathExtension isEqualToString:@"wav"]) continue;
-      NSURL* tsv =
-        [file.URLByDeletingPathExtension URLByAppendingPathExtension:@"tsv"];
-      bool clip = [file.lastPathComponent hasPrefix:@"heard-"];
-      if (clip && nh_unreviewed([NSString stringWithContentsOfURL:tsv
-                                   encoding:NSUTF8StringEncoding
-                                      error:nil] ?: @"")) {
-        continue;
-      }
-      long long n;
-      double rate;
-      float* x = nr_read_wav(file.path.UTF8String, &n, &rate);
-      NrPrompt* prompts = NULL;
-      float gate_db = SPEECH_GATE_DEFAULT_DB, room_db = p.room_db;
-      int n_prompts = nr_read_prompts(tsv.path.UTF8String, &prompts, &gate_db,
-                                      &room_db);
-      if (x && n_prompts > 0) {
-        // A little below the gate it was recorded with, so the quieter
-        // words are learned too: which prompt was up says what they were.
-        NrParams sp = p;
-        sp.trigger_db = gate_db - 6;
-        sp.room_db = room_db;
-        nr_learn_session(model, x, n, rate, prompts, n_prompts, &sp,
-                         session++);
-        if (clip) clips++;
-      }
-      free(x);
-      free(prompts);
-    }
+    int session, clips;
+    NrModel* model = speech_fast_learn_all(nil, &session, &clips);
     int numbers = 0;
     for (int i = 0; i < model->n; i++) {
       numbers += model->t[i].label != NR_OTHER;
     }
-    nr_model_finish(model, &p);
     dispatch_async(speech_queue, ^{
       if (speech_fast_model) {
         nr_model_free(speech_fast_model);

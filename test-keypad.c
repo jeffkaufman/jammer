@@ -15,6 +15,7 @@
 #include "speechgate.h"
 #include "keylayout.h"
 #include "keypad.h"
+#include "numrec.h"
 
 static int failures = 0;
 
@@ -1278,6 +1279,83 @@ static void test_speech_dictionary() {
   }
 }
 
+// The fast number recognizer's review: a recording that sounds like another
+// word more than its own is found, worst first, unless it's been reviewed;
+// and a review's label wins over the prompt when learning.
+static void nr_add_word(NrModel* m, int label, float value, int session,
+                        bool reviewed) {
+  float feat[20][NR_DIM];
+  for (int i = 0; i < 20; i++) {
+    for (int d = 0; d < NR_DIM; d++) {
+      // A little different each frame and each recording, around `value`.
+      feat[i][d] = value + 0.05f * (float)((i * 7 + d * 3 + session) % 5);
+    }
+  }
+  nr_model_add(m, label, feat, 20, 0, session, session * 1000,
+               session * 1000 + 800, reviewed);
+}
+
+static void test_numrec_unusual() {
+  NrParams p = nr_default_params(-20);
+  NrModel m = {0};
+  int session = 0;
+  for (int i = 0; i < 4; i++) nr_add_word(&m, 0, 0, session++, false);  // one
+  for (int i = 0; i < 4; i++) nr_add_word(&m, 1, 5, session++, false);  // two
+  int odd = session;
+  nr_add_word(&m, 0, 5, session++, false);  // "one", said like "two"
+  nr_model_finish(&m, &p);
+  NrUnusual u[8];
+  int n = nr_find_unusual(&m, &p, u, 8);
+  CHECK(n == 1 && m.t[u[0].index].session == odd && u[0].nearest == 1 &&
+        u[0].score > 1, "the 'one' that sounds like 'two' should be found");
+  nr_model_free(&m);
+
+  memset(&m, 0, sizeof(m));
+  session = 0;
+  for (int i = 0; i < 4; i++) nr_add_word(&m, 0, 0, session++, false);
+  for (int i = 0; i < 4; i++) nr_add_word(&m, 1, 5, session++, false);
+  nr_add_word(&m, 0, 5, session++, true);  // the same, but reviewed
+  nr_model_finish(&m, &p);
+  CHECK(nr_find_unusual(&m, &p, u, 8) == 0,
+        "a reviewed recording shouldn't be asked about again");
+  nr_model_free(&m);
+
+  CHECK(nr_review_label("four") == 3 && nr_review_label("other") == NR_OTHER &&
+        nr_review_label("drop") == NR_DROP && nr_review_label("x") == -1,
+        "review labels");
+
+  // A review wins over the prompt that was up: a burst of noise under the
+  // prompt "four", reviewed as "six", is learned as six; reviewed as
+  // "drop", not at all.
+  double rate = 48000;
+  long long len = (long long)(rate * 3);
+  float* x = calloc((size_t)len, sizeof(float));
+  uint32_t r = 1;
+  for (long long i = (long long)(rate * 1.5); i < (long long)(rate * 1.9);
+       i++) {
+    r = r * 1664525 + 1013904223;
+    x[i] = 0.3f * ((float)(r >> 8) / 8388608.0f - 1);
+  }
+  NrPrompt prompts[] = {{0, "four"}};
+  NrParams sp = nr_default_params(-30);
+  memset(&m, 0, sizeof(m));
+  nr_learn_session(&m, x, len, rate, prompts, 1, NULL, 0, false, &sp, 0);
+  CHECK(m.n == 1 && m.t[0].label == 3 && !m.t[0].reviewed,
+        "unreviewed, it's what the prompt said");
+  long long start = m.t[0].sample;
+  nr_model_free(&m);
+  NrReview six = {start, 5};
+  nr_learn_session(&m, x, len, rate, prompts, 1, &six, 1, false, &sp, 0);
+  CHECK(m.n == 1 && m.t[0].label == 5 && m.t[0].reviewed,
+        "reviewed as six, it's six");
+  nr_model_free(&m);
+  NrReview drop = {start + 100, NR_DROP};
+  nr_learn_session(&m, x, len, rate, prompts, 1, &drop, 1, false, &sp, 0);
+  CHECK(m.n == 0, "reviewed as drop, it's not learned");
+  nr_model_free(&m);
+  free(x);
+}
+
 // The gate in front of the speech recognizer: quiet comes out as silence,
 // and loud comes through with a little before it and a little after.
 static void test_speech_gate() {
@@ -1370,6 +1448,7 @@ int main() {
   test_nashville_chords();
   test_speech_dictionary();
   test_speech_gate();
+  test_numrec_unusual();
 
   if (failures) {
     printf("\n%d failure(s)\n", failures);

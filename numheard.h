@@ -316,15 +316,94 @@ static void nh_tick(void) {
 // or you saying "siri".  Each plays as it comes up, and you say what it was;
 // that becomes its label, and "# reviewed" in its .tsv keeps it from coming
 // up again.  The clips where Apple heard a number the fast path let go aren't
-// asked about, since there the fast path was only unsure.  What's changed is
-// learned when the window closes.
+// asked about, since there the fast path was only unsure.
+//
+// Then the recordings that are especially unusual, and that nobody has
+// reviewed: ones that sound more like a different word than like any other
+// recording of their own (nr_find_unusual), from numtrain.h's sessions as
+// well as the clips kept here.  A said-wrong prompt or a cough, learned as
+// the word that was up.  They're found while you go through the rest, since
+// it's every recording against every other.  A kept clip is relabeled as
+// above; a word in a session gets a "# review" line in the session's .tsv
+// (NrReview), so it's learned as what you said -- or, deleted, not at all --
+// and isn't asked about again.  What's changed is learned when the window
+// closes.
 // ---------------------------------------------------------------------------
+
+// Whether you've said what a clip was.
+static bool nh_reviewed(NSString* tsv) {
+  return [tsv containsString:@"\n# reviewed\t"];
+}
 
 // Whether a clip's .tsv is one to review, and so not to learn from yet: the
 // fast path took a number, Apple didn't agree, and you haven't said.
 static bool nh_unreviewed(NSString* tsv) {
-  return ![tsv containsString:@"\n# reviewed\t"] &&
+  return !nh_reviewed(tsv) &&
          ![tsv containsString:@"\n# fast\tnothing\n"];
+}
+
+// The most unusual recordings to ask about at once.
+#define NH_MAX_UNUSUAL 30
+
+// Something to ask about: a whole kept clip, or one word of a session.
+@interface NhReviewItem : NSObject
+@property(copy) NSString* tsv;
+@property BOOL word;          // one word of a session, not a whole clip
+@property long long sample;   // a word's start and end, in the recording's
+@property long long end;      // samples
+@property(copy) NSString* learned;  // unusual: what it's been learned as
+@property(copy) NSString* nearest;  // and what it sounds most like
+@end
+
+@implementation NhReviewItem
+@end
+
+// Give the word starting at `sample` in the session at `tsv` the label
+// `label`, NrReview's: a number word, "other" or "drop".
+static void nh_review_word(NSString* tsv, long long sample, NSString* label) {
+  NSString* text = [NSString stringWithContentsOfFile:tsv
+                                             encoding:NSUTF8StringEncoding
+                                                error:nil] ?: @"";
+  if (text.length && ![text hasSuffix:@"\n"]) {
+    text = [text stringByAppendingString:@"\n"];
+  }
+  text = [text stringByAppendingFormat:@"# review\t%lld\t%@\n", sample,
+          label];
+  [text writeToFile:tsv atomically:YES encoding:NSUTF8StringEncoding
+              error:nil];
+}
+
+static NSString* nh_word_name(int label) {
+  return label == NR_OTHER ? @"not a number" : @(NR_WORDS[label]);
+}
+
+// The unusual recordings nobody has reviewed, worst first.  Off the main
+// thread: it learns everything, then compares every recording with every
+// other.
+static NSArray<NhReviewItem*>* nh_find_unusual(void) {
+  NSMutableArray<NSString*>* sources = [NSMutableArray array];
+  int sessions, clips;
+  NrModel* model = speech_fast_learn_all(sources, &sessions, &clips);
+  NrParams p = nr_default_params(SPEECH_GATE_DEFAULT_DB);
+  NrUnusual unusual[NH_MAX_UNUSUAL];
+  int n = nr_find_unusual(model, &p, unusual, NH_MAX_UNUSUAL);
+  NSMutableArray<NhReviewItem*>* out = [NSMutableArray array];
+  for (int i = 0; i < n; i++) {
+    const NrTemplate* t = &model->t[unusual[i].index];
+    NhReviewItem* item = [NhReviewItem new];
+    item.tsv = sources[t->session];
+    item.word = ![item.tsv.lastPathComponent hasPrefix:@"heard-"];
+    item.sample = t->sample;
+    item.end = t->end;
+    item.learned = nh_word_name(t->label);
+    item.nearest = nh_word_name(unusual[i].nearest);
+    [out addObject:item];
+  }
+  printf("speech review: %d unusual recordings to ask about\n", n);
+  fflush(stdout);
+  nr_model_free(model);
+  free(model);
+  return out;
 }
 
 // Every clip still to review, oldest first: .tsv paths.
@@ -378,9 +457,11 @@ static void nh_relabel(NSString* tsv, NSString* label) {
 @property(strong) NSTextField* status;
 @property(strong) NSMutableArray<NSButton*>* answers;
 @property(strong) AVAudioPlayer* player;
-@property(strong) NSArray<NSString*>* clips;
+@property(strong) NSMutableArray<NhReviewItem*>* clips;
 @property int index;
 @property BOOL changed;
+@property BOOL searching;  // still looking for unusual recordings
+@property int playing;     // counts plays, so a stale stop is ignored
 @end
 
 @implementation NhReviewController
@@ -449,49 +530,119 @@ static void nh_relabel(NSString* tsv, NSString* label) {
                                    tag:-3
                                     at:NSMakeRect(530, 26, 170, 32)]];
 
-  self.clips = nh_to_review();
+  self.clips = [NSMutableArray array];
+  for (NSString* tsv in nh_to_review()) {
+    NhReviewItem* item = [NhReviewItem new];
+    item.tsv = tsv;
+    [self.clips addObject:item];
+  }
   self.index = 0;
   self.changed = NO;
+  self.searching = YES;
   [self.window center];
   [self.window makeKeyAndOrderFront:nil];
   [self showClip];
+
+  // The unusual recordings, after the rest, once they're found.
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    NSArray<NhReviewItem*>* unusual = nh_find_unusual();
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!self.window) return;
+      bool waiting = self.index >= (int)self.clips.count;
+      [self.clips addObjectsFromArray:unusual];
+      self.searching = NO;
+      if (waiting) {
+        [self showClip];
+      } else {
+        [self showStatus];
+      }
+    });
+  });
+}
+
+- (void)showStatus {
+  NhReviewItem* item = self.clips[self.index];
+  NSString* name =
+    item.tsv.lastPathComponent.stringByDeletingPathExtension;
+  if (item.word) {
+    name = [name stringByAppendingFormat:@" at %.1fs",
+            item.sample / (self.player.format.sampleRate ?: 48000)];
+  }
+  self.status.stringValue = [NSString stringWithFormat:@"%d of %d%@   %@",
+    self.index + 1, (int)self.clips.count,
+    self.searching ? @", looking for unusual recordings" : @"", name];
+}
+
+// Play the item: a whole clip, or a word with a little either side of it.
+- (void)play {
+  NhReviewItem* item = self.clips[self.index];
+  [self.player stop];
+  int playing = ++self.playing;
+  if (!item.word) {
+    self.player.currentTime = 0;
+    [self.player play];
+    return;
+  }
+  double rate = self.player.format.sampleRate ?: 48000;
+  double from = fmax(0, item.sample / rate - 0.25);
+  double to = item.end / rate + 0.25;
+  self.player.currentTime = from;
+  [self.player play];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                               (int64_t)((to - from) * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+    if (self.playing == playing) [self.player stop];
+  });
 }
 
 - (void)showClip {
   [self.player stop];
   if (self.index >= (int)self.clips.count) {
-    self.heard.stringValue =
-      self.clips.count ? @"All reviewed" : @"Nothing to review";
+    self.heard.stringValue = self.searching
+      ? @"Looking for unusual recordings…"
+      : self.clips.count ? @"All reviewed" : @"Nothing to review";
     self.status.stringValue = @"";
     for (NSButton* b in self.answers) b.enabled = NO;
     return;
   }
-  NSString* tsv = self.clips[self.index];
-  NSString* text = [NSString stringWithContentsOfFile:tsv
+  for (NSButton* b in self.answers) b.enabled = YES;
+  NhReviewItem* item = self.clips[self.index];
+  NSString* text = [NSString stringWithContentsOfFile:item.tsv
                                              encoding:NSUTF8StringEncoding
                                                 error:nil] ?: @"";
-  self.heard.stringValue = [NSString stringWithFormat:
-    @"fast recognizer: %@      Apple: “%@”",
-    nh_tsv_value(text, @"fast"), nh_tsv_value(text, @"apple")];
-  self.status.stringValue = [NSString stringWithFormat:@"%d of %d   %@",
-    self.index + 1, (int)self.clips.count,
-    tsv.lastPathComponent.stringByDeletingPathExtension];
-  NSURL* wav = [NSURL fileURLWithPath:
-    [tsv.stringByDeletingPathExtension stringByAppendingPathExtension:@"wav"]];
+  if (item.nearest) {
+    self.heard.stringValue = [NSString stringWithFormat:
+      @"Unusual: learned as “%@”, but sounds most like “%@”", item.learned,
+      item.nearest];
+  } else {
+    self.heard.stringValue = [NSString stringWithFormat:
+      @"fast recognizer: %@      Apple: “%@”",
+      nh_tsv_value(text, @"fast"), nh_tsv_value(text, @"apple")];
+  }
+  NSURL* wav = [NSURL fileURLWithPath:[item.tsv.stringByDeletingPathExtension
+                                       stringByAppendingPathExtension:@"wav"]];
   self.player = [[AVAudioPlayer alloc] initWithContentsOfURL:wav error:nil];
-  [self.player play];
+  [self showStatus];
+  [self play];
 }
 
 - (void)answer:(NSButton*)sender {
   if (self.index >= (int)self.clips.count) return;
-  NSString* tsv = self.clips[self.index];
+  NhReviewItem* item = self.clips[self.index];
+  NSString* tsv = item.tsv;
   NSInteger tag = sender.tag;
   if (tag == -3) {
-    self.player.currentTime = 0;
-    [self.player play];
+    [self play];
     return;
   }
-  if (tag == -1) {
+  if (item.word && tag != -2) {
+    // One word of a session: the session stays, and the word is learned
+    // as what you said, or not at all.
+    nh_review_word(tsv, item.sample,
+                   tag == -1 ? @"drop" : tag ? @(NR_WORDS[tag - 1])
+                                             : @"other");
+    self.changed = YES;
+  } else if (tag == -1) {
     [NSFileManager.defaultManager removeItemAtPath:tsv error:nil];
     [NSFileManager.defaultManager removeItemAtPath:
       [tsv.stringByDeletingPathExtension stringByAppendingPathExtension:@"wav"]
@@ -512,6 +663,7 @@ static void nh_relabel(NSString* tsv, NSString* label) {
 }
 
 - (void)windowWillClose:(NSNotification*)note {
+  self.playing++;
   [self.player stop];
   self.player = nil;
   self.window = nil;

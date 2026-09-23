@@ -383,7 +383,9 @@ typedef struct {
   NrFrame* frames;    // the same, for matching
   int gap;            // the longest quiet inside it, in frames
   int session;        // where it came from, so a test can leave it out
-  long long sample;
+  long long sample;   // where in that session it starts, and ends
+  long long end;
+  bool reviewed;      // a person has said what it is: see NrReview
 } NrTemplate;
 
 typedef struct {
@@ -394,7 +396,8 @@ typedef struct {
 } NrModel;
 
 static void nr_model_add(NrModel* m, int label, float (*feat)[NR_DIM], int n,
-                         int gap, int session, long long sample) {
+                         int gap, int session, long long sample,
+                         long long end, bool reviewed) {
   if (m->n == m->cap) {
     m->cap = m->cap ? m->cap * 2 : 64;
     m->t = realloc(m->t, sizeof(NrTemplate) * (size_t)m->cap);
@@ -404,9 +407,12 @@ static void nr_model_add(NrModel* m, int label, float (*feat)[NR_DIM], int n,
   t->n = n;
   t->feat = malloc(sizeof(float) * NR_DIM * (size_t)n);
   memcpy(t->feat, feat, sizeof(float) * NR_DIM * (size_t)n);
+  t->frames = NULL;  // made by nr_model_finish
   t->gap = gap;
   t->session = session;
   t->sample = sample;
+  t->end = end;
+  t->reviewed = reviewed;
 }
 
 static void nr_model_free(NrModel* m) {
@@ -502,6 +508,62 @@ static float nr_dtw(const NrFrame* a, int n, const NrFrame* b, int m) {
     memcpy(prev, cur, sizeof(float) * (size_t)(m + 1));
   }
   return prev[m] / (float)(n + m);
+}
+
+// ---------------------------------------------------------------------------
+// Recordings worth a person's ear
+//
+// One that sounds more like a different word than like any other recording
+// of its own: of all the rest, its nearest is a recording of another word --
+// or, for something that isn't a number, a number near enough to be taken
+// for it.  Said wrong to its prompt, a cough, or just odd, and either way
+// it's moving what the recognizer does, so numheard.h asks you about the
+// ones nobody has reviewed yet.  Worst first: how much nearer the other word
+// is than its own -- and only where it's clearly nearer, NR_UNUSUAL times,
+// since a recording that really is out of place makes the ones it sits among
+// look a little out of place too.
+// ---------------------------------------------------------------------------
+
+#define NR_UNUSUAL 1.1
+
+typedef struct {
+  int index;    // into the model's recordings
+  int nearest;  // the other word it's nearest to
+  float score;  // its own word's distance over the other's: over NR_UNUSUAL
+} NrUnusual;
+
+// Up to `max` of them, worst first, from a finished model.  Every recording
+// against every other: a second or two, not for the audio thread.
+static int nr_find_unusual(const NrModel* m, const NrParams* p,
+                           NrUnusual* out, int max) {
+  int found = 0;
+  for (int i = 0; i < m->n; i++) {
+    const NrTemplate* t = &m->t[i];
+    if (t->reviewed) continue;
+    float own = INFINITY, other = INFINITY;
+    int other_label = -1;
+    for (int j = 0; j < m->n; j++) {
+      if (j == i) continue;
+      float d = nr_dtw(t->frames, t->n, m->t[j].frames, m->t[j].n);
+      if (m->t[j].label == t->label) {
+        if (d < own) own = d;
+      } else if (d < other) {
+        other = d;
+        other_label = m->t[j].label;
+      }
+    }
+    if (other_label < 0 || !(other * NR_UNUSUAL < own)) continue;
+    if (t->label == NR_OTHER && other > p->accept) continue;
+    NrUnusual u = {i, other_label, isinf(own) ? INFINITY : own / other};
+    // Kept in order, worst first; past `max`, the mildest goes.
+    int at = found < max ? found++ : max;
+    while (at > 0 && out[at - 1].score < u.score) {
+      if (at < max) out[at] = out[at - 1];
+      at--;
+    }
+    if (at < max) out[at] = u;
+  }
+  return found;
 }
 
 typedef struct {
@@ -654,6 +716,54 @@ static int nr_read_prompts(const char* path, NrPrompt** out, float* gate_db,
   return n;
 }
 
+// What a word in a recording really was, from a person who listened to it
+// (numheard.h's review): "# review\t<sample>\t<label>" in the recording's
+// .tsv, <sample> where the word starts and <label> a number word, "other",
+// or "drop" to learn nothing from it.  It wins over whatever prompt was up.
+#define NR_DROP (-2)
+#define NR_REVIEW_WITHIN_S 0.15  // how near a word's start a review must be
+
+typedef struct {
+  long long sample;
+  int label;  // 0-6, NR_OTHER, or NR_DROP
+} NrReview;
+
+// A review's label, or -1 if it isn't one.
+static int nr_review_label(const char* text) {
+  for (int l = 0; l < 7; l++) {
+    if (strcmp(text, NR_WORDS[l]) == 0) return l;
+  }
+  if (strcmp(text, "other") == 0) return NR_OTHER;
+  if (strcmp(text, "drop") == 0) return NR_DROP;
+  return -1;
+}
+
+// A recording's reviews, from its .tsv; none if it has no .tsv.
+static int nr_read_reviews(const char* path, NrReview** out) {
+  *out = NULL;
+  FILE* f = fopen(path, "r");
+  if (!f) return 0;
+  int n = 0, cap = 0;
+  char line[256];
+  while (fgets(line, sizeof(line), f)) {
+    line[strcspn(line, "\r\n")] = 0;
+    if (strncmp(line, "# review\t", 9) != 0) continue;
+    char* tab = strchr(line + 9, '\t');
+    if (!tab) continue;
+    int label = nr_review_label(tab + 1);
+    if (label == -1) continue;
+    if (n == cap) {
+      cap = cap ? cap * 2 : 16;
+      *out = realloc(*out, sizeof(NrReview) * (size_t)cap);
+    }
+    (*out)[n].sample = atoll(line + 9);
+    (*out)[n].label = label;
+    n++;
+  }
+  fclose(f);
+  return n;
+}
+
 // numtrain.h's WAVs: 44-byte header, then 32-bit float mono.
 static float* nr_read_wav(const char* path, long long* n, double* rate) {
   FILE* f = fopen(path, "rb");
@@ -677,10 +787,15 @@ static float* nr_read_wav(const char* path, long long* n, double* rate) {
 
 // Learn every word in a session.  A number counts only if it was the one
 // thing said while its prompt was up; anything else said -- the words to
-// ignore, the talking -- is NR_OTHER.  Returns how many were learned.
+// ignore, the talking -- is NR_OTHER.  Except where a person has reviewed
+// the word, when it's what they said it was.  `all_reviewed` for a
+// recording a person has already labeled as a whole (numheard.h's clips).
+// Returns how many were learned.
 static int nr_learn_session(NrModel* m, const float* x, long long n_samples,
                             double rate, const NrPrompt* prompts,
-                            int n_prompts, const NrParams* p, int session) {
+                            int n_prompts, const NrReview* reviews,
+                            int n_reviews, bool all_reviewed,
+                            const NrParams* p, int session) {
   NrCollect c = {.prompts = (NrPrompt*)prompts, .n_prompts = n_prompts};
   NrStream* s = malloc(sizeof(NrStream));
   nr_stream_init(s, rate, *p, nr_collect_fn, &c);
@@ -690,20 +805,36 @@ static int nr_learn_session(NrModel* m, const float* x, long long n_samples,
                                                         : 4096));
   }
   int learned = 0;
+  long long within = (long long)(NR_REVIEW_WITHIN_S * rate);
   for (int i = 0; i < c.n; i++) {
     long long sample = c.onsets[i] * c.hop;
-    int k = nr_prompt_at(prompts, n_prompts, sample);
-    int label = k < 0 ? -1 : nr_prompt_label(prompts[k].text);
-    if (label < 0) continue;
-    if (label != NR_OTHER) {
-      int same = 0;
-      for (int j = 0; j < c.n; j++) {
-        same += nr_prompt_at(prompts, n_prompts, c.onsets[j] * c.hop) == k;
+    const NrReview* review = NULL;
+    for (int r = 0; r < n_reviews; r++) {
+      if (llabs(reviews[r].sample - sample) <= within &&
+          (!review || llabs(reviews[r].sample - sample) <
+                      llabs(review->sample - sample))) {
+        review = &reviews[r];
       }
-      if (same != 1) continue;
+    }
+    int label;
+    if (review) {
+      if (review->label == NR_DROP) continue;
+      label = review->label;
+    } else {
+      int k = nr_prompt_at(prompts, n_prompts, sample);
+      label = k < 0 ? -1 : nr_prompt_label(prompts[k].text);
+      if (label < 0) continue;
+      if (label != NR_OTHER) {
+        int same = 0;
+        for (int j = 0; j < c.n; j++) {
+          same += nr_prompt_at(prompts, n_prompts, c.onsets[j] * c.hop) == k;
+        }
+        if (same != 1) continue;
+      }
     }
     nr_model_add(m, label, c.feats[i], c.n_feats[i], c.gaps[i], session,
-                 sample);
+                 sample, (c.ends[i] + 1) * c.hop,
+                 all_reviewed || review != NULL);
     learned++;
   }
   for (int i = 0; i < c.n; i++) free(c.feats[i]);

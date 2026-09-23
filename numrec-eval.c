@@ -1,7 +1,8 @@
 // numrec-eval -- how well the fast number recognizer (numrec.h) does on the
 // recordings numtrain.h made:
 //
-//   ./numrec-eval [--by-session] [--sweep] [--verbose] [name=value ...] [dir]
+//   ./numrec-eval [--by-session] [--sweep] [--verbose] [--unusual]
+//                 [name=value ...] [dir]
 //
 // Every session in `dir` (by default where numtrain.h puts them) is learned,
 // then each is played back through the recognizer exactly as the microphone
@@ -16,7 +17,9 @@
 //   missed  a number, heard as nothing
 //
 // name=value sets a parameter of NrParams, e.g. hangover=6 accept=1.4.
-// --sweep tries a range of hangovers instead.
+// --sweep tries a range of hangovers instead.  --unusual lists the
+// recordings the jammer's review would ask about (nr_find_unusual), worst
+// first, instead of testing.
 
 #include <dirent.h>
 #include <time.h>
@@ -30,6 +33,8 @@ typedef struct {
   double rate;
   NrPrompt* prompts;
   int n_prompts;
+  NrReview* reviews;  // what a person said some of its words were
+  int n_reviews;
   float gate_db;
   float room_db;
 } Session;
@@ -126,6 +131,7 @@ static int load_sessions(const char* dir, Session** out) {
     se->room_db = -70;
     se->n_prompts = nr_read_prompts(path, &se->prompts, &se->gate_db,
                                     &se->room_db);
+    se->n_reviews = nr_read_reviews(path, &se->reviews);
     if (!se->x || se->n_prompts <= 0) {
       fprintf(stderr, "skipping %s: can't read it\n", se->base);
       continue;
@@ -163,7 +169,8 @@ static void run(Session* s, int n, NrParams p, bool trigger_set,
     if (!trigger_set) sp.trigger_db = s[i].gate_db;
     sp.room_db = s[i].room_db;
     nr_learn_session(&model, s[i].x, s[i].n, s[i].rate, s[i].prompts,
-                     s[i].n_prompts, &sp, i);
+                     s[i].n_prompts, s[i].reviews, s[i].n_reviews, false,
+                     &sp, i);
   }
   for (int i = 0; i < model.n; i++) learned[model.t[i].label]++;
   nr_model_finish(&model, &p);
@@ -246,6 +253,34 @@ static void run(Session* s, int n, NrParams p, bool trigger_set,
   nr_model_free(&model);
 }
 
+// The recordings that sound more like another word than their own, as the
+// jammer's review would ask about them, but all of them.
+static void list_unusual(Session* s, int n, NrParams p, bool trigger_set) {
+  NrModel model = {0};
+  for (int i = 0; i < n; i++) {
+    NrParams sp = p;
+    if (!trigger_set) sp.trigger_db = s[i].gate_db;
+    sp.room_db = s[i].room_db;
+    nr_learn_session(&model, s[i].x, s[i].n, s[i].rate, s[i].prompts,
+                     s[i].n_prompts, s[i].reviews, s[i].n_reviews, false,
+                     &sp, i);
+  }
+  nr_model_finish(&model, &p);
+  static NrUnusual u[4096];
+  int found = nr_find_unusual(&model, &p, u, 4096);
+  int reviewed = 0;
+  for (int i = 0; i < model.n; i++) reviewed += model.t[i].reviewed;
+  printf("%d of %d recordings are unusual (%d reviewed, not counted)\n",
+         found, model.n, reviewed);
+  for (int i = 0; i < found; i++) {
+    const NrTemplate* t = &model.t[u[i].index];
+    printf("  %5.2f  %-6s sounds like %-6s  %s at %.2fs\n", u[i].score,
+           NR_WORDS[t->label], NR_WORDS[u[i].nearest], s[t->session].base,
+           t->sample / s[t->session].rate);
+  }
+  nr_model_free(&model);
+}
+
 int main(int argc, char** argv) {
   char dir[1024];
   snprintf(dir, sizeof(dir),
@@ -253,10 +288,12 @@ int main(int argc, char** argv) {
            getenv("HOME") ?: ".");
   NrParams p = nr_default_params(-20);
   bool by_session = false, sweep = false, verbose = false, trigger_set = false;
+  bool unusual = false;
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--by-session") == 0) by_session = true;
     else if (strcmp(argv[i], "--sweep") == 0) sweep = true;
     else if (strcmp(argv[i], "--verbose") == 0) verbose = true;
+    else if (strcmp(argv[i], "--unusual") == 0) unusual = true;
     else if (strchr(argv[i], '=')) {
       if (!set_param(&p, argv[i])) {
         fprintf(stderr, "unknown parameter: %s\n", argv[i]);
@@ -272,6 +309,10 @@ int main(int argc, char** argv) {
   if (n == 0) {
     fprintf(stderr, "no sessions in %s\n", dir);
     return 1;
+  }
+  if (unusual) {
+    list_unusual(s, n, p, trigger_set);
+    return 0;
   }
   if (!sweep) {
     run(s, n, p, trigger_set, by_session, verbose, false);

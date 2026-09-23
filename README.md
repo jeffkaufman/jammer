@@ -304,6 +304,16 @@ wrong -- with Speech Recognition > Review Number Clips..., which plays each
 and asks what you said.  The kept clips are held to
 2GB, oldest going first.
 
+The review then goes on to anything especially unusual that nobody has
+listened to yet, from the recordings as well as the kept clips: a word that
+sounds clearly more like a different word than like any other recording of
+its own -- a "four" said to the "five" prompt, a cough learned as "three".
+Those are found while you go through the rest, and each plays on its own,
+with what it was learned as and what it sounds like.  What you say it was
+is learned from then on (for a word in a recording, as a `# review` line in
+that recording's `.tsv`); Delete stops it being learned at all.  Either way
+it isn't asked about again.  `./numrec-eval --unusual` lists them all.
+
 From `F3`, `F5` hands the choice back to the feet, and `F9` or `esc` end it;
 `esc` leaves `F8` alone, since commands aren't musical state.
 The words are `speechwords.h` and the chords `nashville_picks_chord`.
