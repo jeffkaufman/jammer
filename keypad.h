@@ -53,6 +53,9 @@ static bool global_flag(int flag) {
   case GLOBAL_ALL_DRUMS_DOWNBEAT: return allow_all_drums_downbeat;
   case GLOBAL_FADED:              return fade_target == 0;
   case GLOBAL_KICK_DUCK:          return kick_duck;
+  case GLOBAL_BASS_SWEEP:   return breath_fx & BREATH_FX_SWEEP_BASS;
+  case GLOBAL_TREBLE_SWEEP: return breath_fx & BREATH_FX_SWEEP_TREBLE;
+  case GLOBAL_PEAK_SWEEP:   return breath_fx & BREATH_FX_SWEEP_PEAK;
   }
   return false;
 }
@@ -149,10 +152,22 @@ static bool drone_keys_active(void) {
   return !whistle_selected && is_drone(c->selected_endpoint);
 }
 
+// The Breath Gate's BREATH_VOICES entry on this key, or -1.  Caller must
+// hold the lock.
+static int breath_voice_on_key(const Key* key) {
+  if (!drone_keys_active() || key->group != GROUP_VOICE ||
+      c->selected_endpoint != ENDPOINT_BREATH) {
+    return -1;
+  }
+  return breath_voice_for_note(key->note);
+}
+
 // The DRONE_VOICES entry this key picks right now, or -1 if it isn't picking
-// one.  Caller must hold the lock.
+// one -- as on the Breath Gate's own voices, which win over the pads.
+// Caller must hold the lock.
 static int drone_voice_on_key(const Key* key) {
   if (!drone_keys_active() || key->group != GROUP_VOICE) return -1;
+  if (breath_voice_on_key(key) >= 0) return -1;
   return drone_voice_for_note(key->note);
 }
 
@@ -160,7 +175,7 @@ static int drone_voice_on_key(const Key* key) {
 // Caller must hold the lock.
 static bool drone_key_is_dead(const Key* key) {
   return drone_keys_active() && key->group == GROUP_VOICE && key->label &&
-    drone_voice_for_note(key->note) < 0;
+    drone_voice_for_note(key->note) < 0 && breath_voice_on_key(key) < 0;
 }
 
 // Strike a key, as a keypress would, minus the drawing.  Caller must hold the
@@ -199,6 +214,8 @@ static const char* key_current_label(const Key* key) {
   }
   int drone = drone_voice_on_key(key);
   if (drone >= 0) return DRONE_VOICES[drone].label;
+  int breath_voice = breath_voice_on_key(key);
+  if (breath_voice >= 0) return BREATH_VOICES[breath_voice].label;
   if (c->selected_endpoint == ENDPOINT_DRUM && key->drum_label) {
     if (key->drum_label[0] == '\0') return NULL;  // blank with the drum
     return key->drum_label;
@@ -371,6 +388,10 @@ static bool key_is_lit(const Key* key) {
   }
 
   if (drone_keys_active() && key->group == GROUP_VOICE) {
+    int breath_voice = breath_voice_on_key(key);
+    if (breath_voice >= 0) {
+      return c->voices[sel] == BREATH_VOICES[breath_voice].voice;
+    }
     int index = drone_voice_for_note(key->note);
     return index >= 0 && c->voices[sel] == DRONE_VOICES[index].program;
   }

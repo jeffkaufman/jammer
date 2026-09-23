@@ -388,6 +388,135 @@ static void test_kick_duck() {
   full_reset();
 }
 
+// The breath sweeps, and the Breath Gate's percussion, are told what's on
+// and how hard you're blowing whenever either changes, and escape switches
+// it all off.
+static int told_breath;
+static unsigned told_fx;
+static int told_chord[3];
+static void record_breath(const BreathState* state) {
+  told_breath = state->breath;
+  told_fx = state->fx;
+  told_chord[0] = state->chord_root;
+  told_chord[1] = state->chord_third;
+  told_chord[2] = state->chord_fifth;
+}
+
+static void test_breath_fx() {
+  full_reset();
+  breath_hook = record_breath;
+  struct { const char* cap; unsigned fx; } keys[] = {
+    {"4", BREATH_FX_SWEEP_BASS}, {"6", BREATH_FX_SWEEP_TREBLE},
+    {"7", BREATH_FX_SWEEP_PEAK},
+  };
+  unsigned all = 0;
+  for (int i = 0; i < 3; i++) {
+    press(keys[i].cap);
+    all |= keys[i].fx;
+    CHECK(told_fx == all && lit(keys[i].cap), "%s didn't switch its sweep on",
+          keys[i].cap);
+  }
+  handle_cc(CC_BREATH, 90);
+  CHECK(told_breath == 90, "the breath effects weren't told the breath");
+  press("6");
+  CHECK(told_fx == (all & ~BREATH_FX_SWEEP_TREBLE) && !lit("6"),
+        "6 didn't switch only its own sweep off");
+  press("esc");
+  CHECK(told_fx == 0 && !lit("4") && !lit("7"),
+        "escape didn't switch the sweeps off");
+  breath_hook = NULL;
+  full_reset();
+}
+
+// The Breath Gate on `: a drone chord like Dc, starting on Warm Pad, whose
+// voice keys are the drones' pads plus its own percussion on N and M.  On
+// one of those it plays no notes, and the Mac's audio is told to play it
+// instead -- only while it's on.
+static void test_breath_gate() {
+  full_reset();
+  breath_hook = record_breath;
+  const Key* key = key_for_cap("`");
+  CHECK(key && key->lit == LIT_EP_ON && key->arg == ENDPOINT_BREATH,
+        "` isn't the Breath Gate");
+  CHECK(is_drone(ENDPOINT_BREATH) && c->chord[ENDPOINT_BREATH] &&
+        c->voices[ENDPOINT_BREATH] == 89,
+        "the Breath Gate should start as a drone chord on Warm Pad");
+
+  press("`");
+  CHECK(c->on[ENDPOINT_BREATH] && c->selected_endpoint == ENDPOINT_BREATH,
+        "` didn't switch the Breath Gate on and select it");
+  CHECK(told_fx == 0, "on a pad there's no percussion to play");
+
+  // Its chord waits for a breath, and each breath after a rest strikes it
+  // afresh; a dip that doesn't come to rest leaves it sounding.
+  CHECK(current_note[ENDPOINT_BREATH] == -1,
+        "the chord shouldn't sound before the first breath");
+  handle_cc(CC_BREATH, 60);
+  CHECK(current_note[ENDPOINT_BREATH] != -1, "a breath didn't strike the chord");
+  handle_cc(CC_BREATH, 8);
+  CHECK(current_note[ENDPOINT_BREATH] != -1,
+        "a dip short of rest shouldn't let the chord go");
+  handle_cc(CC_BREATH, 0);
+  CHECK(current_note[ENDPOINT_BREATH] == -1,
+        "coming to rest didn't let the chord go");
+  update_bass(/*force_refresh=*/true);
+  CHECK(current_note[ENDPOINT_BREATH] == -1,
+        "nothing but a breath should strike it again");
+  handle_cc(CC_BREATH, 60);
+  CHECK(current_note[ENDPOINT_BREATH] != -1,
+        "the next breath didn't strike it again");
+
+  CHECK(drone_key_is_dead(key_for_cap("B")),
+        "B should be empty on the Breath Gate too");
+  const char* caps[] = {"N", "M", "A", "S", "D", "G"};
+  unsigned fxs[] = {BREATH_FX_GUIRO, BREATH_FX_WASHBOARD, BREATH_FX_MANDOLIN,
+                    BREATH_FX_CUICA, BREATH_FX_TALKING_DRUM, BREATH_FX_GUIRA};
+  const char* labels[] = {"Guiro", "Wash\nboard", "Muted\nMando", "Cuica",
+                          "Talking\nDrum", "Guira"};
+  for (int i = 0; i < 6; i++) {
+    const Key* k = key_for_cap(caps[i]);
+    CHECK(!drone_key_is_dead(k), "%s should be alive on the Breath Gate",
+          caps[i]);
+    CHECK(strcmp(key_current_label(k), labels[i]) == 0,
+          "%s should show %s on the Breath Gate", caps[i], labels[i]);
+    press(caps[i]);
+    CHECK(told_fx == fxs[i] && lit(caps[i]),
+          "%s didn't have the Mac play its percussion", caps[i]);
+    CHECK(current_note[ENDPOINT_BREATH] == -1,
+          "%s left the Breath Gate holding a chord", caps[i]);
+  }
+  update_bass(/*force_refresh=*/true);
+  CHECK(current_note[ENDPOINT_BREATH] == -1,
+        "a chord change shouldn't play notes on a percussion voice");
+  press("`");
+  CHECK(told_fx == 0, "switching it off didn't stop its percussion");
+  press("`");
+  CHECK(told_fx == BREATH_FX_GUIRA, "switching it back on didn't");
+
+  // Back on a pad, it holds the chord again.
+  press("Z");
+  CHECK(c->voices[ENDPOINT_BREATH] == 89 && told_fx == 0 &&
+        current_note[ENDPOINT_BREATH] != -1, "Z didn't put Warm Pad back");
+  handle_cc(CC_BREATH, 0);
+
+  // The mandolin is told the chord: what the drones play, with its third.
+  CHECK(told_chord[0] == active_chord() && told_chord[1] == 4 &&
+        told_chord[2] == 7,
+        "the mandolin should get a major chord on the root");
+  press("↓");
+  CHECK(told_chord[1] == 3, "in minor the mandolin's third should be minor");
+  // F is a pad again on the Breath Gate.
+  CHECK(breath_voice_for_note('F') < 0 && drone_voice_for_note('F') >= 0,
+        "F should be back to its pad");
+  press("↑");
+
+  // The other drones still leave B, N and M empty.
+  select_ep("9");
+  CHECK(drone_key_is_dead(key_for_cap("B")), "B should be empty on Dc2");
+  breath_hook = NULL;
+  full_reset();
+}
+
 // The kit table asks for bank 128, but it's the platform's choose_voice that
 // has to pass it through, and the rest of the tests stub or skip that.  When
 // it clamped the bank to 127 every kit silently became a grand piano on the
@@ -401,7 +530,7 @@ static void test_percussion_bank_reaches_the_synth() {
 
   // A synth with no audio driver: we only want to ask it what it's set to.
   fl_settings = new_fluid_settings();
-  fluid_settings_setint(fl_settings, "synth.midi-channels", 16);
+  fluid_settings_setint(fl_settings, "synth.midi-channels", 32);
   fluid_settings_setstr(fl_settings, "synth.midi-bank-select", "gm");
   fl_synth = new_fluid_synth(fl_settings);
   fl_sfont_id = fluid_synth_sfload(fl_synth, "FluidR3_GM.sf2", 1);
@@ -1233,6 +1362,8 @@ int main() {
   test_drum_picks_notes_defaults();
   test_globals();
   test_kick_duck();
+  test_breath_fx();
+  test_breath_gate();
   test_percussion_bank_reaches_the_synth();
   test_extra_footbasses();
   test_drones();

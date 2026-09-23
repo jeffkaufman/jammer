@@ -100,8 +100,16 @@
 // because the values past TAB are the lowercase letters, which are taken.
 #define SPEECH_COMMANDS (126)
 #define SPEECH_PICKS (127)
-// Nor this: the Mac's 5, Kick Duck.
+// Nor these: the Mac's 5, Kick Duck, its breath sweeps on 4, 6 and 7, and
+// the Breath Gate on `, toggled and selected.  97 is where kbd.py's F0 would
+// be, and there's no F0; the punctuation is never sent by kbd.py, which only
+// sends a key's name when it's a single letter or digit.
 #define KICK_DUCK (125)
+#define BASS_SWEEP (123)
+#define TREBLE_SWEEP (124)
+#define PEAK_SWEEP (97)
+#define BREATH_GATE ('(')
+#define BREATH_GATE_SELECT (')')
 
 #define MODE_MAJOR 1
 #define MODE_MIXO 2
@@ -285,6 +293,45 @@ static int drone_voice_for_note(int note) {
   return -1;
 }
 
+// The Breath Gate's own voices: percussion the breath plays by moving
+// (macapi.h), in place of a pad.  Guiro and Washboard on voice keys the
+// drones leave empty; the rest, prototypes for now, over some of the
+// drones' pads.  Negative, so none of them can be taken for a program.
+#define VOICE_GUIRO (-1)
+#define VOICE_WASHBOARD (-2)
+#define VOICE_MANDOLIN (-3)
+#define VOICE_CUICA (-4)
+#define VOICE_TALKING_DRUM (-5)
+#define VOICE_GUIRA (-6)
+static const struct {
+  char note;
+  int voice;
+  const char* label;
+  unsigned fx;  // what it has the Mac's audio play
+} BREATH_VOICES[] = {
+  {'N', VOICE_GUIRO,     "Guiro",       BREATH_FX_GUIRO},
+  {'M', VOICE_WASHBOARD, "Wash\nboard", BREATH_FX_WASHBOARD},
+  {'A', VOICE_MANDOLIN,  "Muted\nMando", BREATH_FX_MANDOLIN},
+  {'S', VOICE_CUICA,     "Cuica",       BREATH_FX_CUICA},
+  {'D', VOICE_TALKING_DRUM, "Talking\nDrum", BREATH_FX_TALKING_DRUM},
+  {'G', VOICE_GUIRA,     "Guira",       BREATH_FX_GUIRA},
+};
+#define N_BREATH_VOICES \
+  ((int)(sizeof(BREATH_VOICES) / sizeof(BREATH_VOICES[0])))
+
+// The BREATH_VOICES entry on this key, or -1.
+static int breath_voice_for_note(int note) {
+  for (int i = 0; i < N_BREATH_VOICES; i++) {
+    if (BREATH_VOICES[i].note == note) return i;
+  }
+  return -1;
+}
+
+// One of those rather than a program: nothing for fluidsynth to play.
+static inline bool is_breath_percussion(int voice) {
+  return voice < 0;
+}
+
 // How hard the drones strike their notes: a single bass note, or a chord.
 // These were 70 and 30, which left some pads short of Rock Organ's old level
 // even at full channel volume -- Halo Pad by 5dB on the bass.  At these,
@@ -297,7 +344,8 @@ static int drone_voice_for_note(int note) {
 // chord flag, so it doesn't change under you when the flag does.
 static inline bool is_chord_drone(int endpoint) {
   return endpoint == ENDPOINT_DRONE_CHORD ||
-         endpoint == ENDPOINT_DRONE_CHORD_2;
+         endpoint == ENDPOINT_DRONE_CHORD_2 ||
+         endpoint == ENDPOINT_BREATH;
 }
 
 // The drone's own channel volume for this voice, or -1 if it isn't one of
@@ -406,6 +454,18 @@ bool jig_time;
 // kick, the foot basses and the arp (the Mac's 5).  The
 // ducking itself is the Mac's, through kick_hook; the Pi has none.
 bool kick_duck;
+// Which breath sweeps are on, BREATH_FX_SWEEP_* (common.h): the harder you
+// blow, the more 4 takes the bass out of everything fluidsynth plays, 6 the
+// treble, and the higher 7 sweeps a peak up through it; not blowing, they
+// leave it as it was.  update_breath_fx adds the Breath Gate's percussion to
+// them.  All the Mac's, through breath_hook; the Pi has none.
+unsigned breath_fx;
+// The Breath Gate's chord is let go when the breath comes to rest, and not
+// struck again -- not even for a new chord -- until the breath next opens
+// the gate: see breath_gate_breath.
+bool breath_gate_rested = true;
+static void (*breath_hook)(const BreathState* state) = NULL;
+void update_breath_fx(void);
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
 bool drum_chooses_some_notes;
@@ -609,14 +669,16 @@ static inline bool is_footbass(int endpoint) {
          endpoint == ENDPOINT_FOOTBASS_3;
 }
 
-// The drones: Db and Dc, and the second pair beside them.  Same reasoning as
-// is_footbass -- a named test, so the second pair can't be missed anywhere
-// the first is handled.
+// The drones: Db and Dc, the second pair beside them, and the Breath Gate,
+// which is a drone chord the breath lets through.  Same reasoning as
+// is_footbass -- a named test, so none of them can be missed anywhere the
+// first is handled.
 static inline bool is_drone(int endpoint) {
   return endpoint == ENDPOINT_DRONE_BASS ||
          endpoint == ENDPOINT_DRONE_CHORD ||
          endpoint == ENDPOINT_DRONE_BASS_2 ||
-         endpoint == ENDPOINT_DRONE_CHORD_2;
+         endpoint == ENDPOINT_DRONE_CHORD_2 ||
+         endpoint == ENDPOINT_BREATH;
 }
 
 // The endpoints update_bass holds a note on, rather than ones that play on
@@ -703,6 +765,7 @@ void all_notes_off() {
 void reload_voice_setting(struct Configuration* c) {
   int endpoint = c->selected_endpoint;
   int voice = c->voices[endpoint];
+  if (is_breath_percussion(voice)) return;  // no program to set up
   int volume_delta = c->volume_deltas[endpoint];
   int manual_volume = c->manual_volumes[voice];
   bool pan = c->pans[endpoint];
@@ -757,6 +820,7 @@ void select_voice(struct Configuration* c, int voice) {
       holds_bass_note(c->selected_endpoint)) {
     update_bass(/*force_refresh=*/true);
   }
+  update_breath_fx();  // the Breath Gate may have changed what it plays
 }
 
 void clear_jawharp() {
@@ -901,6 +965,7 @@ void clear_endpoint() {
   case ENDPOINT_DRONE_CHORD: clear_drone_chord(18); break;
   case ENDPOINT_DRONE_BASS_2: clear_drone_bass(89); break;
   case ENDPOINT_DRONE_CHORD_2: clear_drone_chord(89); break;
+  case ENDPOINT_BREATH: clear_drone_chord(89); break;
   }
 
   update_fade(c->selected_endpoint);
@@ -962,6 +1027,9 @@ void clear_status() {
 
   jig_time = false;
   kick_duck = false;
+  breath_fx = 0;
+  breath_gate_rested = true;
+  update_breath_fx();
   allow_all_drums_downbeat = false;
 
   drum_chooses_notes = false;
@@ -1026,6 +1094,56 @@ int roll = MIDI_MAX / 2;
 int pitch = MIDI_MAX / 2;
 
 int breath = 0;  // current value from breath controller
+
+char active_chord();
+
+// Tell the Mac's audio what the breath is doing and how hard you're blowing:
+// the sweeps that are on, the Breath Gate's percussion if it's on and on one
+// of those voices, and the chord for the mandolin -- what the drones are
+// playing, with the third the chord or the mode gives it.
+void update_breath_fx(void) {
+  if (!breath_hook) return;
+  BreathState state = {breath, breath_fx, active_chord(), 4, 7};
+  if (c->on[ENDPOINT_BREATH]) {
+    for (int i = 0; i < N_BREATH_VOICES; i++) {
+      if (c->voices[ENDPOINT_BREATH] == BREATH_VOICES[i].voice) {
+        state.fx |= BREATH_VOICES[i].fx;
+      }
+    }
+  }
+  int type = drum_chooses_notes || drum_chooses_some_notes ? chord_type :
+             musical_mode == MODE_MINOR ? CHORD_MINOR : CHORD_MAJOR;
+  if (type == CHORD_MINOR || type == CHORD_DIM) state.chord_third = 3;
+  if (type == CHORD_DIM) state.chord_fifth = 6;
+  breath_hook(&state);
+}
+
+// Every breath after a rest starts the Breath Gate's chord afresh, so the
+// gate opens on the pad's attack rather than onto a note that's been
+// sounding all along behind it.  Coming to rest lets it go; opening the gate
+// again strikes it.  Pulsing without coming to rest just chops it.
+void breath_gate_breath(void) {
+  double blown = breath_blown(breath);
+  if (!breath_gate_rested && blown == 0) {
+    breath_gate_rested = true;
+    drone_endpoint_off(ENDPOINT_BREATH);
+  } else if (breath_gate_rested && blown > BREATH_GATE_OPEN) {
+    breath_gate_rested = false;
+    update_bass(/*force_refresh=*/true);
+  }
+}
+
+// The arrow keys, or speech: the mode, and so the third the mandolin's
+// strings are tuned to.
+void set_musical_mode(int mode) {
+  musical_mode = mode;
+  update_breath_fx();
+}
+
+void toggle_breath_fx(unsigned fx) {
+  breath_fx ^= fx;
+  update_breath_fx();
+}
 double leakage = 0;  // set by calculate_breath_speeds()
 double breath_gain = 0;  // set by calculate_breath_speeds()
 double max_air = 0; // set by calculate_breath_speeds()
@@ -1562,6 +1680,8 @@ void update_bass(bool force_refresh) {
     int note_out = c->chord[endpoint] ? chord_out : bass_out;
 
     if (!c->on[endpoint]) continue;
+    if (is_breath_percussion(c->voices[endpoint])) continue;
+    if (endpoint == ENDPOINT_BREATH && breath_gate_rested) continue;
     if (current_note[endpoint] == note_out &&
         !(drum_chooses_notes && c->shorter[endpoint])) continue;
     if (endpoint == ENDPOINT_JAWHARP &&
@@ -1583,6 +1703,7 @@ void update_bass(bool force_refresh) {
     }
     current_note[endpoint] = note_out;
   }
+  update_breath_fx();  // the mandolin follows the chord
 }
 
 char mapping(unsigned char note_in) {
@@ -1797,6 +1918,7 @@ void toggle_endpoint(int endpoint) {
       drone_endpoint_off(endpoint);
     }
   }
+  update_breath_fx();  // the Breath Gate's percussion comes and goes with it
 }
 
 void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
@@ -1826,6 +1948,13 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   // pads instead -- see DRONE_VOICES.  Keys without one do nothing, for the
   // same reason as with the drum: falling through would put a voice on the
   // drone that isn't on the keyboard.
+  if (c->selected_endpoint == ENDPOINT_BREATH) {
+    int index = breath_voice_for_note(note_in);
+    if (index >= 0) {
+      select_voice(c, BREATH_VOICES[index].voice);
+      return;
+    }
+  }
   if (is_drone(c->selected_endpoint)) {
     int index = drone_voice_for_note(note_in);
     if (index >= 0) {
@@ -1838,6 +1967,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   switch (note_in) {
   case DELETE:
     // Manual volume entry
+    if (is_breath_percussion(selected_voice)) return;  // no volume to set
     c->manual_volumes[selected_voice] = val;
     reload_voice_setting(c);
     return;
@@ -2037,6 +2167,21 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case KICK_DUCK:
     kick_duck = !kick_duck;
     return;
+  case BASS_SWEEP:
+    toggle_breath_fx(BREATH_FX_SWEEP_BASS);
+    return;
+  case TREBLE_SWEEP:
+    toggle_breath_fx(BREATH_FX_SWEEP_TREBLE);
+    return;
+  case PEAK_SWEEP:
+    toggle_breath_fx(BREATH_FX_SWEEP_PEAK);
+    return;
+  case BREATH_GATE_SELECT:
+    c->selected_endpoint = ENDPOINT_BREATH;
+    return;
+  case BREATH_GATE:
+    toggle_endpoint(ENDPOINT_BREATH);
+    return;
   case F10:
     allow_all_drums_downbeat = !allow_all_drums_downbeat;
     return;
@@ -2062,16 +2207,16 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     }
     return;
   case UP:
-    musical_mode = MODE_MAJOR;
+    set_musical_mode(MODE_MAJOR);
     return;
   case LEFT:
-    musical_mode = MODE_MIXO;
+    set_musical_mode(MODE_MIXO);
     return;
   case DOWN:
-    musical_mode = MODE_MINOR;
+    set_musical_mode(MODE_MINOR);
     return;
   case RIGHT:
-    musical_mode = MODE_BETH_COHENS;
+    set_musical_mode(MODE_BETH_COHENS);
     return;
   case F8:
     root_note = to_root(val);
@@ -2140,6 +2285,8 @@ void handle_cc(unsigned int cc, unsigned int val) {
   //       (next_downbeat_ns - last_downbeat_ns));
   
   breath = val;
+  update_breath_fx();
+  breath_gate_breath();
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {

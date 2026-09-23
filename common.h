@@ -29,12 +29,55 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 #define CHANNEL_PITCHED_KICK 15
 
 // The kick from a percussion set, on a channel of its own so that Kick Duck
-// can leave it out of what it ducks.  The Mac makes 14 a second percussion
-// channel for it (macapi.h); the Pi's fluidsynth has only the one, so there
-// it's the drum channel, as it always was.
+// can leave it out of what it ducks.  The Mac makes 16, past the endpoints'
+// sixteen, a second percussion channel for it (macapi.h); the Pi's fluidsynth
+// has only the one, so there it's the drum channel, as it always was.
 #ifndef CHANNEL_KICK
 #define CHANNEL_KICK CHANNEL_DRUM
 #endif
+
+// The breath controller's range, as the Mac's breath effects read it: below
+// BREATH_FLOOR is the controller at rest, and BREATH_FULL is as far as it
+// goes.  The Breath Gate opens BREATH_GATE_OPEN of the way between them and
+// shuts below BREATH_GATE_SHUT, the gap so a breath hovering at the edge
+// doesn't chatter.  Shared because jammermidilib.h restrikes the Breath
+// Gate's chord where macapi.h opens its gate.
+#define BREATH_FLOOR 4
+#define BREATH_FULL 110
+#define BREATH_GATE_OPEN 0.12
+#define BREATH_GATE_SHUT 0.06
+
+// The breath as 0-1, from the controller at rest to as far as it goes.
+static inline double breath_blown(int breath) {
+  double x = (double)(breath - BREATH_FLOOR) / (BREATH_FULL - BREATH_FLOOR);
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+// What the breath controller is shaping or playing, one bit each: the
+// sweeps (the Mac's 4, 6 and 7), and the Breath Gate's percussion voices
+// when it's on and playing one.  jammermidilib.h works out which are on; the
+// Mac's audio (macapi.h) does them.  The Pi does none.  The sweeps come first
+// and in this order, since macapi.h numbers its filters by them.
+enum {
+  BREATH_FX_SWEEP_BASS = 1 << 0,
+  BREATH_FX_SWEEP_TREBLE = 1 << 1,
+  BREATH_FX_SWEEP_PEAK = 1 << 2,
+  BREATH_FX_GUIRO = 1 << 3,
+  BREATH_FX_WASHBOARD = 1 << 4,
+  BREATH_FX_MANDOLIN = 1 << 5,
+  BREATH_FX_CUICA = 1 << 6,
+  BREATH_FX_TALKING_DRUM = 1 << 7,
+  BREATH_FX_GUIRA = 1 << 8,
+};
+
+// What the Mac's breath effects are told: the breath, which BREATH_FX_* are
+// on, and the chord the mandolin's strings are tuned to -- a MIDI note for its
+// root, and its third and fifth as semitones above that.
+typedef struct {
+  int breath;
+  unsigned fx;
+  int chord_root, chord_third, chord_fifth;
+} BreathState;
 
 /* endpoints */
 #define ENDPOINT_JAWHARP 0
@@ -63,7 +106,12 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 // cleared the same way.
 #define ENDPOINT_DRONE_BASS_2 12
 #define ENDPOINT_DRONE_CHORD_2 13
-#define N_ENDPOINTS (ENDPOINT_DRONE_CHORD_2+1)
+// The Breath Gate: a drone chord that sounds only while you blow (the Mac's
+// audio gates its channel), or, on one of its own voices, percussion the
+// breath plays by moving.  A drone like the others otherwise.  The Mac's
+// alone: on the Pi nothing switches it on.
+#define ENDPOINT_BREATH 14
+#define N_ENDPOINTS (ENDPOINT_BREATH+1)
 
 /* midi values */
 #define MIDI_OFF 0x80

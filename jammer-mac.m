@@ -108,6 +108,7 @@ typedef struct {
   bool whistle_dead[N_KEYS];
   bool drone_dead[N_KEYS];
   int drone_voice[N_KEYS];  // DRONE_VOICES index each key picks, or -1
+  int breath_voice[N_KEYS];  // BREATH_VOICES index, or -1
   int whistle_voice;
   int whistle_octave;
   int whistle_volume;
@@ -137,6 +138,7 @@ static void take_snapshot(Snapshot* s) {
     s->whistle_dead[i] = whistle_key_is_dead(&KEYS[i]);
     s->drone_dead[i] = drone_key_is_dead(&KEYS[i]);
     s->drone_voice[i] = drone_voice_on_key(&KEYS[i]);
+    s->breath_voice[i] = breath_voice_on_key(&KEYS[i]);
   }
   int sel = c->selected_endpoint;
   s->selected_endpoint = sel;
@@ -390,10 +392,11 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r
                                                        xRadius:6 yRadius:6];
 
-  // Kick Duck is whole-rig, and acts like it, but it's a duck like Pulse, so
-  // it's coloured with Pulse.
-  NSColor* color = group_color(key->note == KICK_DUCK ? GROUP_MODIFIER
-                                                      : key->group);
+  // Kick Duck and the breath sweeps are whole-rig, and act like it, but
+  // they shape the sound the way Pulse does, so they're coloured with it.
+  bool shapes = key->note == KICK_DUCK || key->note == BASS_SWEEP ||
+                key->note == TREBLE_SWEEP || key->note == PEAK_SWEEP;
+  NSColor* color = group_color(shapes ? GROUP_MODIFIER : key->group);
   bool lit = snapshot.lit[i];
   // A key with no label at all is filler; a voice key whose drum label is
   // empty does nothing while the drum is selected.  Both draw as dead keys.
@@ -474,6 +477,11 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   // So do the drones' pads, and like the whistle's they have no paper tab.
   if (snapshot.drone_voice[i] >= 0) {
     label = DRONE_VOICES[snapshot.drone_voice[i]].label;
+    shortname = NULL;
+  }
+  // And the Breath Gate's percussion, on the keys the drones leave empty.
+  if (snapshot.breath_voice[i] >= 0) {
+    label = BREATH_VOICES[snapshot.breath_voice[i]].label;
     shortname = NULL;
   }
   // The whistle's ten voices take over the voice keys while it is selected,
@@ -1760,6 +1768,7 @@ int main(int argc, const char** argv) {
     whistle_resolve_voices();
     audio_mix_hook = whistle_mix;
     kick_hook = kick_duck_hit;
+    breath_hook = breath_set;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
     speech_start(synth_sample_rate);
 

@@ -43,7 +43,8 @@ enum {
 enum {
   GLOBAL_JIG, GLOBAL_DRUM_CHOOSES, GLOBAL_DRUM_CHOOSES_SOME,
   GLOBAL_ALL_DRUMS_DOWNBEAT, GLOBAL_FADED, GLOBAL_SPEECH_PICKS,
-  GLOBAL_SPEECH_COMMANDS, GLOBAL_KICK_DUCK,
+  GLOBAL_SPEECH_COMMANDS, GLOBAL_KICK_DUCK, GLOBAL_BASS_SWEEP,
+  GLOBAL_TREBLE_SWEEP, GLOBAL_PEAK_SWEEP,
 };
 
 // Colour families, so related keys read as a group.
@@ -118,7 +119,12 @@ static const Key KEYS[] = {
   // ---- number row ---------------------------------------------------------
   // ` and 1-9 used to select which endpoint the modifiers act on; that's
   // shift + the endpoint's toggle key now.
-  {-1, 0, 0, "`", FILLER, 1, 0, 1},
+  // The Breath Gate: a pad chord that sounds only while you blow, so pulsing
+  // the breath chops it, or with B, N or M percussion the breath plays.  An
+  // endpoint like the drones, so it toggles and selects like them.
+  {kVK_ANSI_Grave, BREATH_GATE, BREATH_GATE_SELECT, "`", "BG",
+   "Breath\nGate", GROUP_TOGGLE, LIT_EP_ON, ENDPOINT_BREATH, NOLABEL, 1, 0,
+   1},
   // The whistle bass.  Unlike everything else on this keyboard it sends
   // nothing to handle_keypad -- it makes its own sound rather than playing a
   // fluidsynth channel -- so its note is 0 and keypad.h dispatches it by its
@@ -133,14 +139,21 @@ static const Key KEYS[] = {
    ENDPOINT_FOOTBASS_2, NOLABEL, 1, 2, 1},
   {kVK_ANSI_3, 'u', 'v', "3", "FB3", "Skip\nBass", GROUP_TOGGLE, LIT_EP_ON,
    ENDPOINT_FOOTBASS_3, NOLABEL, 1, 3, 1},
-  {-1, 0, 0, "4", FILLER, 1, 4, 1},
+  // The breath sweeps, which shape the whole mix as you blow and leave it be
+  // when you don't.  Whole-rig, like Kick Duck between them.  "Sweep" first:
+  // "bass sweep" would start with the whistle's Bass voice, and "low sweep"
+  // with the Low endpoint, and a spoken name can't start with another.
+  {kVK_ANSI_4, BASS_SWEEP, 0, "4", "SB", "SWEEP\nBASS", GROUP_GLOBAL,
+   LIT_GLOBAL_FLAG, GLOBAL_BASS_SWEEP, NOLABEL, 1, 4, 1},
   // Each kick ducks the pads, drones and the rest, for the pump of a
   // sidechained mix; the kick, foot basses and arp stay as they are.
   // Whole-rig, like JIG next to it, rather than an endpoint.
   {kVK_ANSI_5, KICK_DUCK, 0, "5", "KD", "KICK\nDUCK", GROUP_GLOBAL,
    LIT_GLOBAL_FLAG, GLOBAL_KICK_DUCK, NOLABEL, 1, 5, 1},
-  {-1, 0, 0, "6", FILLER, 1, 6, 1},
-  {-1, 0, 0, "7", FILLER, 1, 7, 1},
+  {kVK_ANSI_6, TREBLE_SWEEP, 0, "6", "ST", "SWEEP\nTREBLE", GROUP_GLOBAL,
+   LIT_GLOBAL_FLAG, GLOBAL_TREBLE_SWEEP, NOLABEL, 1, 6, 1},
+  {kVK_ANSI_7, PEAK_SWEEP, 0, "7", "SP", "SWEEP\nPEAK", GROUP_GLOBAL,
+   LIT_GLOBAL_FLAG, GLOBAL_PEAK_SWEEP, NOLABEL, 1, 7, 1},
   // A second drone bass and chord, for layering two pads.  They sit over I
   // and O, where the first pair are.
   {kVK_ANSI_8, 'w', 'x', "8", "Db2", "Pad\nBass", GROUP_TOGGLE, LIT_EP_ON,
@@ -275,6 +288,7 @@ static const char* ENDPOINT_NAMES[N_ENDPOINTS] = {
   "Skip Bass",   // ENDPOINT_FOOTBASS_3
   "Pad Bass",      // ENDPOINT_DRONE_BASS_2
   "Pad Chord",     // ENDPOINT_DRONE_CHORD_2
+  "Breath Gate",   // ENDPOINT_BREATH
 };
 
 #endif

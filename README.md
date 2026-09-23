@@ -132,6 +132,44 @@ the physical keyboard in the middle, and what it actually does underneath:
 * **`2` and `3`** (green) are Bounce Bass and Skip Bass: two more foot
   basses, on top of the one on `W`.  Same bass line, different rhythmic
   treatment, so they can run together -- see below.
+* **`4`, `6` and `7`** (purple, like Pulse) are the breath sweeps: filters on
+  everything fluidsynth plays that follow the breath controller, and leave it
+  as it was when you aren't blowing.  `4`, Sweep Bass, takes more and more of
+  the bass out the harder you blow (a high-pass from 10Hz up to 1.2kHz), and
+  lets it back in as you stop.  `6`, Sweep Treble, does the same from the top
+  (a low-pass from 18kHz down to 300Hz).  `7`, Sweep Peak, sweeps a resonant
+  peak up from 250Hz to 5kHz, the riser sound, with the rest brought down a
+  little so it doesn't overload.  Any of them can be on together.  Not the
+  whistle, which isn't fluidsynth's.
+* **`` ` ``** (green) is the Breath Gate: a drone chord, like `O`, that sounds
+  only while you blow, so pulsing the breath chops it into a rhythm.  It
+  opens a little way into the breath and shuts a little below that, so a breath at
+  the edge doesn't chatter.  Each breath after the breath has come all the way
+  to rest strikes the chord afresh, so it opens on the pad's attack; pulsing
+  without coming to rest just chops the chord that's sounding.  It starts on
+  Warm Pad, and with it selected the voice keys pick from the drones' pads --
+  and N and M, empty for the other drones, are its own percussion instead (as,
+  for now, are A, S, D and G; see below), played by moving the breath rather
+  than by how hard it is, so holding it steady is silence:
+  * **Guiro** (N): every fortieth of the breath's range it moves is one
+    click, so slow is a ratchet and fast a zip.
+  * **Washboard** (M): the same over finer ridges, with a thimble on metal.
+
+  And for now, prototypes over some of the pads, until it's clear which are
+  worth keeping and where they should go:
+  * **Muted Mando** (A): the ridges are the courses of an electric mandolin
+    tuned to the chord the drones are playing, root, third and fifth up
+    from its low G; breathe up and it strums up, down and it strums down.
+    Played with the palm on the strings, so each is a short "chk" at its
+    pitch.
+  * **Cuica** (S): the samba friction drum, a squeaking, vocal tone while
+    the breath moves, its pitch how far into the breath it is.
+  * **Talking Drum** (D): struck at the start of each stroke, harder the
+    quicker the stroke starts, its pitch bending with the breath as it rings.
+  * **Guira** (G): the guiro with a wire brush on a punched metal cylinder.
+
+  The percussion is its own sound, not fluidsynth's, so the sweeps and Kick
+  Duck leave it alone.  The pad goes through them like any other.
 * **`5`** (purple, like Pulse) is Kick Duck: each kick ducks everything else fluidsynth is
   playing and brings it back up over the beat, for the pump of a sidechained
   mix.  The kick, the foot basses (`W`, `2`, `3`) and the arp (`E`) stay out
