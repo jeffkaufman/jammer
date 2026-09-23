@@ -219,9 +219,10 @@ terminal now shares `Jammer.app`'s saved settings.
 With `F8` on, any button can be pressed by saying "press" and then its name:
 "press foot bass", "press drum some", "press octave up".  "select" instead of
 "press" is shift-click, for the buttons where that means something.  "change
-key to B flat" and "change mode to minor" do what the key picker and the
-arrow keys do.  Without the lead-in words a name does nothing, so talking to
-the room is safe.
+key to B" and "change mode to minor" do what the key picker and the arrow
+keys do; only the natural keys, with no sharps or flats.  Without the
+lead-in words a name does nothing, so talking to the room is safe.  These
+happen the moment they're heard; only numbers wait for the beat.
 
 A button's name is what's written on it right now, so the voice keys answer to
 the drum kits, the drones' pads or the whistle's voices when those are showing
@@ -236,8 +237,10 @@ two" is Room 2.
 No button's name is the start of another's, in any selection state, and a
 test holds that: a name that's the start of a longer one has to wait to see
 if it's going to grow, and saying the longer one with a pause in the middle
-would press the shorter.  Keys and modes do still have that shape -- "change
-key to B" might be heading for "B flat" -- so those wait for 0.7s of quiet.
+would press the shorter.  Keys and modes don't wait either: the modes'
+names are all different from the start, and a key is always one word -- only
+the natural keys, no sharps or flats -- so "change key to E" is E at once
+rather than maybe the start of "ef".
 
 The recognizer is given a dictionary of every phrase it should expect, so
 that "press foot bass" beats "press foot base" and "arpeggiator" beats "or
@@ -257,7 +260,7 @@ Speaking is played, not just said.  Only what's loud enough to be said right
 into the microphone reaches the recognizer -- the gate, set from the Speech
 Recognition menu and shown as a white tick on the speech row's meter, which
 brightens while it's open.  It starts strict, at -20dBFS peak, so a caller
-across the room doesn't count.  And whatever's heard takes effect on the beat
+across the room doesn't count.  And a number takes effect on the beat
 two beats after you stop talking: say "four" ending on the one and the IV
 comes in on the three, however long the recognizer took.  On the beat itself
 -- each pedal hit is a beat, and the change is made inside the nearest one,

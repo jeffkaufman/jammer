@@ -9,7 +9,7 @@
 //
 //   press foot bass       strikes that button, as if clicked
 //   select foot bass      ... or shift-clicked
-//   change key to B flat  as picking it from the key at the top left
+//   change key to B       as picking it from the key at the top left
 //   change mode to minor  as the arrow keys
 //
 // Only "change", not "set": "set" sounds too much like "seven" to the fast
@@ -147,36 +147,20 @@ typedef struct {
   int n;
 } SwVocab;
 
-// The twelve keys, every way the recognizer might write them: "B flat",
-// "B♭", "Bb", "bee flat".  The letters' sound-alikes only count here, after
-// "change key to", where nothing else could be meant.
+// The seven natural keys, every way the recognizer might write them: "B",
+// "bee".  No sharps or flats, which never come up, so a key is always one
+// word and there's never a longer one to wait for.  The letters'
+// sound-alikes only count here, after "change key to", where nothing else
+// could be meant.
 static SwVocab sw_key_vocab(void) {
-  static char names[200][SW_NAME_MAX];
-  static int values[200];
-  static int n = 0;
-  if (n == 0) {
-    static const struct { int pitch; const char* spellings[4]; } LETTERS[] = {
-      {0, {"c", "see", "sea"}}, {2, {"d", "dee"}}, {4, {"e"}},
-      {5, {"f", "ef", "eff"}}, {7, {"g", "gee"}}, {9, {"a", "ay"}},
-      {11, {"b", "be", "bee"}},
-    };
-    for (int l = 0; l < 7; l++) {
-      for (int sp = 0; sp < 4 && LETTERS[l].spellings[sp]; sp++) {
-        const char* letter = LETTERS[l].spellings[sp];
-        static const struct { const char* suffix; int shift; } SUFFIXES[] = {
-          {"", 0}, {"sharp", 1}, {"flat", -1}, {"b", -1},
-        };
-        for (int x = 0; x < 4; x++) {
-          // "Bb" for B flat, but not "seeb": the bare-b flat is only how a
-          // letter gets written, never how one sounds.
-          if (x == 3 && sp > 0) continue;
-          snprintf(names[n], SW_NAME_MAX, "%s%s", letter, SUFFIXES[x].suffix);
-          values[n++] = (LETTERS[l].pitch + SUFFIXES[x].shift + 12) % 12;
-        }
-      }
-    }
-  }
-  SwVocab vocab = {(const char (*)[SW_NAME_MAX])names, values, n};
+  static char names[16][SW_NAME_MAX] = {
+    "c", "see", "sea", "d", "dee", "e", "f", "ef", "eff", "g", "gee", "a",
+    "ay", "b", "be", "bee",
+  };
+  static int values[16] = {
+    0, 0, 0, 2, 2, 4, 5, 5, 5, 7, 7, 9, 9, 11, 11, 11,
+  };
+  SwVocab vocab = {(const char (*)[SW_NAME_MAX])names, values, 16};
   return vocab;
 }
 
@@ -224,15 +208,17 @@ static bool sw_lead_word(const char* lead, const char* word) {
 // recognizer hands words over one at a time, sometimes a second apart, and a
 // "press" dropped for being early loses the "foot bass" that follows it.
 // When what's been said is a whole name that could still grow into a longer
-// one -- "B" might yet be "B flat" -- it's SW_WAIT until the speaker has
-// stopped (`settled`), and then the name as it stands.  A lead followed by
+// one, it's SW_WAIT until the speaker has stopped (`settled`), and then the
+// name as it stands -- unless the names are all one word (`one_word`), when
+// the first word after the lead is the whole of it, and it acts at once.
+// "E" would otherwise wait to see whether it was the start of "ef".  A lead followed by
 // words that can't be a name is SW_DROP -- but only once the speaker has
 // stopped, since until then the recognizer is still revising: "press our
 // page" becomes "press arpeggiator" a moment later.
 static SwMatch sw_match(const char* const* words, int n_words, int i,
                         const char* const* lead, int n_lead,
-                        const SwVocab* vocab, bool settled, int* value,
-                        int* end) {
+                        const SwVocab* vocab, bool one_word, bool settled,
+                        int* value, int* end) {
   int j = i;
   for (int l = 0; l < n_lead; l++) {
     // Only the first word decides whether this is the phrase at all.
@@ -250,7 +236,12 @@ static SwMatch sw_match(const char* const* words, int n_words, int i,
   char said[SW_NAME_MAX * 4] = "";
   int best = -1, best_end = -1;
   bool could_grow = true;  // every word after the lead is a prefix
+  int name_start = j;
   for (; j < n_words; j++) {
+    if (one_word && j > name_start) {
+      could_grow = false;
+      break;
+    }
     char next[SW_NAME_MAX];
     sw_normalize_named(words[j], next, sizeof(next));
     if (strlen(said) + strlen(next) >= sizeof(said)) {
@@ -272,7 +263,9 @@ static SwMatch sw_match(const char* const* words, int n_words, int i,
     }
   }
   // Only a longer name that the words so far lead into is worth waiting for;
-  // one that's already been passed isn't.
+  // one that's already been passed isn't.  With one-word names, once there's
+  // a word there's nothing to wait for.
+  if (one_word && j > name_start) could_grow = false;
   if (could_grow) {
     bool longer = false;
     for (int k = 0; k < vocab->n; k++) {
@@ -313,12 +306,13 @@ static SwAction sw_next_action(const char* const* words, int n_words,
     const char* const* lead;
     int n_lead;
     const SwVocab* vocab;
+    bool one_word;
     SwKind kind;
   } PHRASES[] = {
-    {PRESS, 1, buttons, SW_PRESS},
-    {SELECT, 1, buttons, SW_SELECT},
-    {KEY, 3, &keys, SW_KEY},
-    {MODE, 3, modes, SW_MODE},
+    {PRESS, 1, buttons, false, SW_PRESS},
+    {SELECT, 1, buttons, false, SW_SELECT},
+    {KEY, 3, &keys, true, SW_KEY},
+    {MODE, 3, modes, false, SW_MODE},
   };
   SwAction none = {SW_NONE, 0};
 
@@ -327,8 +321,8 @@ static SwAction sw_next_action(const char* const* words, int n_words,
     for (int p = 0; p < (int)(sizeof(PHRASES) / sizeof(PHRASES[0])); p++) {
       int value, end;
       SwMatch match = sw_match(words, n_words, i, PHRASES[p].lead,
-                               PHRASES[p].n_lead, PHRASES[p].vocab, settled,
-                               &value, &end);
+                               PHRASES[p].n_lead, PHRASES[p].vocab,
+                               PHRASES[p].one_word, settled, &value, &end);
       if (match == SW_NOT_THIS) continue;
       if (match == SW_WAIT) return none;  // wait for the rest
       if (match == SW_ACT) {

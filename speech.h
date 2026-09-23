@@ -21,9 +21,11 @@
 // hints are for when it can't be had.
 //
 // It only hears what's loud enough to be said right into the microphone (the
-// gate in speechgate.h, set from the Speech Recognition menu), and what it
+// gate in speechgate.h, set from the Speech Recognition menu).  A number it
 // hears takes effect two beats after the talking stops, so it lands in time
-// however long the recognizer took.
+// however long the recognizer took; anything else, the moment it's heard.
+// A chord change has to land on a beat, but a button, a key or a mode is
+// wanted now, not a beat or two later.
 //
 // It only listens while F3 or F8 is on.  Partial results are
 // acted on as they arrive, so a number lands a moment after it's said rather
@@ -106,9 +108,11 @@ static void speech_tap(const float* samples, int frames) {
 // A task whose transcription has grown this long is restarted early, so the
 // word list the result handler walks stays small.
 #define SPEECH_MAX_WORDS 200
-// How long without a new word before "change key to B" is taken to mean B
-// rather than the start of "B flat".  Longer than it looks like it needs to
-// be: the recognizer's words can arrive the better part of a second apart.
+// How long without a new word before a button's name that could still be
+// the start of a longer one is taken as it stands, and a lead-in followed by
+// nothing it names is let go.  Longer than it looks like it needs to be: the
+// recognizer's words can arrive the better part of a second apart.  (Keys
+// don't wait on it: they're all one word -- see sw_key_vocab.)
 #define SPEECH_SETTLE_MS 700
 #define SPEECH_MAX_NAMES 256
 
@@ -226,10 +230,11 @@ static void speech_apply_locked(const SwAction* action) {
 // ---------------------------------------------------------------------------
 // On the beat
 //
-// What's heard doesn't happen when the recognizer gets round to it, which
+// A number heard doesn't happen when the recognizer gets round to it, which
 // could be anywhere from a quarter of a second to a second later, but on the
 // beat two beats after the talking stopped: say "four" ending on the one and
-// the IV comes in on the three.
+// the IV comes in on the three.  (Everything else is made the moment it's
+// heard: see speech_queue_action.)
 //
 // On the beat itself, not near it.  The beat here is the pedal: each hit is
 // when the rhythm parts play, so a change that arrives a few milliseconds
@@ -447,7 +452,8 @@ static void speech_run_pending(void) {
 
 static bool speech_fast_claims(const SwAction* action);
 
-// Heard, and to happen on the beat two beats after the talking stops.
+// Heard: a number, to happen on the beat two beats after the talking stops;
+// anything else, now.
 static void speech_queue_action(const SwAction* action) {
   if (speech_fast_claims(action)) return;
   // Numbers only with F3, everything else only with F8.
@@ -456,6 +462,14 @@ static void speech_queue_action(const SwAction* action) {
                                           : speech_commands_on;
   UNLOCK();
   if (!wanted) return;
+  if (action->kind != SW_NUMBER) {
+    LOCK();
+    speech_apply_locked(action);
+    UNLOCK();
+    printf("timing: made %ldms after you stopped\n", speech_ms_since_stop());
+    fflush(stdout);
+    return;
+  }
   if (speech_n_pending < SPEECH_MAX_PENDING) {
     speech_pending[speech_n_pending++] = *action;
   }

@@ -1161,26 +1161,24 @@ static void test_spoken_presses() {
         "a bare 'for' mustn't pick the IV");
   CHECK(strcmp(PHRASE(true, "set", "mode", "to", "minor"), "") == 0,
         "'set' isn't a lead-in: it sounds too much like 'seven'");
-  CHECK(strcmp(PHRASE(true, "change", "key", "too", "F", "sharp"),
-               "key=6") == 0, "change key too F sharp");
+  CHECK(strcmp(PHRASE(true, "change", "key", "too", "F"), "key=5") == 0,
+        "change key too F");
 
   // Changing key and mode.
   CHECK(strcmp(PHRASE(false, "change", "key", "to", "A", "now"),
                "key=9") == 0, "change key to A");
-  CHECK(strcmp(PHRASE(false, "change", "key", "to", "B"), "") == 0,
-        "'B' could still be 'B flat'; wait");
-  CHECK(strcmp(PHRASE(true, "change", "key", "to", "B"), "key=11") == 0,
-        "and settled, it's B");
-  CHECK(strcmp(PHRASE(false, "change", "key", "to", "B", "flat"),
-               "key=10") == 0, "B flat");
-  CHECK(strcmp(PHRASE(true, "change", "key", "to", "B♭"), "key=10") == 0,
-        "B♭ as written");
-  CHECK(strcmp(PHRASE(true, "change", "key", "two", "Bb"), "key=10") == 0,
-        "Bb, with 'to' heard as 'two'");
-  CHECK(strcmp(PHRASE(true, "change", "key", "to", "F#"), "key=6") == 0,
-        "F#");
-  CHECK(strcmp(PHRASE(true, "change", "key", "to", "see", "sharp"),
-               "key=1") == 0, "a sound-alike letter");
+  // A key is one word, so it's acted on as soon as it's heard, with nothing
+  // to wait for: not "E" for "ef", or "B" for "bee".
+  CHECK(strcmp(PHRASE(false, "change", "key", "to", "B"), "key=11") == 0,
+        "B, at once");
+  CHECK(strcmp(PHRASE(false, "change", "key", "to", "E"), "key=4") == 0,
+        "E, at once, not waiting to see if it's 'ef'");
+  CHECK(strcmp(PHRASE(false, "change", "key", "two", "D"), "key=2") == 0,
+        "D, with 'to' heard as 'two'");
+  CHECK(strcmp(PHRASE(true, "change", "key", "to", "see"), "key=0") == 0,
+        "a sound-alike letter");
+  CHECK(strcmp(PHRASE(false, "change", "key", "to"), "") == 0,
+        "no key yet: wait for it");
   CHECK(strcmp(PHRASE(true, "change", "key", "G"), "key=7") == 0,
         "'to' is optional");
   char want[32];
@@ -1221,12 +1219,12 @@ static void test_spoken_presses() {
 
   // And they do what they say.
   full_reset();
-  const char* words[] = {"change", "key", "to", "E", "flat"};
+  const char* words[] = {"change", "key", "to", "E"};
   int consumed = 0;
-  SwAction a = next_action(words, 5, &consumed, true);
-  CHECK(a.kind == SW_KEY, "change key to E flat");
+  SwAction a = next_action(words, 4, &consumed, true);
+  CHECK(a.kind == SW_KEY, "change key to E");
   change_key(a.value);
-  CHECK(root_note == to_root(3) && fifth_note == to_root(10),
+  CHECK(root_note == to_root(4) && fifth_note == to_root(11),
         "change_key should move the root and the fifth");
 #undef PHRASE
 }

@@ -5,7 +5,7 @@
 // renaming a button renames it for the recognizer too:
 //
 //   button <tab> press-able name, in any state ("foot bass", "warm pad")
-//   key    <tab> a key ("B flat")
+//   key    <tab> a key ("B"; only the naturals, which is all it acts on)
 //   mode   <tab> a mode ("mixolydian")
 //   number <tab> a Nashville number ("four")
 //   pron   <tab> word <tab> X-SAMPA pronunciation
@@ -27,7 +27,7 @@ int main(void) {
 
   static const char* LETTERS = "CDEFGAB";
   for (const char* l = LETTERS; *l; l++) {
-    printf("key\t%c\nkey\t%c sharp\nkey\t%c flat\n", *l, *l, *l);
+    printf("key\t%c\n", *l);
   }
 
   SwVocab modes = sw_mode_vocab(MODE_MAJOR, MODE_MINOR, MODE_MIXO,
