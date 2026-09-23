@@ -390,7 +390,10 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSBezierPath* path = [NSBezierPath bezierPathWithRoundedRect:r
                                                        xRadius:6 yRadius:6];
 
-  NSColor* color = group_color(key->group);
+  // Kick Duck is whole-rig, and acts like it, but it's a duck like Pulse, so
+  // it's coloured with Pulse.
+  NSColor* color = group_color(key->note == KICK_DUCK ? GROUP_MODIFIER
+                                                      : key->group);
   bool lit = snapshot.lit[i];
   // A key with no label at all is filler; a voice key whose drum label is
   // empty does nothing while the drum is selected.  Both draw as dead keys.

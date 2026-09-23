@@ -132,7 +132,7 @@ the physical keyboard in the middle, and what it actually does underneath:
 * **`2` and `3`** (green) are Bounce Bass and Skip Bass: two more foot
   basses, on top of the one on `W`.  Same bass line, different rhythmic
   treatment, so they can run together -- see below.
-* **`5`** (teal) is Kick Duck: each kick ducks everything else fluidsynth is
+* **`5`** (purple, like Pulse) is Kick Duck: each kick ducks everything else fluidsynth is
   playing and brings it back up over the beat, for the pump of a sidechained
   mix.  The kick, the foot basses (`W`, `2`, `3`) and the arp (`E`) stay out
   of it, and so does the whistle, which isn't fluidsynth's.  It's set off by
