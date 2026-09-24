@@ -270,6 +270,9 @@ static uint64_t speech_last_loud_ns;  // when the talking last stopped
 // one, that beat, so it stays moved.  0 otherwise.
 static uint64_t speech_moved_due;
 static uint64_t speech_scheduled_for; // a precise wakeup already asked for
+// With no feet, when the voice-led drones will have glided to what's pending,
+// and so when to make it.  0 otherwise.
+static uint64_t speech_glide_due;
 
 // Armed, for the next beat to make.  Under the lock.
 static SwAction speech_armed[SPEECH_MAX_PENDING];
@@ -377,10 +380,27 @@ static void speech_run_pending(void) {
 
   if (speech_n_pending == 0) return;
 
-  // No beat to land on: now.
+  // No beat to land on: now -- or, with voice-led drones to glide, as soon as
+  // they've glided there, half a beat from now.
   bool feet;
   speech_due_beat(&feet);
   if (!feet) {
+    LOCK();
+    bool glide = voice_lead_on;
+    if (glide && !speech_glide_due) {
+      speech_glide_due = now() + lead_beat_ns(now()) / 2;
+      for (int i = 0; i < speech_n_pending; i++) {
+        if (speech_pending[i].kind == SW_NUMBER) {
+          nashville_leads(speech_pending[i].value, speech_glide_due);
+        }
+      }
+    }
+    UNLOCK();
+    if (glide && now() < speech_glide_due) {
+      speech_wake_at(speech_glide_due, speech_run_pending);
+      return;
+    }
+    speech_glide_due = 0;
     printf("timing: no beat; made %ldms after you stopped\n",
            speech_ms_since_stop());
     LOCK();
@@ -435,6 +455,10 @@ static void speech_run_pending(void) {
     for (int i = 0; i < speech_n_pending && speech_n_armed < SPEECH_MAX_PENDING;
          i++) {
       speech_armed[speech_n_armed++] = speech_pending[i];
+      // Its beat may have moved since it was heard: glide in to this one.
+      if (speech_pending[i].kind == SW_NUMBER) {
+        nashville_leads(speech_pending[i].value, due);
+      }
     }
     speech_armed_due = due;
     speech_armed_deadline = due + beat / 2;
@@ -474,14 +498,17 @@ static void speech_queue_action(const SwAction* action) {
     speech_pending[speech_n_pending++] = *action;
   }
   char text[64];
-  LOCK();
-  speech_describe_locked(action, text, sizeof(text));
-  snprintf(speech_last_action, sizeof(speech_last_action), "%s …", text);
-  UNLOCK();
   bool known;
   uint64_t beat = speech_beat_ns(&known);
   bool feet;
   uint64_t due = speech_due_beat(&feet);
+  LOCK();
+  // The voice-led drones glide in over the half beat before it.  With no feet
+  // speech_run_pending glides them now, and makes it when they get there.
+  if (feet) nashville_leads(action->value, due);
+  speech_describe_locked(action, text, sizeof(text));
+  snprintf(speech_last_action, sizeof(speech_last_action), "%s …", text);
+  UNLOCK();
   printf("timing: recognized %s %ldms after you stopped; beat %ldms "
          "(%.0f bpm%s), due on the beat at %ldms%s%s\n", text,
          speech_ms_since_stop(), (long)(beat / 1000000),
@@ -573,6 +600,12 @@ static bool speech_fast_take(int number, int quiet_ms, int said_ms) {
   bool made = t >= due;
   SwAction action = {SW_NUMBER, number};
   LOCK();
+  // Its time already gone, with no feet, and voice-led drones to glide: the
+  // chord waits for the glide, half a beat, rather than landing before it.
+  if (made && !feet && voice_lead_on) {
+    due = t + beat / 2;
+    made = false;
+  }
   snprintf(speech_heard_text, sizeof(speech_heard_text), "%d (fast)",
            number);
   if (made) {
@@ -581,6 +614,7 @@ static bool speech_fast_take(int number, int quiet_ms, int said_ms) {
   } else {
     speech_fast_armed = number;
     speech_fast_due = due;
+    nashville_leads(number, due);  // glide in, arriving on its beat
     speech_fast_earliest = feet ? due - beat / 4 : due;
     snprintf(speech_last_action, sizeof(speech_last_action), "%d …",
              number);

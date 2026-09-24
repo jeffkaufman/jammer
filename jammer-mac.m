@@ -162,7 +162,7 @@ static void take_snapshot(Snapshot* s) {
   s->whistle_voice = whistle_voice;
   s->whistle_octave = whistle_octave;
   s->whistle_volume = whistle_volume;
-  s->whistle_gain = whistle_gain;
+  s->whistle_gain = whistle_current_gain();
   // Peak-hold for a second and a half.  The audio thread reports the loudest
   // it heard since the last read, which at 60Hz is a 16ms window: read raw it
   // flickers far too fast to set the full-blow knob against, and it drops to
@@ -397,6 +397,11 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   bool shapes = key->note == KICK_DUCK || key->note == BASS_SWEEP ||
                 key->note == TREBLE_SWEEP || key->note == PEAK_SWEEP;
   NSColor* color = group_color(shapes ? GROUP_MODIFIER : key->group);
+  // The Breath Gate's layers are blue: unlike the orange voice keys around
+  // them, which pick one, any of these can be on at once, and over the pad.
+  if (snapshot.breath_voice[i] >= 0) {
+    color = [NSColor colorWithSRGBRed:0.36 green:0.56 blue:1.00 alpha:1];
+  }
   bool lit = snapshot.lit[i];
   // A key with no label at all is filler; a voice key whose drum label is
   // empty does nothing while the drum is selected.  Both draw as dead keys.
@@ -479,7 +484,7 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     label = DRONE_VOICES[snapshot.drone_voice[i]].label;
     shortname = NULL;
   }
-  // And the Breath Gate's percussion, on the keys the drones leave empty.
+  // And the Breath Gate's own voices.
   if (snapshot.breath_voice[i] >= 0) {
     label = BREATH_VOICES[snapshot.breath_voice[i]].label;
     shortname = NULL;
@@ -1195,6 +1200,8 @@ static void flash_from_speech(int key) {
 @property(strong) NhReviewController* numberReview;
 @property(strong) NSMenuItem* whistleVolumeItem;
 @property(strong) NSSlider* whistleVolumeSlider;
+@property(strong) NSMenuItem* vocoderVolumeItem;
+@property(strong) NSSlider* vocoderVolumeSlider;
 - (void)rebuildAudioMenu;
 - (void)rebuildWhistleMenu;
 @end
@@ -1428,30 +1435,69 @@ static void flash_from_speech(int key) {
   [self.view setNeedsDisplay:YES];
 }
 
-- (NSMenuItem*)whistleVolumeMenuItem {
-  if (self.whistleVolumeItem) return self.whistleVolumeItem;
-
+// A slider with a caption over it, as a menu item.
+- (NSMenuItem*)sliderMenuItem:(NSString*)title
+                        value:(double)value
+                          max:(double)max
+                       action:(SEL)action
+                       slider:(NSSlider* __strong*)slider {
   NSView* holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 54)];
 
-  NSTextField* caption = [NSTextField labelWithString:@"Whistle volume"];
+  NSTextField* caption = [NSTextField labelWithString:title];
   caption.font = [NSFont menuFontOfSize:0];
   caption.textColor = NSColor.labelColor;
   caption.frame = NSMakeRect(20, 30, 200, 18);
   [holder addSubview:caption];
 
-  self.whistleVolumeSlider =
-    [NSSlider sliderWithValue:whistle_gain
-                     minValue:0
-                     maxValue:MAX_WHISTLE_GAIN
-                       target:self
-                       action:@selector(whistleVolumeChanged:)];
-  self.whistleVolumeSlider.frame = NSMakeRect(20, 6, 220, 20);
-  self.whistleVolumeSlider.continuous = YES;
-  [holder addSubview:self.whistleVolumeSlider];
+  *slider = [NSSlider sliderWithValue:value
+                             minValue:0
+                             maxValue:max
+                               target:self
+                               action:action];
+  (*slider).frame = NSMakeRect(20, 6, 220, 20);
+  (*slider).continuous = YES;
+  [holder addSubview:*slider];
 
-  self.whistleVolumeItem = [[NSMenuItem alloc] init];
-  self.whistleVolumeItem.view = holder;
+  NSMenuItem* item = [[NSMenuItem alloc] init];
+  item.view = holder;
+  return item;
+}
+
+- (NSMenuItem*)whistleVolumeMenuItem {
+  if (self.whistleVolumeItem) return self.whistleVolumeItem;
+  NSSlider* slider = nil;
+  self.whistleVolumeItem =
+    [self sliderMenuItem:@"Whistle volume"
+                   value:whistle_gain
+                     max:MAX_WHISTLE_GAIN
+                  action:@selector(whistleVolumeChanged:)
+                  slider:&slider];
+  self.whistleVolumeSlider = slider;
   return self.whistleVolumeItem;
+}
+
+// The vocoder's, separately: see vocoder_gain.
+- (void)vocoderVolumeChanged:(NSSlider*)slider {
+  LOCK();
+  vocoder_gain = slider.doubleValue;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setDouble:vocoder_gain
+                                          forKey:@"vocoderGain"];
+  [self.view setNeedsDisplay:YES];
+}
+
+- (NSMenuItem*)vocoderVolumeMenuItem {
+  if (self.vocoderVolumeItem) return self.vocoderVolumeItem;
+  NSSlider* slider = nil;
+  self.vocoderVolumeItem =
+    [self sliderMenuItem:@"Vocoder volume"
+                   value:vocoder_gain
+                     max:MAX_WHISTLE_GAIN
+                  action:@selector(vocoderVolumeChanged:)
+                  slider:&slider];
+  self.vocoderVolumeSlider = slider;
+  return self.vocoderVolumeItem;
 }
 
 // The Speech Recognition menu: the gate in front of the recognizer.  A slider
@@ -1669,6 +1715,8 @@ static void flash_from_speech(int key) {
   [menu addItem:[NSMenuItem separatorItem]];
   self.whistleVolumeSlider.doubleValue = whistle_gain;
   [menu addItem:[self whistleVolumeMenuItem]];
+  self.vocoderVolumeSlider.doubleValue = vocoder_gain;
+  [menu addItem:[self vocoderVolumeMenuItem]];
 }
 
 // Jammer only reads the keyboard while it's frontmost, so that's exactly how
@@ -1794,6 +1842,9 @@ int main(int argc, const char** argv) {
     if ([defaults objectForKey:@"whistleGain"]) {
       whistle_gain = [defaults doubleForKey:@"whistleGain"];
     }
+    if ([defaults objectForKey:@"vocoderGain"]) {
+      vocoder_gain = [defaults doubleForKey:@"vocoderGain"];
+    }
 
     AudioDeviceID mic = whistle_device_for_uid(whistle_input.UTF8String);
     double mic_rate = mic != kAudioObjectUnknown ? whistle_device_rate(mic) : 0;
@@ -1813,6 +1864,7 @@ int main(int argc, const char** argv) {
     audio_mix_hook = whistle_mix;
     kick_hook = kick_duck_hit;
     breath_hook = breath_set;
+    music_hook = music_set;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
     speech_start(synth_sample_rate);
 

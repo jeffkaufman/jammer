@@ -65,6 +65,22 @@ enum {
   BREATH_FX_GUIRO = 1 << 3,
   BREATH_FX_WASHBOARD = 1 << 4,
   BREATH_FX_GUIRA = 1 << 5,
+  // The Breath Gate's build-and-drop voices (macapi.h): a noise riser and a
+  // wobble bass.  Its snare roll is the drum channel's, played by
+  // jammermidilib.h, and has no bit.
+  BREATH_FX_RISER = 1 << 6,
+  BREATH_FX_WOBBLE = 1 << 7,
+};
+
+// The trance gate's patterns on a drone, from its DOUB and PRE UNIQ flags:
+// 8ths, 16ths, and the syncopated 1 . 3 4 of the two together -- or in jig
+// time, a beat's three 8ths, its six 16ths, and 1 . 3 4 . 6.  The Mac's
+// audio chops the drone's channel to them (macapi.h).
+enum {
+  TRANCE_GATE_NONE,
+  TRANCE_GATE_8THS,
+  TRANCE_GATE_16THS,
+  TRANCE_GATE_SYNCOPATED,
 };
 
 /* endpoints */
@@ -95,11 +111,31 @@ enum {
 #define ENDPOINT_DRONE_BASS_2 12
 #define ENDPOINT_DRONE_CHORD_2 13
 // The Breath Gate: a drone chord that sounds only while you blow (the Mac's
-// audio gates its channel), or, on one of its own voices, percussion the
-// breath plays by moving.  A drone like the others otherwise.  The Mac's
+// audio gates its channel), or instead any of its own voices together.  A drone like the others otherwise.  The Mac's
 // alone: on the Pi nothing switches it on.
 #define ENDPOINT_BREATH 14
 #define N_ENDPOINTS (ENDPOINT_BREATH+1)
+
+// What the Mac's own sounds need to know about the music, from
+// jammermidilib.h's music_hook every tick: the Breath Gate's wobble plays the
+// bass note, the whistle's vocoder the chord, and the trance gate and the
+// wobble keep to the beat.
+typedef struct {
+  int bass_note;     // MIDI note, 24-35
+  int chord_root;    // MIDI note, 24-35
+  int chord_third;   // semitones over the root, or 0 if nobody has said
+  int chord_fifth;   // semitones over the root
+  // The beat the last pedal hit started, on now()'s clock, and how long it
+  // is; 0 if there's no tempo.  A beat is a pedal hit.
+  uint64_t beat_start_ns;
+  uint64_t beat_ns;
+  unsigned char trance_gate[N_ENDPOINTS];  // TRANCE_GATE_*
+  bool jig;  // each beat in three rather than two
+  // Where the trance gate's 16ths start, in 72nds of a beat: four, or six
+  // in jig time.
+  unsigned char gate_steps[6];
+  int n_gate_steps;
+} MusicState;
 
 /* midi values */
 #define MIDI_OFF 0x80

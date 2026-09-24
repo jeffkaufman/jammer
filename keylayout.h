@@ -44,7 +44,7 @@ enum {
   GLOBAL_JIG, GLOBAL_DRUM_CHOOSES, GLOBAL_DRUM_CHOOSES_SOME,
   GLOBAL_ALL_DRUMS_DOWNBEAT, GLOBAL_FADED, GLOBAL_SPEECH_PICKS,
   GLOBAL_SPEECH_COMMANDS, GLOBAL_KICK_DUCK, GLOBAL_BASS_SWEEP,
-  GLOBAL_TREBLE_SWEEP, GLOBAL_PEAK_SWEEP,
+  GLOBAL_TREBLE_SWEEP, GLOBAL_PEAK_SWEEP, GLOBAL_VOICE_LEAD,
 };
 
 // Colour families, so related keys read as a group.
@@ -166,8 +166,10 @@ static const Key KEYS[] = {
    -1, NOLABEL, 1, 11, 1},
   {kVK_ANSI_Equal, '=', 0, "=", "+", "VOL+", GROUP_MODIFIER, LIT_VOLUME, 1,
    NOLABEL, 1, 12, 1},
-  // delete used to arm three-digit manual volume entry.
-  {-1, 0, 0, "del", FILLER, 1, 13, 2},
+  // Voice leading, for all the drones at once, so none jump while the rest
+  // glide.  delete used to arm three-digit manual volume entry.
+  {kVK_Delete, VOICE_LEAD_TOGGLE, 0, "del", NULL, "VOICE\nLEAD",
+   GROUP_GLOBAL, LIT_GLOBAL_FLAG, GLOBAL_VOICE_LEAD, NOLABEL, 1, 13, 2},
 
   // ---- qwerty row: turn endpoints on and off, shift to select one ---------
   {kVK_Tab, TAB, '`', "tab", "d", "Drum\nKit", GROUP_TOGGLE, LIT_EP_ON,

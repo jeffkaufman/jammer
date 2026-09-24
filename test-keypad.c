@@ -436,8 +436,8 @@ static void test_breath_gate() {
   CHECK(key && key->lit == LIT_EP_ON && key->arg == ENDPOINT_BREATH,
         "` isn't the Breath Gate");
   CHECK(is_drone(ENDPOINT_BREATH) && c->chord[ENDPOINT_BREATH] &&
-        c->voices[ENDPOINT_BREATH] == 89,
-        "the Breath Gate should start as a drone chord on Warm Pad");
+        c->voices[ENDPOINT_BREATH] == 94,
+        "the Breath Gate should start as a drone chord on Halo Pad");
 
   press("`");
   CHECK(c->on[ENDPOINT_BREATH] && c->selected_endpoint == ENDPOINT_BREATH,
@@ -463,47 +463,73 @@ static void test_breath_gate() {
   CHECK(current_note[ENDPOINT_BREATH] != -1,
         "the next breath didn't strike it again");
 
-  const char* caps[] = {"B", "N", "M"};
-  unsigned fxs[] = {BREATH_FX_GUIRA, BREATH_FX_GUIRO, BREATH_FX_WASHBOARD};
-  const char* labels[] = {"Guira", "Guiro", "Wash\nboard"};
-  for (int i = 0; i < 3; i++) {
+  // Its own voices are layers, over the pad: each on and off by itself.
+  const char* caps[] = {"B", "N", "M", "Z", "G"};
+  unsigned fxs[] = {BREATH_FX_GUIRA, BREATH_FX_GUIRO, BREATH_FX_WASHBOARD,
+                    BREATH_FX_RISER, BREATH_FX_WOBBLE};
+  const char* labels[] = {"Guira", "Guiro", "Wash\nboard", "Noise\nRiser",
+                          "Wobble"};
+  for (int i = 0; i < 5; i++) {
     const Key* k = key_for_cap(caps[i]);
     CHECK(!drone_key_is_dead(k), "%s should be alive on the Breath Gate",
           caps[i]);
     CHECK(strcmp(key_current_label(k), labels[i]) == 0,
           "%s should show %s on the Breath Gate", caps[i], labels[i]);
     press(caps[i]);
-    CHECK(told_fx == fxs[i] && lit(caps[i]),
-          "%s didn't have the Mac play its percussion", caps[i]);
-    CHECK(current_note[ENDPOINT_BREATH] == -1,
-          "%s left the Breath Gate holding a chord", caps[i]);
+    CHECK((told_fx & fxs[i]) && lit(caps[i]), "%s didn't switch on", caps[i]);
+    CHECK(c->voices[ENDPOINT_BREATH] == 94 && lit("C") &&
+          current_note[ENDPOINT_BREATH] != -1,
+          "%s shouldn't have stopped the pad", caps[i]);
+    press(caps[i]);
+    CHECK(!(told_fx & fxs[i]) && !lit(caps[i]),
+          "%s again didn't switch it off", caps[i]);
   }
+
+  press("Z");
+  press("G");
+  press("A");
+  CHECK(told_fx == (BREATH_FX_RISER | BREATH_FX_WOBBLE) &&
+        lit("Z") && lit("G") && lit("A") && lit("C") &&
+        c->breath_layers == (BREATH_LAYER_RISER | BREATH_LAYER_WOBBLE |
+                             BREATH_LAYER_SNARE_ROLL),
+        "the riser, wobble and snare roll should all be on, over the pad");
+
+  // The pad's key again lets go of the pad, leaving the layers.
+  press("C");
+  CHECK(c->voices[ENDPOINT_BREATH] == VOICE_BREATH_NO_PAD && !lit("C") &&
+        current_note[ENDPOINT_BREATH] == -1 &&
+        told_fx == (BREATH_FX_RISER | BREATH_FX_WOBBLE),
+        "C again should let go of the pad and only the pad");
   update_bass(/*force_refresh=*/true);
   CHECK(current_note[ENDPOINT_BREATH] == -1,
-        "a chord change shouldn't play notes on a percussion voice");
+        "a chord change shouldn't play notes with no pad");
   press("`");
-  CHECK(told_fx == 0, "switching it off didn't stop its percussion");
+  CHECK(told_fx == 0, "switching it off didn't stop its layers");
   press("`");
-  CHECK(told_fx == BREATH_FX_WASHBOARD, "switching it back on didn't");
+  CHECK(told_fx == (BREATH_FX_RISER | BREATH_FX_WOBBLE),
+        "switching it back on didn't");
 
-  // Back on a pad, it holds the chord again.
-  press("Z");
-  CHECK(c->voices[ENDPOINT_BREATH] == 89 && told_fx == 0 &&
-        current_note[ENDPOINT_BREATH] != -1, "Z didn't put Warm Pad back");
+  // A pad again, and the layers stay.
+  press("X");
+  CHECK(c->voices[ENDPOINT_BREATH] == 90 && lit("X") && lit("Z") &&
+        current_note[ENDPOINT_BREATH] != -1,
+        "X should bring a pad back under the layers");
   handle_cc(CC_BREATH, 0);
 
   // The rest of the voice keys are the drones' pads, as on any drone.
-  const char* pads[] = {"A", "S", "D", "F", "G", "H", "Z", "X", "C", "V"};
-  for (int i = 0; i < 10; i++) {
+  const char* pads[] = {"S", "D", "F", "H", "X", "C", "V"};
+  for (int i = 0; i < 7; i++) {
     const Key* k = key_for_cap(pads[i]);
     CHECK(breath_voice_for_note(k->note) < 0 &&
           drone_voice_for_note(k->note) >= 0,
           "%s should pick a pad on the Breath Gate", pads[i]);
   }
 
-  // The other drones still leave B, N and M empty.
+  // The other drones still leave B, N and M empty, and keep all ten pads.
   select_ep("9");
   CHECK(drone_key_is_dead(key_for_cap("B")), "B should be empty on Dc2");
+  CHECK(strcmp(key_current_label(key_for_cap("A")), "Church\nOrgan") == 0,
+        "A should still be a pad on Dc2");
   breath_hook = NULL;
   full_reset();
 }
@@ -657,8 +683,10 @@ static void test_whistle() {
 
   // Every voice key resolves to a preset that exists.
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
-    CHECK(whistle_engine_voice[i] > 0,
-          "no preset for whistle voice %s", WHISTLE_VOICES[i].preset);
+    CHECK(whistle_engine_voice[i] > 0 ||
+          (!WHISTLE_VOICES[i].preset &&
+           whistle_engine_voice[i] == WHISTLE_VOCODER),
+          "no preset for whistle voice %s", WHISTLE_VOICES[i].label);
     const Key* key = key_for_cap_note(WHISTLE_VOICES[i].note);
     CHECK(key != NULL, "no key sends %d for %s", WHISTLE_VOICES[i].note,
           WHISTLE_VOICES[i].preset);
@@ -691,12 +719,24 @@ static void test_whistle() {
   CHECK(!key_is_selected_endpoint(key_for_cap("R")),
         "no endpoint is selected while the whistle is");
 
-  // The three voice keys the whistle doesn't use do nothing, and say so.
-  strike("B", false);
-  CHECK(whistle_voice == 2, "B should have done nothing");
-  CHECK(c->voices[ENDPOINT_FLEX] == flex_voice, "B reached the endpoint");
-  CHECK(whistle_key_is_dead(key_for_cap("B")), "B should draw as dead");
+  // The two voice keys the whistle doesn't use do nothing, and say so.
+  strike("N", false);
+  CHECK(whistle_voice == 2, "N should have done nothing");
+  CHECK(c->voices[ENDPOINT_FLEX] == flex_voice, "N reached the endpoint");
+  CHECK(whistle_key_is_dead(key_for_cap("N")), "N should draw as dead");
   CHECK(!whistle_key_is_dead(key_for_cap("D")), "D shouldn't");
+
+  // B is the vocoder, which the engine doesn't know about: it keeps playing
+  // its last voice underneath, for the meters, and the audio is told to
+  // vocode instead.
+  strike("B", false);
+  CHECK(strcmp(WHISTLE_VOICES[whistle_voice].label, "Vocoder") == 0 &&
+        lit("B"), "B didn't pick the vocoder");
+  CHECK(atomic_load(&whistle_pub_vocoder) &&
+        atomic_load(&whistle_pub_voice) == WHISTLE_VOCODER,
+        "the audio wasn't told to vocode");
+  strike("D", false);
+  CHECK(!atomic_load(&whistle_pub_vocoder), "D didn't stop the vocoder");
 
   // Octave and volume act on the whistle, within the engine's limits.
   int flex_octave = c->octave_deltas[ENDPOINT_FLEX];
@@ -1053,11 +1093,13 @@ static void test_spoken_presses() {
   // it: a name that's the start of another has to wait to see whether it's
   // going to grow, and saying the longer one with a pause in it presses the
   // shorter.
-  for (int state = 0; state < 4; state++) {
-    static const char* STATES[] = {"flex", "drum", "drone", "whistle"};
+  for (int state = 0; state < 5; state++) {
+    static const char* STATES[] = {"flex", "drum", "drone", "whistle",
+                                   "breath gate"};
     whistle_reset();
     c->selected_endpoint = state == 1 ? ENDPOINT_DRUM :
-                           state == 2 ? ENDPOINT_DRONE_BASS : ENDPOINT_FLEX;
+                           state == 2 ? ENDPOINT_DRONE_BASS :
+                           state == 4 ? ENDPOINT_BREATH : ENDPOINT_FLEX;
     if (state == 3) whistle_selected = true;
     n = key_spoken_names(names, keys, 256);
     for (int j = 0; j < n; j++) {
@@ -1238,10 +1280,11 @@ static void test_speech_dictionary() {
   full_reset();
   static char known[1024][SW_NAME_MAX];
   int n_known = 0;
-  for (int state = 0; state < 4; state++) {
+  for (int state = 0; state < 5; state++) {
     whistle_reset();
     c->selected_endpoint = state == 1 ? ENDPOINT_DRUM :
-                           state == 2 ? ENDPOINT_DRONE_BASS : ENDPOINT_FLEX;
+                           state == 2 ? ENDPOINT_DRONE_BASS :
+                           state == 4 ? ENDPOINT_BREATH : ENDPOINT_FLEX;
     if (state == 3) whistle_selected = true;
     static char names[256][SW_NAME_MAX];
     static int keys[256];
@@ -1418,6 +1461,490 @@ static void test_nashville_chords() {
   press("esc");
 }
 
+// ---------------------------------------------------------------------------
+// Builds and drops
+// ---------------------------------------------------------------------------
+
+#define MAX_TAPPED 1024
+static struct { int action, note, velocity, channel; } tapped[MAX_TAPPED];
+static int n_tapped;
+
+static void tap_midi(int action, int note, int velocity, int channel) {
+  if (n_tapped >= MAX_TAPPED) return;
+  tapped[n_tapped].action = action;
+  tapped[n_tapped].note = note;
+  tapped[n_tapped].velocity = velocity;
+  tapped[n_tapped].channel = channel;
+  n_tapped++;
+}
+
+// How many of this were sent; -1 for any note.
+static int count_tapped(int action, int note, int channel) {
+  int n = 0;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].action == action && tapped[i].channel == channel &&
+        (note < 0 || tapped[i].note == note)) {
+      n++;
+    }
+  }
+  return n;
+}
+
+// VEL is VOICE LEAD on the drones: the notes a chord shares with the last are
+// held, and the rest move the shortest way.
+// Notes sent on a drone's voice channels, where a voice-led drone plays.
+static int count_voices(int action, int note, int endpoint) {
+  int n = 0;
+  for (int k = 0; k < VOICE_CHANNELS_PER_DRONE; k++) {
+    n += count_tapped(action, note, voice_channel_base(endpoint) + k);
+  }
+  return n;
+}
+
+// VEL is VOICE LEAD on the drones: the notes a chord shares with the last are
+// held, and the rest move the shortest way, each voice on a channel of its
+// own.
+static void test_voice_lead() {
+  full_reset();
+  midi_tap = tap_midi;
+  CHECK(strcmp(key_current_label(key_for_cap("del")), "VOICE\nLEAD") == 0,
+        "delete should be VOICE LEAD");
+  select_ep("O");
+  CHECK(strcmp(key_current_label(key_for_cap(".")), "VEL") == 0,
+        ". should be VEL, even on a drone");
+
+  press("del");
+  CHECK(voice_lead_on && lit("del") && !lit("."), "delete didn't turn it on");
+  press("F5");  // the feet choose the chord
+  n_tapped = 0;
+  press("O");
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 26 &&
+        led_notes[ENDPOINT_DRONE_CHORD][1] == 33,
+        "D should come in as it would without voice leading");
+  CHECK(count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 2 &&
+        count_tapped(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0,
+        "a voice-led drone's notes should be on its voice channels");
+
+  // To the IV: the D is common, and the A steps down to the G.  On the drone
+  // they sound three octaves up -- two for a chord, one for an organ.
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_PEDAL_4, 100);
+  CHECK(chord_note == 31, "pedal 4 should be the IV");
+  CHECK(count_tapped(MIDI_CC, 123, ENDPOINT_DRONE_CHORD) == 0,
+        "voice leading shouldn't stop every note");
+  CHECK(count_voices(MIDI_OFF, 26 + 36, ENDPOINT_DRONE_CHORD) == 0 &&
+        count_voices(MIDI_ON, 26 + 36, ENDPOINT_DRONE_CHORD) == 0,
+        "the common D should be held, not struck again");
+  CHECK(count_voices(MIDI_OFF, 33 + 36, ENDPOINT_DRONE_CHORD) == 1 &&
+        count_voices(MIDI_ON, 31 + 36, ENDPOINT_DRONE_CHORD) == 1,
+        "the A should have stepped down to the G");
+  CHECK(count_tapped(MIDI_ON, 31 + 36, voice_channel_base(ENDPOINT_DRONE_CHORD)
+                     + 1) == 1, "the G should take the A's channel");
+
+  // Without it, the whole chord is struck afresh.
+  press("del");
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_PEDAL_3, 100);
+  CHECK(count_tapped(MIDI_CC, 123, ENDPOINT_DRONE_CHORD) >= 1,
+        "without voice leading the chord should be let go of");
+  press("del");
+
+  // A spoken number: the voice-led drone starts gliding the moment it's
+  // heard, arriving on the beat it's due, and when the chord is made there
+  // it already has it.
+  press("F3");
+  CHECK(speech_chooses_notes, "F3 should have speech choosing");
+  nashville_picks_chord(1);
+  // Struck afresh, so its voices are in a known order.
+  drone_endpoint_off(ENDPOINT_DRONE_CHORD);
+  update_bass(/*force_refresh=*/true);
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 26 &&
+        led_notes[ENDPOINT_DRONE_CHORD][1] == 33, "the I should be D and A");
+  // Heard ahead of its beat: nothing moves until the half beat before it,
+  // and then the glide ends on the beat, as the chord is made.
+  n_tapped = 0;
+  uint64_t beat_due = now() + 60 * NS_PER_SEC / 116;
+  nashville_leads(5, beat_due);
+  advance_lead_schedule();
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 26 &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][0] == 0 &&
+        led_scheduled_number == 5,
+        "the glide shouldn't start until half a beat before the chord");
+  update_bass(/*force_refresh=*/true);
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 26 &&
+        count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0,
+        "until the glide starts the drone is on the old chord");
+  led_scheduled_start = now();  // as if its time had come
+  advance_lead_schedule();
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 28 &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][0] == beat_due &&
+        led_scheduled_number == 0,
+        "the glide should end on the chord's beat");
+  nashville_picks_chord(5);
+  CHECK(count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0 &&
+        led_pending_number == 0, "the chord made there, nothing struck");
+  nashville_picks_chord(1);
+  drone_endpoint_off(ENDPOINT_DRONE_CHORD);
+  update_bass(/*force_refresh=*/true);
+
+  // Glides over half a beat, at 116 BPM with no pedals going, when there's
+  // no beat to wait for.
+  n_tapped = 0;
+  uint64_t heard = now();
+  nashville_leads(5, 0);  // from the I's D and A, the D glides up to the E
+  uint64_t glide_ns = (60 * NS_PER_SEC / 116) / 2;
+  CHECK(chord_note == 26, "hearing it shouldn't make the chord yet");
+  CHECK(count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0 &&
+        count_voices(MIDI_OFF, -1, ENDPOINT_DRONE_CHORD) == 0,
+        "gliding voices shouldn't be struck again");
+  uint64_t end = led_glide_end[ENDPOINT_DRONE_CHORD][0];
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 28 &&
+        led_notes[ENDPOINT_DRONE_CHORD][1] == 33 &&
+        end >= heard + glide_ns && end < now() + glide_ns + 1000000 &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][1] == 0,
+        "the D should be gliding to the E over half a beat, the A staying");
+
+  // Something striking the drones again mid-glide -- a breath, Pulse --
+  // mustn't pull it back to the old chord.
+  update_bass(/*force_refresh=*/true);
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 28 &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][0] == end &&
+        count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0,
+        "a refresh mid-glide pulled the drone back");
+
+  // The chord made on its beat, mid-glide: nothing struck, and it glides on.
+  nashville_picks_chord(5);
+  CHECK(chord_note == 33 && led_pending_number == 0,
+        "the V should be made on the beat");
+  CHECK(count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0 &&
+        count_voices(MIDI_OFF, -1, ENDPOINT_DRONE_CHORD) == 0 &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][0] == end,
+        "the drone, on its way, shouldn't be struck again");
+
+  // Made with no warning -- no beat to wait for -- it glides all the same.
+  nashville_picks_chord(4);  // the IV: E to D, A to G
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD][0] == 26 &&
+        led_notes[ENDPOINT_DRONE_CHORD][1] == 31 &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][0] > now() &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][1] > now() &&
+        count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0,
+        "a chord made at once should glide too");
+
+  // And the glide gets there.
+  led_glide_end[ENDPOINT_DRONE_CHORD][0] = now() + 20 * 1000000ULL;
+  led_glide_end[ENDPOINT_DRONE_CHORD][1] = now() + 20 * 1000000ULL;
+  advance_glides();
+  double early = led_bend[ENDPOINT_DRONE_CHORD][1];
+  while (now() < led_glide_end[ENDPOINT_DRONE_CHORD][1] + 1000000) {
+    advance_glides();
+    usleep(1000);
+  }
+  advance_glides();
+  CHECK(early > -2 && led_bend[ENDPOINT_DRONE_CHORD][1] == -2 &&
+        led_glide_end[ENDPOINT_DRONE_CHORD][1] == 0,
+        "the A should end two semitones down, at the G: %.2f",
+        led_bend[ENDPOINT_DRONE_CHORD][1]);
+  midi_tap = NULL;
+  full_reset();
+}
+
+// Dc on, then VOICE LEAD, then number recognition: the first number glides,
+// not just the ones after it.  And it's every drone or none.
+static void test_voice_lead_first_number() {
+  full_reset();
+  midi_tap = tap_midi;
+  press("O");                 // the drone chord, sounding, not voice-led
+  CHECK(current_note[ENDPOINT_DRONE_CHORD] != -1, "Dc should be sounding");
+  n_tapped = 0;
+  press("del");               // VOICE LEAD
+  CHECK(count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 2 &&
+        led_notes[ENDPOINT_DRONE_CHORD][0] != -1,
+        "switching VOICE LEAD on should move the chord to the voice channels");
+  CHECK(led_notes[ENDPOINT_DRONE_CHORD_2][0] == -1,
+        "a drone that's off has nothing to move");
+  press("F3");
+  n_tapped = 0;
+  nashville_leads(4, 0);
+  CHECK(count_voices(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 0 &&
+        (led_glide_end[ENDPOINT_DRONE_CHORD][0] > now() ||
+         led_glide_end[ENDPOINT_DRONE_CHORD][1] > now()),
+        "the first number should glide");
+
+  // And off again, it's back on its own channel.
+  n_tapped = 0;
+  press("del");
+  CHECK(count_tapped(MIDI_ON, -1, ENDPOINT_DRONE_CHORD) == 2 &&
+        led_notes[ENDPOINT_DRONE_CHORD][0] == -1,
+        "switching VOICE LEAD off should put the chord back on Dc's channel");
+  midi_tap = NULL;
+  full_reset();
+}
+
+// A voice-led drone's voice channels have to sound like the drone: its
+// program, its volume, its fade.  A real synth, since the rest of the tests
+// don't have one.
+static void test_voice_channels_reach_the_synth() {
+  if (access("FluidR3_GM.sf2", R_OK) != 0) {
+    printf("no soundfont here, skipping the voice channel check\n");
+    return;
+  }
+  fl_settings = new_fluid_settings();
+  fluid_settings_setint(fl_settings, "synth.midi-channels", 32);
+  fluid_settings_setstr(fl_settings, "synth.midi-bank-select", "gm");
+  fl_synth = new_fluid_synth(fl_settings);
+  fl_sfont_id = fluid_synth_sfload(fl_synth, "FluidR3_GM.sf2", 1);
+  if (fl_sfont_id == FLUID_FAILED) return;
+
+  full_reset();
+  select_ep("O");
+  press("C");  // Halo Pad
+  press("del");
+  press("-");
+  int base = voice_channel_base(ENDPOINT_DRONE_CHORD);
+  int sfont, bank, program, drone_program, volume, drone_volume;
+  fluid_synth_get_program(fl_synth, ENDPOINT_DRONE_CHORD, &sfont, &bank,
+                          &drone_program);
+  fluid_synth_get_cc(fl_synth, ENDPOINT_DRONE_CHORD, CC_07, &drone_volume);
+  for (int k = 0; k < VOICE_CHANNELS_PER_DRONE; k++) {
+    fluid_synth_get_program(fl_synth, base + k, &sfont, &bank, &program);
+    fluid_synth_get_cc(fl_synth, base + k, CC_07, &volume);
+    CHECK(program == drone_program && drone_program == 94,
+          "voice channel %d is on program %d, not the drone's %d", base + k,
+          program, drone_program);
+    CHECK(volume == drone_volume,
+          "voice channel %d is at volume %d, not the drone's %d", base + k,
+          volume, drone_volume);
+  }
+
+  // And it's heard.
+  press("O");
+  static float left[4800], right[4800];
+  fluid_synth_write_float(fl_synth, 4800, left, 0, 1, right, 0, 1);
+  double sum = 0;
+  for (int i = 0; i < 4800; i++) sum += left[i] * left[i];
+  CHECK(sqrt(sum / 4800) > 1e-4, "a voice-led drone made no sound");
+
+  full_reset();
+  delete_fluid_synth(fl_synth);
+  delete_fluid_settings(fl_settings);
+  fl_synth = NULL;
+  fl_settings = NULL;
+}
+
+// A drone's II and Q are its trance gate.
+static MusicState heard_music;
+static void record_music(const MusicState* m) { heard_music = *m; }
+
+static void test_trance_gate() {
+  full_reset();
+  music_hook = record_music;
+  select_ep("O");
+  publish_music();
+  CHECK(heard_music.trance_gate[ENDPOINT_DRONE_CHORD] == TRANCE_GATE_NONE,
+        "no gate to start with");
+  press("P");
+  publish_music();
+  CHECK(heard_music.trance_gate[ENDPOINT_DRONE_CHORD] == TRANCE_GATE_8THS,
+        "II should gate in 8ths");
+  press("[");
+  publish_music();
+  CHECK(heard_music.trance_gate[ENDPOINT_DRONE_CHORD] ==
+        TRANCE_GATE_SYNCOPATED, "II and Q should gate 1 . 3 4");
+  press("P");
+  publish_music();
+  CHECK(heard_music.trance_gate[ENDPOINT_DRONE_CHORD] == TRANCE_GATE_16THS,
+        "Q should gate in 16ths");
+  select_ep("W");
+  press("P");
+  publish_music();
+  CHECK(heard_music.trance_gate[ENDPOINT_FOOTBASS] == TRANCE_GATE_NONE,
+        "only the drones gate");
+  CHECK(heard_music.bass_note == active_note(), "the bass note wasn't told");
+
+  // Straight: the foot bass's grid, 16ths at 0, 18, 35 and 54 of 72.
+  const unsigned char* st = heard_music.gate_steps;
+  CHECK(heard_music.n_gate_steps == 4 && st[0] == 0 && st[1] == 18 &&
+        st[2] == 35 && st[3] == 54,
+        "the straight gate isn't on the bass's grid");
+  int ns = heard_music.n_gate_steps;
+#define GATE(p, at) trance_gate_open(p, (at) / 72.0, st, ns)
+  CHECK(GATE(TRANCE_GATE_8THS, 5) && !GATE(TRANCE_GATE_8THS, 20) &&
+        GATE(TRANCE_GATE_8THS, 36) && !GATE(TRANCE_GATE_8THS, 60), "8ths");
+  CHECK(!GATE(TRANCE_GATE_8THS, 34.5) && GATE(TRANCE_GATE_8THS, 35.5),
+        "the gate should open on the upbeat when the foot bass plays it");
+  CHECK(GATE(TRANCE_GATE_16THS, 3) && !GATE(TRANCE_GATE_16THS, 15), "16ths");
+  CHECK(GATE(TRANCE_GATE_SYNCOPATED, 5) && !GATE(TRANCE_GATE_SYNCOPATED, 20) &&
+        GATE(TRANCE_GATE_SYNCOPATED, 38) && GATE(TRANCE_GATE_SYNCOPATED, 57) &&
+        !GATE(TRANCE_GATE_SYNCOPATED, 70), "1 . 3 4");
+  CHECK(trance_gate_open(TRANCE_GATE_16THS, -1, st, ns),
+        "outside a beat the pad should just hold");
+
+  // In jig time, the three 8ths where the foot bass plays them -- 0, 21 and
+  // 45, not an even 0, 24, 48 -- and six 16ths and 1 . 3 4 . 6 on those.
+  press("0");
+  publish_music();
+  CHECK(heard_music.jig, "jig time wasn't told");
+  CHECK(heard_music.n_gate_steps == 6 && st[0] == 0 && st[2] == 21 &&
+        st[4] == 45, "the jig gate isn't on the bass's grid");
+  ns = heard_music.n_gate_steps;
+  for (int s = 0; s < N_SUBBEATS; s++) {
+    bool bass = s == 0 || preup(s) || upbeat(s);
+    bool opens = GATE(TRANCE_GATE_8THS, s + 0.5) &&
+                 (s == 0 || !GATE(TRANCE_GATE_8THS, s - 0.5));
+    CHECK(bass == opens, "jig 8ths: subbeat %d, %s", s,
+          bass ? "the bass plays but the gate doesn't open"
+               : "the gate opens where the bass doesn't play");
+  }
+  const bool JIG_SYNC[6] = {true, false, true, true, false, true};
+  for (int step = 0; step < 6; step++) {
+    CHECK(GATE(TRANCE_GATE_SYNCOPATED, st[step] + 0.5) == JIG_SYNC[step],
+          "jig 1 . 3 4 . 6, step %d", step + 1);
+  }
+#undef GATE
+  press("0");
+
+  // Outside the beat the last pedal started is outside any beat.
+  atomic_store(&audio_beat_start_ns, 1000);
+  atomic_store(&audio_beat_ns, 500);
+  CHECK(fabs(audio_beat_phase(1250) - 0.5) < 1e-9 &&
+        audio_beat_phase(1600) < 0 && audio_beat_phase(900) < 0,
+        "the gate should only run for the beat the pedal started");
+  atomic_store(&audio_beat_start_ns, 0);
+  atomic_store(&audio_beat_ns, 0);
+  music_hook = NULL;
+  full_reset();
+}
+
+// The Snare Roll: starts with the breath, speeds up with it, stops with it.
+static void test_snare_roll() {
+  full_reset();
+  midi_tap = tap_midi;
+  press("`");
+  press("A");
+  n_tapped = 0;
+  handle_cc(CC_BREATH, 60);
+  breath_roll_tick();
+  CHECK(count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM) == 1,
+        "a breath should start the roll at once");
+  breath_roll_tick();
+  CHECK(count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM) == 1,
+        "only one snare a slot");
+
+  // Blowing hard: 32nds, at 116 BPM with no pedals, one every 65ms.
+  handle_cc(CC_BREATH, 110);
+  uint64_t until = now() + 300 * 1000000ULL;
+  while (now() < until) {
+    breath_roll_tick();
+    usleep(1000);
+  }
+  int hits = count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM);
+  CHECK(hits >= 5 && hits <= 7, "%d snares in 300ms of 32nds", hits);
+
+  handle_cc(CC_BREATH, 0);
+  until = now() + 150 * 1000000ULL;
+  while (now() < until) {
+    breath_roll_tick();
+    usleep(1000);
+  }
+  CHECK(count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM) == hits,
+        "the roll should stop with the breath");
+  midi_tap = NULL;
+  full_reset();
+}
+
+// The Breath Gate's synthesized voices, rendered off a simulated clock: each
+// sounds while you blow and is gone within a moment of stopping.
+static double sim_ns = 1e9;
+static float build_l[64], build_r[64];
+
+static double render_builds(unsigned fx, int breath, double seconds) {
+  const double sr = 48000;
+  const int len = 64;
+  breath_set(breath, fx);
+  double sum = 0;
+  long n = 0;
+  int blocks = (int)(seconds * sr / len);
+  for (int b = 0; b < blocks; b++) {
+    audio_block_ns = (uint64_t)sim_ns;
+    memset(build_l, 0, sizeof(build_l));
+    memset(build_r, 0, sizeof(build_r));
+    build_follow_breath(breath_blown(breath));
+    play_breath_instruments(build_l, build_r, len, sr);
+    for (int i = 0; i < len; i++) {
+      if (!isfinite(build_l[i])) return NAN;
+      sum += build_l[i] * build_l[i];
+      n++;
+    }
+    sim_ns += len * 1e9 / sr;
+  }
+  return n ? sqrt(sum / n) : 0;
+}
+
+static void test_build_voices() {
+  const struct { unsigned fx; const char* name; } VOICES[] = {
+    {BREATH_FX_RISER, "riser"}, {BREATH_FX_WOBBLE, "wobble"},
+  };
+  for (int v = 0; v < 2; v++) {
+    render_builds(VOICES[v].fx, 0, 0.1);
+    double on = render_builds(VOICES[v].fx, 80, 0.5);
+    CHECK(on > 0.005 && on < 1, "%s: %.4f while blowing", VOICES[v].name, on);
+    render_builds(VOICES[v].fx, 0, 0.05);
+    double off = render_builds(VOICES[v].fx, 0, 0.1);
+    CHECK(off < 1e-4, "%s: %.5f after the breath stopped", VOICES[v].name,
+          off);
+  }
+  // Both at once.
+  double both = render_builds(BREATH_FX_RISER | BREATH_FX_WOBBLE, 80, 0.5);
+  CHECK(both > 0.005 && both < 1, "riser and wobble together: %.4f", both);
+  render_builds(0, 0, 0.1);
+  breath_set(0, 0);
+}
+
+// The vocoder: the chord, shaped by the microphone, and nothing when the
+// microphone is quiet.
+static void test_vocoder() {
+  vocoder_prepare(48000);
+  double hz[VOCODER_VOICES], weight[VOCODER_VOICES];
+  int n = vocoder_chord(hz, weight);
+  CHECK(n >= 2 * VOCODER_OCTAVES, "the vocoder's chord has %d notes", n);
+
+  // Shepard: a higher chord leans on its lower octaves, so where the weight
+  // sits in pitch doesn't follow the chord up.
+  double centre[2];
+  for (int k = 0; k < 2; k++) {
+    atomic_store(&audio_chord_root, k == 0 ? 24 : 35);  // C, then B
+    int m = vocoder_chord(hz, weight);
+    double sum = 0, total = 0;
+    for (int i = 0; i < m; i++) {
+      sum += weight[i] * log2(hz[i]);
+      total += weight[i];
+    }
+    CHECK(fabs(total - 1) < 1e-9, "the vocoder's weights sum to %f", total);
+    centre[k] = sum;
+  }
+  CHECK(fabs(centre[1] - centre[0]) < 0.15,
+        "C to B moved the vocoder's register %.2f octaves",
+        centre[1] - centre[0]);
+  atomic_store(&audio_chord_root, 26);
+  n = vocoder_chord(hz, weight);
+  double quiet = 0, loud = 0;
+  for (int i = 0; i < 48000; i++) {
+    float out = vocoder_process(0, hz, weight, n, 1);
+    if (i > 24000) quiet += out * out;
+  }
+  // A held note, which shouldn't be taken for the room however long it goes.
+  for (int i = 0; i < 48000 * 4; i++) {
+    float in = (float)(0.1 * sin(2 * M_PI * 440 * i / 48000.0));
+    float out = vocoder_process(in, hz, weight, n, 1);
+    CHECK(isfinite(out), "the vocoder blew up");
+    if (i > 48000 * 3) loud += out * out;
+  }
+  CHECK(quiet == 0, "the vocoder made a sound from silence");
+  CHECK(sqrt(loud / 48000) > 0.01,
+        "the vocoder was too quiet four seconds into a note: %.4f",
+        sqrt(loud / 48000));
+}
+
 int main() {
   jml_setup();
   // The whistle's key handling needs its state and its voice table, but no
@@ -1437,6 +1964,13 @@ int main() {
   test_kick_duck();
   test_breath_fx();
   test_breath_gate();
+  test_voice_lead();
+  test_voice_lead_first_number();
+  test_voice_channels_reach_the_synth();
+  test_trance_gate();
+  test_snare_roll();
+  test_build_voices();
+  test_vocoder();
   test_percussion_bank_reaches_the_synth();
   test_extra_footbasses();
   test_drones();

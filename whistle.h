@@ -38,18 +38,22 @@
 // The voices
 //
 // Ten of whistle-synth's presets, on the ten voice keys that the drum kits
-// don't use.  Looked up by name at startup rather than by index: the presets
+// don't use, and jammer's own vocoder on B.  Looked up by name at startup rather than by index: the presets
 // table has had entries come and go, and an index that silently shifted would
 // put a different instrument under every key.
 // ---------------------------------------------------------------------------
 
-#define N_WHISTLE_VOICES 10
+#define N_WHISTLE_VOICES 11
 
 typedef struct {
   int note;            // the voice key's pseudo-note, as KEYS[] sends it
-  const char* preset;  // what synth.c calls it
+  const char* preset;  // what synth.c calls it, or NULL for the vocoder
   const char* label;   // what to draw on the key; "\n" splits lines
 } WhistleVoice;
+
+// Not one of whistle-synth's: jammer's own vocoder, below, which plays the
+// chord with whatever the microphone hears.
+#define WHISTLE_VOCODER (-2)
 
 static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'A', "bass",           "Bass"},
@@ -62,11 +66,12 @@ static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'X', "drawbar",        "Draw\nbar"},
   {'C', "drawbar-hi",     "High\nDrawbar"},
   {'V', "accordion",      "Accor\ndion"},
+  {'B', NULL,             "Vocoder"},
 };
 
 // What engine_set_voice() takes for each of the ten, filled in by
-// whistle_resolve_voices().  Voice 0 in the engine is the raw input passed
-// through, so presets start at 1.
+// whistle_resolve_voices(), or WHISTLE_VOCODER.  Voice 0 in the engine is the
+// raw input passed through, so presets start at 1.
 static int whistle_engine_voice[N_WHISTLE_VOICES];
 
 // -1 until the engine exists, so the UI can say "no whistle" rather than
@@ -140,6 +145,10 @@ static bool whistle_passthrough;
 #define MAX_WHISTLE_GAIN 2.0
 static double whistle_gain = 1.0;
 
+// And the vocoder's, beside it: it's a different kind of sound from the
+// whistle's voices, and sits against the rig at a level of its own.
+static double vocoder_gain = 1.0;
+
 // Where the volume knob sits when nothing has moved it, so that VOL-/VOL+ can
 // light up the way the endpoint volume keys do -- lit means "moved".
 //
@@ -208,7 +217,21 @@ static int whistle_default_high_note(void) {
   return (int)floor(69.0 + 12.0 * log2(ENGINE_MAX_HZ / 440.0));
 }
 
+static _Atomic int whistle_pub_vocoder;
+
+// The level the whistle's master slider sets for the voice it's on: the
+// vocoder's own, or the whistle's.  Caller must hold the lock.
+static double whistle_current_gain(void) {
+  return whistle_engine_voice[whistle_voice] == WHISTLE_VOCODER &&
+    !whistle_passthrough ? vocoder_gain : whistle_gain;
+}
+
 static void whistle_publish(void) {
+  // The vocoder isn't the engine's, so the engine keeps whatever voice it had
+  // and goes on listening underneath, for the meters.
+  bool vocoder = !whistle_passthrough &&
+    whistle_engine_voice[whistle_voice] == WHISTLE_VOCODER;
+  atomic_store_explicit(&whistle_pub_vocoder, vocoder, memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_voice,
                         whistle_passthrough
                           ? 0 : whistle_engine_voice[whistle_voice],
@@ -225,7 +248,9 @@ static void whistle_publish(void) {
   atomic_store_explicit(&whistle_pub_high_note, whistle_high_note,
                         memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_target_gain,
-                        whistle_on ? (int)(whistle_gain * 1000 + 0.5) : 0,
+                        !whistle_on ? 0 :
+                          (int)((vocoder ? vocoder_gain : whistle_gain) *
+                                1000 + 0.5),
                         memory_order_relaxed);
 }
 
@@ -441,6 +466,146 @@ static void whistle_engine_prepare(double sample_rate) {
   whistle_ring_reset();
 }
 
+// ---------------------------------------------------------------------------
+// The vocoder
+//
+// The whistle's B voice: the microphone's spectrum, band by band, imposed on
+// the chord the drones are playing -- saws on the root, third (when the feet
+// or a voice have said which) and fifth -- with noise in the top bands for
+// the consonants.
+//
+// Each note of the chord is played in six octaves at once, under a fixed
+// bell over pitch, the way a Shepard tone is: the higher the chord, the more
+// of it comes from the octave below.  So the chord's notes change and its
+// register doesn't, and a change of chord never sounds like a jump up or
+// down.  Whatever goes into the microphone comes
+// out as the chord, the moment it goes in.  A gate that follows the room's
+// noise floor keeps the band's own sound, in the microphone, from droning the
+// chord on its own.
+// ---------------------------------------------------------------------------
+
+#define VOCODER_BANDS 16
+#define VOCODER_LOW_HZ 150
+#define VOCODER_HIGH_HZ 7000
+#define VOCODER_Q 5
+#define VOCODER_NOISE_FROM_HZ 4000
+#define VOCODER_MAKEUP 1.5  // +6dB on where it was levelled, by ear
+#define VOCODER_OCTAVES 6
+#define VOCODER_VOICES (3 * VOCODER_OCTAVES)  // root, third, fifth
+#define VOCODER_CENTER_HZ 180   // where the bell over pitch peaks
+#define VOCODER_WIDTH 1.1       // and its width, in octaves
+
+static struct {
+  double rate;
+  Bandpass analysis[VOCODER_BANDS], synthesis[VOCODER_BANDS];
+  double env[VOCODER_BANDS];
+  double noise_mix[VOCODER_BANDS];
+  double attack, release;
+  double saw[VOCODER_VOICES];
+  double level, floor, gate;
+  uint32_t noise;
+} vocoder;
+
+static void vocoder_prepare(double sample_rate) {
+  memset(&vocoder, 0, sizeof(vocoder));
+  vocoder.rate = sample_rate;
+  vocoder.noise = 987654321;
+  vocoder.floor = 0.01;
+  for (int b = 0; b < VOCODER_BANDS; b++) {
+    double hz = VOCODER_LOW_HZ *
+      pow((double)VOCODER_HIGH_HZ / VOCODER_LOW_HZ,
+          (double)b / (VOCODER_BANDS - 1));
+    bandpass_set(&vocoder.analysis[b], hz, VOCODER_Q, sample_rate);
+    bandpass_set(&vocoder.synthesis[b], hz, VOCODER_Q, sample_rate);
+    vocoder.noise_mix[b] = hz < VOCODER_NOISE_FROM_HZ ? 0.05 : 0.6;
+  }
+  vocoder.attack = 1 - exp(-1 / (sample_rate * 0.002));
+  vocoder.release = 1 - exp(-1 / (sample_rate * 0.025));
+}
+
+static float vocoder_process(float in, const double* carrier_hz,
+                             const double* carrier_weight, int n,
+                             float volume) {
+  double rate = vocoder.rate;
+
+  // The gate: the input's level against a floor that drops to meet it
+  // quickly and rises to meet it only slowly, so it settles on the room --
+  // and more slowly still while the gate's open, so a held note isn't taken
+  // for the room.  A room that gets louder is still caught up with in a few
+  // tens of seconds.
+  double level = fabs(in);
+  vocoder.level += (level - vocoder.level) *
+                   (level > vocoder.level ? vocoder.attack : vocoder.release);
+  double rise_s = vocoder.gate > 0 ? 20.0 : 3.0;
+  double to_floor = vocoder.level < vocoder.floor
+    ? 1 - exp(-1 / (rate * 0.05)) : 1 - exp(-1 / (rate * rise_s));
+  vocoder.floor += (vocoder.level - vocoder.floor) * to_floor;
+  bool open = vocoder.level > 4 * vocoder.floor && vocoder.level > 0.002;
+  double gate_step = open ? 1000 / (rate * 5) : 1000 / (rate * 60);
+  vocoder.gate = open ? fmin(1, vocoder.gate + gate_step)
+                      : fmax(0, vocoder.gate - gate_step);
+
+  // The chord, the weights summing to one.
+  double carrier = 0;
+  for (int v = 0; v < n; v++) {
+    double dt = carrier_hz[v] / rate;
+    vocoder.saw[v] += dt;
+    if (vocoder.saw[v] >= 1) vocoder.saw[v] -= 1;
+    carrier += carrier_weight[v] *
+      (2 * vocoder.saw[v] - 1 - poly_blep(vocoder.saw[v], dt));
+  }
+  uint32_t x = vocoder.noise;
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  vocoder.noise = x;
+  double noise = (double)x / 2147483648.0 - 1;
+
+  double out = 0;
+  for (int b = 0; b < VOCODER_BANDS; b++) {
+    double a = fabs(bandpass_run(&vocoder.analysis[b], in));
+    vocoder.env[b] += (a - vocoder.env[b]) *
+                      (a > vocoder.env[b] ? vocoder.attack : vocoder.release);
+    double m = vocoder.noise_mix[b];
+    double c = bandpass_run(&vocoder.synthesis[b],
+                            (1 - m) * carrier + m * noise);
+    out += c * vocoder.env[b];
+  }
+  // Half way to an even level: out goes as the square root of what comes in,
+  // so a quiet microphone still reaches the mix and a loud one doesn't bury
+  // it.
+  out *= VOCODER_MAKEUP / sqrt(fmax(vocoder.level, 0.01)) * vocoder.gate;
+  return (float)(tanh(out) * volume);
+}
+
+// The chord to vocode, from the music jammermidilib.h publishes: each of its
+// notes in every octave from the bottom one up, weighted by the bell, the
+// weights summing to one.  Returns how many.
+static int vocoder_chord(double* hz, double* weight) {
+  int root = atomic_load_explicit(&audio_chord_root, memory_order_relaxed);
+  int third = atomic_load_explicit(&audio_chord_third, memory_order_relaxed);
+  int fifth = atomic_load_explicit(&audio_chord_fifth, memory_order_relaxed);
+  int notes[3], n_notes = 0;
+  notes[n_notes++] = root;
+  if (third) notes[n_notes++] = root + third;
+  notes[n_notes++] = root + fifth;
+
+  int n = 0;
+  double total = 0;
+  for (int i = 0; i < n_notes; i++) {
+    int bottom = 24 + (notes[i] % 12);  // C1 to B1
+    for (int octave = 0; octave < VOCODER_OCTAVES; octave++) {
+      hz[n] = midi_hz(bottom + 12 * octave);
+      double x = log2(hz[n] / VOCODER_CENTER_HZ) / VOCODER_WIDTH;
+      weight[n] = exp(-0.5 * x * x);
+      total += weight[n];
+      n++;
+    }
+  }
+  for (int i = 0; i < n; i++) weight[i] /= total;
+  return n;
+}
+
 // Scratch for one block of input, sized when the stream starts.  Only the
 // audio thread touches it while one is running.
 static float* whistle_input_block;
@@ -468,10 +633,21 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
   float gain = whistle_live_gain;
   float step = whistle_gain_step;
   float target = whistle_gain_target;
+  bool vocoding = atomic_load_explicit(&whistle_pub_vocoder,
+                                       memory_order_relaxed);
+  double chord_hz[VOCODER_VOICES], chord_weight[VOCODER_VOICES];
+  int chord_notes = vocoder_chord(chord_hz, chord_weight);
+  if (vocoder.rate != sample_rate) vocoder_prepare(sample_rate);
+  float vocoder_volume = (float)(whistle_applied_volume + 1) / 10;
   for (int i = 0; i < len; i++) {
     float left, right;
     engine_process_stereo(&whistle_engine, whistle_input_block[i],
                           &left, &right);
+    if (vocoding) {
+      left = right = vocoder_process(whistle_input_block[i], chord_hz,
+                                     chord_weight, chord_notes,
+                                     vocoder_volume);
+    }
     if (step != 0) {
       gain += step;
       // Stop on the target rather than overshooting it, whichever way the
@@ -527,6 +703,10 @@ static bool whistle_resolve_voices(void) {
   int count = synth_preset_count();
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     whistle_engine_voice[i] = -1;
+    if (!WHISTLE_VOICES[i].preset) {
+      whistle_engine_voice[i] = WHISTLE_VOCODER;
+      continue;
+    }
     for (int preset = 0; preset < count; preset++) {
       if (strcmp(synth_preset_name(preset), WHISTLE_VOICES[i].preset) == 0) {
         whistle_engine_voice[i] = preset + 1;   // 0 is the raw input

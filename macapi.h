@@ -27,6 +27,44 @@
 
 #include "common.h"
 
+// Voice channels: three spare channels for each drone, past the kick's, so a
+// voice-led drone (jammermidilib.h's voice_lead) can play each of its notes on
+// a channel of its own and bend it on its own -- a pitch bend is a channel's,
+// not a note's.  They mirror their drone's program and controllers
+// (send_midi, choose_voice) and are mixed as their drone is.  The Pi's
+// fluidsynth has only sixteen channels, so there the drones play as they
+// always did.
+#define VOICE_CHANNELS_PER_DRONE 3
+#define VOICE_BEND_RANGE 12  // semitones each way
+
+// The first of a drone's voice channels, or -1 if it isn't a drone.
+static int voice_channel_base(int endpoint) {
+  switch (endpoint) {
+  case ENDPOINT_DRONE_BASS:    return 17;
+  case ENDPOINT_DRONE_CHORD:   return 20;
+  case ENDPOINT_DRONE_BASS_2:  return 23;
+  case ENDPOINT_DRONE_CHORD_2: return 26;
+  case ENDPOINT_BREATH:        return 29;
+  }
+  return -1;
+}
+
+// The endpoint a channel belongs to: its own, for the endpoints, or the
+// drone's, for a voice channel.
+static int channel_endpoint(int channel) {
+  static const int DRONES[] = {
+    ENDPOINT_DRONE_BASS, ENDPOINT_DRONE_CHORD, ENDPOINT_DRONE_BASS_2,
+    ENDPOINT_DRONE_CHORD_2, ENDPOINT_BREATH,
+  };
+  for (int i = 0; i < 5; i++) {
+    int base = voice_channel_base(DRONES[i]);
+    if (channel >= base && channel < base + VOICE_CHANNELS_PER_DRONE) {
+      return DRONES[i];
+    }
+  }
+  return channel;
+}
+
 int attempt(int result, char* errmsg) {
   if (result < 0) {
     perror("");
@@ -96,6 +134,117 @@ static void breath_set(int breath, unsigned fx) {
 }
 
 // ---------------------------------------------------------------------------
+// The music
+//
+// The bass note, the chord and the beat, from jammermidilib.h's music_hook
+// every tick, for the Mac's own sounds that follow them: the trance gate, the
+// Breath Gate's wobble and sub drop, and the whistle's vocoder.
+// ---------------------------------------------------------------------------
+
+static _Atomic int audio_bass_note = 26;
+static _Atomic int audio_chord_root = 26;
+static _Atomic int audio_chord_third;
+static _Atomic int audio_chord_fifth = 7;
+static _Atomic uint64_t audio_beat_start_ns;
+static _Atomic uint64_t audio_beat_ns;
+static _Atomic unsigned char audio_trance_gate[N_ENDPOINTS];
+static _Atomic unsigned char audio_gate_steps[6];
+static _Atomic int audio_n_gate_steps;
+
+static void music_set(const MusicState* m) {
+  atomic_store_explicit(&audio_bass_note, m->bass_note, memory_order_relaxed);
+  atomic_store_explicit(&audio_chord_root, m->chord_root,
+                        memory_order_relaxed);
+  atomic_store_explicit(&audio_chord_third, m->chord_third,
+                        memory_order_relaxed);
+  atomic_store_explicit(&audio_chord_fifth, m->chord_fifth,
+                        memory_order_relaxed);
+  atomic_store_explicit(&audio_beat_start_ns, m->beat_start_ns,
+                        memory_order_relaxed);
+  atomic_store_explicit(&audio_beat_ns, m->beat_ns, memory_order_relaxed);
+  for (int i = 0; i < m->n_gate_steps; i++) {
+    atomic_store_explicit(&audio_gate_steps[i], m->gate_steps[i],
+                          memory_order_relaxed);
+  }
+  atomic_store_explicit(&audio_n_gate_steps, m->n_gate_steps,
+                        memory_order_relaxed);
+  for (int i = 0; i < N_ENDPOINTS; i++) {
+    atomic_store_explicit(&audio_trance_gate[i], m->trance_gate[i],
+                          memory_order_relaxed);
+  }
+}
+
+static double midi_hz(double note) {
+  return 440 * pow(2, (note - 69) / 12);
+}
+
+// When the block being rendered starts, on now()'s clock.  MIDI that arrives
+// now is heard at the start of the next block, so this is the clock the beat
+// is on as far as what's rendered goes.
+static uint64_t audio_block_ns;
+
+// How far into the beat the last pedal hit started time t is, 0-1, or -1 if
+// it's outside it: no tempo, or the feet have stopped.  For what has to stop
+// when they do.
+static double audio_beat_phase(uint64_t t) {
+  uint64_t start = atomic_load_explicit(&audio_beat_start_ns,
+                                        memory_order_relaxed);
+  uint64_t beat = atomic_load_explicit(&audio_beat_ns, memory_order_relaxed);
+  if (beat == 0 || start == 0 || t < start) return -1;
+  double phase = (double)(t - start) / beat;
+  return phase < 1 ? phase : -1;
+}
+
+// For what only goes as long as a breath does, and so can carry on at the
+// pedals' tempo after they stop: beats since the pedals' last beat, if they
+// kept time within the last couple, and otherwise since `origin` at 116 BPM.
+#define AUDIO_DEFAULT_BEAT_NS (60 * 1000000000ULL / 116)
+static double audio_grid_beats(uint64_t t, uint64_t origin) {
+  uint64_t start = atomic_load_explicit(&audio_beat_start_ns,
+                                        memory_order_relaxed);
+  uint64_t beat = atomic_load_explicit(&audio_beat_ns, memory_order_relaxed);
+  if (beat > 0 && start > 0 && t >= start && t - start < 2 * beat) {
+    return (double)(t - start) / beat;
+  }
+  if (t < origin) return 0;
+  return (double)(t - origin) / AUDIO_DEFAULT_BEAT_NS;
+}
+
+// ---------------------------------------------------------------------------
+// The trance gate
+//
+// A drone with II or Q on (TRANCE_GATE_*, common.h) is chopped on the beat's
+// grid: 8ths, 16ths, or the 1 . 3 4 of the two together -- and in jig time,
+// where a beat is three 8ths, those three, six 16ths, or 1 . 3 4 . 6.  The
+// grid is the foot bass's, lean and all, not an even one (publish_music), so
+// the gate moves with the bass rather than against it.  Only inside the beat
+// the last pedal hit started -- once the feet stop, the pad just holds, as a
+// held note is allowed to.  Ramped over a couple of milliseconds so it
+// doesn't click.
+// ---------------------------------------------------------------------------
+
+#define TRANCE_GATE_ATTACK_MS 2
+#define TRANCE_GATE_RELEASE_MS 6
+
+// `steps` are where the 16ths start, in 72nds of a beat, `n` of them.
+static bool trance_gate_open(int pattern, double phase,
+                             const unsigned char* steps, int n) {
+  if (pattern == TRANCE_GATE_NONE || phase < 0 || n == 0) return true;
+  double at = phase * 72;
+  int step = 0;
+  while (step + 1 < n && at >= steps[step + 1]) step++;
+  double end = step + 1 < n ? steps[step + 1] : 72;
+  double into = (at - steps[step]) / (end - steps[step]);
+  switch (pattern) {
+  case TRANCE_GATE_8THS:  return step % 2 == 0;
+  case TRANCE_GATE_16THS: return into < 0.55;
+  default:
+    // 1 . 3 4, and in jig time 1 . 3 4 . 6
+    return step % 3 != 1 && into < 0.7;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Kick Duck
 //
 // Everything fluidsynth plays but the kick, turned down on each kick and
@@ -152,6 +301,55 @@ static double kick_duck_attack, kick_duck_release;  // in frames
 static double kick_duck_gain = 1;
 static bool breath_gate_open;
 static double breath_gate_gain;
+static double trance_gate_gain[SYNTH_CHANNELS];
+static double trance_gate_phase[KICK_DUCK_FRAMES];
+
+// Chop the drones' channels, and their voice channels, with the trance gate,
+// for n frames from t0.
+static void apply_trance_gates(float** bufs, int n, uint64_t t0,
+                               double sample_rate) {
+  bool any = false;
+  int pattern[SYNTH_CHANNELS];
+  for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
+    int ep = channel_endpoint(ch);
+    pattern[ch] = ep < N_ENDPOINTS
+      ? atomic_load_explicit(&audio_trance_gate[ep], memory_order_relaxed)
+      : TRANCE_GATE_NONE;
+    if (pattern[ch] != TRANCE_GATE_NONE || trance_gate_gain[ch] < 1) {
+      any = true;
+    }
+  }
+  if (!any) return;
+  for (int i = 0; i < n; i++) {
+    trance_gate_phase[i] =
+      audio_beat_phase(t0 + (uint64_t)(i * 1e9 / sample_rate));
+  }
+  unsigned char steps[6];
+  int n_steps = atomic_load_explicit(&audio_n_gate_steps,
+                                     memory_order_relaxed);
+  if (n_steps > 6) n_steps = 6;
+  for (int i = 0; i < n_steps; i++) {
+    steps[i] = atomic_load_explicit(&audio_gate_steps[i],
+                                    memory_order_relaxed);
+  }
+  double up = 1000 / (sample_rate * TRANCE_GATE_ATTACK_MS);
+  double down = 1000 / (sample_rate * TRANCE_GATE_RELEASE_MS);
+  for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
+    if (pattern[ch] == TRANCE_GATE_NONE && trance_gate_gain[ch] >= 1) {
+      continue;
+    }
+    double gain = trance_gate_gain[ch];
+    for (int i = 0; i < n; i++) {
+      double target = trance_gate_open(pattern[ch], trance_gate_phase[i],
+                                       steps, n_steps) ? 1 : 0;
+      gain = target > gain ? fmin(target, gain + up)
+                           : fmax(target, gain - down);
+      bufs[2 * ch][i] *= (float)gain;
+      bufs[2 * ch + 1][i] *= (float)gain;
+    }
+    trance_gate_gain[ch] = gain;
+  }
+}
 
 // Endpoints are channels (common.h), so these are the foot basses and arp.
 static bool kick_duck_exempt(int channel) {
@@ -227,11 +425,16 @@ static int render_kick_ducked(fluid_synth_t* synth, int len, int nfx,
     result = fluid_synth_process(synth, n, nfx, chunk_fx,
                                  2 * SYNTH_CHANNELS, bufs);
     if (result != FLUID_OK || nout < 2) continue;
+    apply_trance_gates(bufs, n,
+                       audio_block_ns + (uint64_t)(done * 1e9 / sample_rate),
+                       sample_rate);
 
     float* left = out[0] + done;
     float* right = out[1] + done;
     for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
-      if (kick_duck_exempt(ch) || ch == ENDPOINT_BREATH) continue;
+      if (kick_duck_exempt(ch) || channel_endpoint(ch) == ENDPOINT_BREATH) {
+        continue;
+      }
       for (int i = 0; i < n; i++) {
         left[i] += bufs[2 * ch][i];
         right[i] += bufs[2 * ch + 1][i];
@@ -244,6 +447,11 @@ static int render_kick_ducked(fluid_synth_t* synth, int len, int nfx,
       float gain = (float)breath_gate_gain;
       left[i] += bufs[2 * ENDPOINT_BREATH][i] * gain;
       right[i] += bufs[2 * ENDPOINT_BREATH + 1][i] * gain;
+      int base = voice_channel_base(ENDPOINT_BREATH);
+      for (int k = 0; k < VOICE_CHANNELS_PER_DRONE; k++) {
+        left[i] += bufs[2 * (base + k)][i] * gain;
+        right[i] += bufs[2 * (base + k) + 1][i] * gain;
+      }
     }
     if (kick_duck_pos >= 0) {
       for (int i = 0; i < n; i++) {
@@ -557,11 +765,182 @@ static void play_scraper(Scraper* s, BreathPlayer* p, const ScraperSound* sound,
   }
 }
 
+// ---------------------------------------------------------------------------
+// Builds and drops
+//
+// Two more of the Breath Gate's own voices, for getting into and out of a
+// big moment rather than keeping time.  Played by how hard you blow, like the
+// sweeps, rather than by moving the breath like the scrapers:
+//
+//   Noise Riser     noise through a band that rises from 300Hz to 12kHz and
+//                   gets louder as you blow harder
+//   Wobble          two detuned saws and a sub on the bass note through a
+//                   resonant low-pass that swings on the beat's grid, once a
+//                   beat, then 2, 3 and 4 times as you blow harder
+//
+// Both stop, within a few milliseconds, when the breath does, so neither can
+// carry on past what you're doing.  Summed in with the scrapers, after Kick
+// Duck and the sweeps.
+// ---------------------------------------------------------------------------
+
+#define RISER_LEVEL 0.08
+#define WOBBLE_LEVEL 0.045
+#define BUILD_RELEASE_MS 12   // how quickly each lets go when you stop
+
+// Whether the breath has opened, with the Breath Gate's hysteresis.  The
+// audio thread's own.
+static bool build_open;
+static bool build_opened;  // opened this block
+
+static void build_follow_breath(double blown) {
+  build_opened = false;
+  if (!build_open && blown > BREATH_GATE_OPEN) {
+    build_open = true;
+    build_opened = true;
+  } else if (build_open && blown < BREATH_GATE_SHUT) {
+    build_open = false;
+  }
+}
+
+// One step of a gain towards on or off: fast on, a little slower off.
+static double build_gain_step(double gain, bool on, double sample_rate) {
+  double up = 1000 / (sample_rate * 3);
+  double down = 1000 / (sample_rate * BUILD_RELEASE_MS);
+  return on ? fmin(1, gain + up) : fmax(0, gain - down);
+}
+
+// One step of a level following the breath: smoothly up, over `rise_ms`, and
+// down no slower than all the way in BUILD_RELEASE_MS, so stopping stops it.
+static double build_follow(double level, double target, double rise_ms,
+                           double sample_rate) {
+  if (target > level) {
+    return level + (target - level) *
+      (1 - exp(-1 / (sample_rate * rise_ms / 1000)));
+  }
+  return fmax(target, level - 1000 / (sample_rate * BUILD_RELEASE_MS));
+}
+
+// The noise riser.
+static struct {
+  double level;
+  double ic1[2], ic2[2];
+} riser;
+
+static void play_riser(float* left, float* right, int len, bool on,
+                       double blown, double sample_rate) {
+  double target = on && build_open ? blown : 0;
+  if (target == 0 && riser.level == 0) {
+    memset(&riser, 0, sizeof(riser));
+    return;
+  }
+  for (int i = 0; i < len; i++) {
+    riser.level = build_follow(riser.level, target, SWEEP_SMOOTH_MS,
+                               sample_rate);
+    double g = tan(M_PI * fmin(sweep_hz(300, 12000, riser.level),
+                               0.45 * sample_rate) / sample_rate);
+    double q = 1.4;
+    double a1 = 1 / (1 + g * (g + 1 / q)), a2 = g * a1;
+    double gain = RISER_LEVEL * pow(riser.level, 1.5);
+    for (int ch = 0; ch < 2; ch++) {
+      double v1 = a1 * riser.ic1[ch] + a2 * (breath_noise() - riser.ic2[ch]);
+      double v2 = riser.ic2[ch] + g * v1;
+      riser.ic1[ch] = 2 * v1 - riser.ic1[ch];
+      riser.ic2[ch] = 2 * v2 - riser.ic2[ch];
+      float y = (float)(gain * (v1 / q + 0.3 * v2));
+      if (ch == 0) left[i] += y; else right[i] += y;
+    }
+  }
+}
+
+// The wobble bass.
+static struct {
+  bool live;
+  double hz;
+  double saw[2];   // phases, 0-1
+  double sub;      // phase, 0-1
+  double gain;
+  double cutoff;   // smoothed, 0-1
+  double ic1, ic2;
+  uint64_t origin_ns;
+} wobble;
+
+// A band-limited saw's correction near its wrap (polyBLEP).
+static double poly_blep(double t, double dt) {
+  if (t < dt) {
+    t /= dt;
+    return t + t - t * t - 1;
+  }
+  if (t > 1 - dt) {
+    t = (t - 1) / dt;
+    return t * t + t + t + 1;
+  }
+  return 0;
+}
+
+static void play_wobble(float* left, float* right, int len, bool on,
+                        double blown, double sample_rate) {
+  bool held = on && build_open;
+  if (!wobble.live) {
+    if (!held) return;
+    memset(&wobble, 0, sizeof(wobble));
+    wobble.live = true;
+    wobble.origin_ns = audio_block_ns;
+    wobble.hz = midi_hz(
+      atomic_load_explicit(&audio_bass_note, memory_order_relaxed) + 12);
+  }
+  if (build_opened) wobble.origin_ns = audio_block_ns;
+  double to_hz = midi_hz(
+    atomic_load_explicit(&audio_bass_note, memory_order_relaxed) + 12);
+  double glide = 1 - exp(-1 / (sample_rate * 0.015));
+  int rate = blown < 0.35 ? 1 : blown < 0.6 ? 2 : blown < 0.8 ? 3 : 4;
+  double smooth = 1 - exp(-1 / (sample_rate * 0.002));
+  double q = 3.5;
+  for (int i = 0; i < len; i++) {
+    wobble.gain = build_gain_step(wobble.gain, held, sample_rate);
+    wobble.hz += (to_hz - wobble.hz) * glide;
+
+    uint64_t t = audio_block_ns + (uint64_t)(i * 1e9 / sample_rate);
+    double beats = audio_grid_beats(t, wobble.origin_ns);
+    double lfo = 0.5 - 0.5 * cos(2 * M_PI * beats * rate);
+    wobble.cutoff += (lfo - wobble.cutoff) * smooth;
+
+    double y = 0;
+    for (int v = 0; v < 2; v++) {
+      double dt = wobble.hz * (v ? 1.004 : 0.996) / sample_rate;
+      wobble.saw[v] += dt;
+      if (wobble.saw[v] >= 1) wobble.saw[v] -= 1;
+      y += 0.5 * (2 * wobble.saw[v] - 1 - poly_blep(wobble.saw[v], dt));
+    }
+    wobble.sub += wobble.hz / 2 / sample_rate;
+    if (wobble.sub >= 1) wobble.sub -= 1;
+    double sub = 0.6 * sin(2 * M_PI * wobble.sub);
+
+    double g = tan(M_PI * fmin(sweep_hz(90, 3600, wobble.cutoff),
+                               0.45 * sample_rate) / sample_rate);
+    double a1 = 1 / (1 + g * (g + 1 / q)), a2 = g * a1, a3 = g * a2;
+    double v3 = y - wobble.ic2;
+    double v1 = a1 * wobble.ic1 + a2 * v3;
+    double v2 = wobble.ic2 + a2 * wobble.ic1 + a3 * v3;
+    wobble.ic1 = 2 * v1 - wobble.ic1;
+    wobble.ic2 = 2 * v2 - wobble.ic2;
+
+    double out = tanh(2 * (v2 + sub)) / tanh(2);
+    float sample = (float)(out * wobble.gain * WOBBLE_LEVEL *
+                           (0.6 + 0.4 * blown));
+    left[i] += sample;
+    right[i] += sample;
+  }
+  if (!held && wobble.gain == 0) wobble.live = false;
+}
+
 static void play_breath_instruments(float* left, float* right, int len,
                                     double sample_rate) {
   unsigned fx = atomic_load_explicit(&audio_breath_fx, memory_order_relaxed);
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
+
+  play_riser(left, right, len, fx & BREATH_FX_RISER, blown, sample_rate);
+  play_wobble(left, right, len, fx & BREATH_FX_WOBBLE, blown, sample_rate);
 
   bool on = fx & BREATH_FX_GUIRO;
   if (breath_player_run(&guiro_player, on, &guiro, sizeof(guiro),
@@ -596,9 +975,12 @@ static int jammer_audio_render(void* data, int len, int nfx, float** fx,
   for (int i = 0; i < nfx; i++) {
     memset(fx[i], 0, (size_t)len * sizeof(float));
   }
+  audio_block_ns = now();
   int result = render_kick_ducked((fluid_synth_t*)data, len, nfx, fx, nout,
                                   out, synth_sample_rate);
   if (nout >= 2) {
+    build_follow_breath(breath_blown(
+      atomic_load_explicit(&audio_breath, memory_order_relaxed)));
     apply_sweeps(out[0], out[1], len, synth_sample_rate);
     play_breath_instruments(out[0], out[1], len, synth_sample_rate);
   }
@@ -836,12 +1218,17 @@ void stop_synth() {
   fl_settings = NULL;
 }
 
+// Everything sent, for test-keypad.c to watch.  NULL otherwise.
+static void (*midi_tap)(int action, int note, int velocity, int channel) = NULL;
+
 void send_midi(int action, int note, int velocity, int endpoint) {
   if (note < 0) note = 0;
   if (note > 127) note = 127;
 
   if (velocity < 0) velocity = 0;
   if (velocity > 127) velocity = 127;
+
+  if (midi_tap) midi_tap(action, note, velocity, endpoint);
 
   if (!fl_synth) return;  // no synth yet, or we're shutting down
 
@@ -853,6 +1240,11 @@ void send_midi(int action, int note, int velocity, int endpoint) {
     if (channel == CHANNEL_DRUM) {
       fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
     }
+    // And a drone's voice channels are the drone's.
+    int base = voice_channel_base(channel);
+    for (int k = 0; base >= 0 && k < VOICE_CHANNELS_PER_DRONE; k++) {
+      fluid_synth_cc(fl_synth, base + k, note, velocity);
+    }
   } else if (action == MIDI_ON) {
     fluid_synth_noteon(fl_synth, channel, note, velocity);
   } else if (action == MIDI_OFF) {
@@ -862,6 +1254,15 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   } else {
     printf("unknown action %d\n", action);
   }
+}
+
+// Bend a voice channel by this many semitones.
+void voice_bend(int channel, double semitones) {
+  if (!fl_synth) return;
+  fluid_synth_pitch_wheel_sens(fl_synth, channel, VOICE_BEND_RANGE);
+  int value = 8192 + (int)lround(semitones / VOICE_BEND_RANGE * 8192);
+  fluid_synth_pitch_bend(fl_synth, channel,
+                         value < 0 ? 0 : value > 16383 ? 16383 : value);
 }
 
 void choose_voice(int channel, int bank, int voice) {
@@ -890,6 +1291,13 @@ void choose_voice(int channel, int bank, int voice) {
   }
   printf("set endpoint #%d to voice %d-%d\n", channel, bank, voice);
   if (channel == CHANNEL_DRUM) choose_voice(CHANNEL_KICK, bank, voice);
+  int base = voice_channel_base(channel);
+  for (int k = 0; base >= 0 && k < VOICE_CHANNELS_PER_DRONE; k++) {
+    int got_bank, got_voice, sfont;
+    fluid_synth_get_program(fl_synth, channel, &sfont, &got_bank, &got_voice);
+    fluid_synth_program_select(fl_synth, base + k, fl_sfont_id, got_bank,
+                               got_voice);
+  }
 }
 
 #endif

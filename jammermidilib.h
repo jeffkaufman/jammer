@@ -110,6 +110,8 @@
 #define PEAK_SWEEP (97)
 #define BREATH_GATE ('(')
 #define BREATH_GATE_SELECT (')')
+// And the Mac's delete, VOICE LEAD, for every drone at once.
+#define VOICE_LEAD_TOGGLE ('*')
 
 #define MODE_MAJOR 1
 #define MODE_MIXO 2
@@ -293,21 +295,43 @@ static int drone_voice_for_note(int note) {
   return -1;
 }
 
-// The Breath Gate's own voices, on the three voice keys the drones leave
-// empty: percussion the breath plays by moving (macapi.h), in place of a
-// pad.  Negative, so none of them can be taken for a program.
-#define VOICE_GUIRO (-1)
-#define VOICE_WASHBOARD (-2)
-#define VOICE_GUIRA (-3)
+// The Breath Gate's own voices, in place of a pad: on the three voice keys the
+// drones leave empty, percussion the breath plays by moving (macapi.h), and
+// on three of the pads' keys -- the Breath Gate's only; the other drones keep
+// all ten pads -- voices for builds and drops (see the README's "Builds and
+// drops"):
+//
+//   Snare Roll      the kit's snare on the beat's grid, faster the harder you
+//                   blow: quarters, 8ths, 16ths, 32nds (breath_roll_tick)
+//   Noise Riser     noise through a filter the breath opens (macapi.h)
+//   Wobble          a saw bass on the bass note, its filter swinging on the
+//                   beat's grid, 1-4 times a beat the harder you blow
+//
+// None of them is the Breath Gate's own fluidsynth channel, so they don't get
+// in each other's way, or the pad's: they're layers, switched on and off one
+// by one, and any of them can play together, over the pad or without one.
+// The pad is the one voice that uses the channel, so there's only ever one;
+// its key again lets go of it, for the layers on their own.
+enum {
+  BREATH_LAYER_SNARE_ROLL = 1 << 0,
+  BREATH_LAYER_RISER = 1 << 1,
+  BREATH_LAYER_WOBBLE = 1 << 2,
+  BREATH_LAYER_GUIRA = 1 << 3,
+  BREATH_LAYER_GUIRO = 1 << 4,
+  BREATH_LAYER_WASHBOARD = 1 << 5,
+};
 static const struct {
   char note;
-  int voice;
+  unsigned layer;
   const char* label;
   unsigned fx;  // what it has the Mac's audio play
 } BREATH_VOICES[] = {
-  {'B', VOICE_GUIRA,     "Guira",       BREATH_FX_GUIRA},
-  {'N', VOICE_GUIRO,     "Guiro",       BREATH_FX_GUIRO},
-  {'M', VOICE_WASHBOARD, "Wash\nboard", BREATH_FX_WASHBOARD},
+  {'A', BREATH_LAYER_SNARE_ROLL, "Snare\nRoll",  0},
+  {'Z', BREATH_LAYER_RISER,      "Noise\nRiser", BREATH_FX_RISER},
+  {'G', BREATH_LAYER_WOBBLE,     "Wobble",       BREATH_FX_WOBBLE},
+  {'B', BREATH_LAYER_GUIRA,      "Guira",        BREATH_FX_GUIRA},
+  {'N', BREATH_LAYER_GUIRO,      "Guiro",        BREATH_FX_GUIRO},
+  {'M', BREATH_LAYER_WASHBOARD,  "Wash\nboard",  BREATH_FX_WASHBOARD},
 };
 #define N_BREATH_VOICES \
   ((int)(sizeof(BREATH_VOICES) / sizeof(BREATH_VOICES[0])))
@@ -320,7 +344,11 @@ static int breath_voice_for_note(int note) {
   return -1;
 }
 
-// One of those rather than a program: nothing for fluidsynth to play.
+// The Breath Gate's voice with no pad, just its layers.  Negative, so it
+// can't be taken for a program.
+#define VOICE_BREATH_NO_PAD (-1)
+
+// That rather than a program: nothing for fluidsynth to play.
 static inline bool is_breath_percussion(int voice) {
   return voice < 0;
 }
@@ -413,6 +441,10 @@ struct Configuration {
   double locked_airs[N_ENDPOINTS];
   bool follows_air[N_ENDPOINTS];
   bool ducked[N_ENDPOINTS];
+
+  // The Breath Gate's layers that are on, BREATH_LAYER_*, with its pad or
+  // without.
+  unsigned breath_layers;
 };
 
 // TODO: allow multiple of these.
@@ -472,6 +504,18 @@ bool speech_chooses_notes;
 // from the numbers, so either can be on without the other.  Not musical
 // state, so a reset leaves it alone.
 bool speech_commands_on;
+// VOICE LEAD: the drones move between chords the way a pianist would, each
+// voice the shortest way and the notes two chords share held (voice_lead),
+// and glide there when a spoken number picks the chord.  All of them or
+// none, so nothing jumps while the rest glide.  The Mac's delete.
+bool voice_lead_on;
+// The spoken number the voice-led drones have been led to ahead of its beat
+// (nashville_leads), or 0: until it's made, it's their chord, whatever else
+// asks them to play the old one again.
+int led_pending_number;
+// A glide waiting for the half beat before its chord's, or 0.
+int led_scheduled_number;
+uint64_t led_scheduled_start, led_scheduled_end;
 int musical_mode;
 int most_recent_drum_pedal;
 uint64_t most_recent_choosy_drum_ts;
@@ -685,40 +729,47 @@ int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
 }
 
+// The note an endpoint actually plays for `note`: up for organs and chords,
+// and moved by its octave.
+int endpoint_note(int note, int endpoint) {
+  if (c->voices[endpoint] == 16 ||
+	c->voices[endpoint] == 18) {
+    note += 12;  // organs should be up an octave
+  }
+  if (c->chord[endpoint]) {
+    // chords should be higher
+    note += 24;
+  }
+
+  // Normally this is like:
+  //
+  //     24 25 26 27 28 29 30 31 32 33 34 35 ->
+  //      36 37 38 39 40 41 42 43 44 45 46 47
+  //
+  // but bass is different.  That goes:
+  //
+  //     24 25 26 27 28 29 30 31 32 33 34 35 ->
+  //      36 37 38 39 40 41 30 31 32 33 34 35
+  //       36 37 38 39 40 41 42 43 44 45 46 47
+  //
+
+  if (is_footbass(endpoint) ||
+      endpoint == ENDPOINT_JAWHARP) {
+    note += (c->octave_deltas[endpoint] / 2) * 12;
+    if (c->octave_deltas[endpoint] % 2 == 1) {
+      if (to_root(note) < 30) {
+        note += 12;
+      }
+    }
+  } else {
+    note += c->octave_deltas[endpoint]*12;
+  }
+  return note;
+}
+
 void psend_midi(int action, int note, int velocity, int endpoint) {
   if (endpoint != ENDPOINT_DRUM && (action == MIDI_ON || action == MIDI_OFF)) {
-    if (c->voices[endpoint] == 16 ||
-	c->voices[endpoint] == 18) {
-      note += 12;  // organs should be up an octave
-    }
-    if (c->chord[endpoint]) {
-      // chords should be higher
-      note += 24;
-    }
-
-    // Normally this is like:
-    //
-    //     24 25 26 27 28 29 30 31 32 33 34 35 ->
-    //      36 37 38 39 40 41 42 43 44 45 46 47
-    //
-    // but bass is different.  That goes:
-    //
-    //     24 25 26 27 28 29 30 31 32 33 34 35 ->
-    //      36 37 38 39 40 41 30 31 32 33 34 35
-    //       36 37 38 39 40 41 42 43 44 45 46 47
-    //
-
-    if (is_footbass(endpoint) ||
-        endpoint == ENDPOINT_JAWHARP) {
-      note += (c->octave_deltas[endpoint] / 2) * 12;
-      if (c->octave_deltas[endpoint] % 2 == 1) {
-        if (to_root(note) < 30) {
-          note += 12;
-        }
-      }
-    } else {
-      note += c->octave_deltas[endpoint]*12;
-    }
+    note = endpoint_note(note, endpoint);
   }
   send_midi(action, note, velocity, endpoint);
 }
@@ -734,9 +785,54 @@ void end_pitched_kick() {
   pitched_kick_note = -1;
 }
 
+// A voice-led drone (VOICE LEAD, the Mac's delete) plays each of its
+// notes as a voice of its own, in a slot, so the next chord can keep the
+// notes it shares and move the rest the shortest way -- and on the Mac, where
+// each slot has a channel of its own (macapi.h's voice channels), glide them
+// there by bending that channel.  On the Pi they share the drone's channel
+// and move by being struck again.
+#define MAX_LED_NOTES 3
+// Per slot: the note it's sounding, or heading for, as handed to psend_midi,
+// or -1; the key it's holding down, which a bend moves away from; and the
+// bend, where it is and where it's gliding, in semitones.
+int led_notes[N_ENDPOINTS][MAX_LED_NOTES];
+int led_keys[N_ENDPOINTS][MAX_LED_NOTES];
+double led_bend[N_ENDPOINTS][MAX_LED_NOTES];
+double led_bend_from[N_ENDPOINTS][MAX_LED_NOTES];
+double led_bend_to[N_ENDPOINTS][MAX_LED_NOTES];
+uint64_t led_glide_start[N_ENDPOINTS][MAX_LED_NOTES];
+uint64_t led_glide_end[N_ENDPOINTS][MAX_LED_NOTES];  // 0 if not gliding
+
+#ifdef VOICE_CHANNELS_PER_DRONE
+#define LED_CAN_GLIDE true
+static int led_channel(int endpoint, int slot) {
+  return voice_channel_base(endpoint) + slot;
+}
+#else
+#define LED_CAN_GLIDE false
+#define VOICE_BEND_RANGE 0
+static int led_channel(int endpoint, int slot) { return endpoint; }
+static void voice_bend(int channel, double semitones) {}
+#endif
+
+// Let go of a drone's voices: the notes (the caller's CC123 has done that on
+// the Mac, where the voice channels follow the drone's) and the bends.
+static void led_clear(int endpoint) {
+  for (int k = 0; k < MAX_LED_NOTES; k++) {
+    if (led_bend[endpoint][k] != 0 && LED_CAN_GLIDE) {
+      voice_bend(led_channel(endpoint, k), 0);
+    }
+    led_notes[endpoint][k] = -1;
+    led_keys[endpoint][k] = -1;
+    led_bend[endpoint][k] = 0;
+    led_glide_end[endpoint][k] = 0;
+  }
+}
+
 void endpoint_notes_off(int endpoint) {
   // send an explicit all notes off command
   psend_midi(MIDI_CC, 123, 0, endpoint);
+  led_clear(endpoint);
 
   // The pitched kick sounds on its own channel, but it belongs to the drum
   // endpoint: switching the drum off should stop it too.
@@ -958,7 +1054,12 @@ void clear_endpoint() {
   case ENDPOINT_DRONE_CHORD: clear_drone_chord(18); break;
   case ENDPOINT_DRONE_BASS_2: clear_drone_bass(89); break;
   case ENDPOINT_DRONE_CHORD_2: clear_drone_chord(89); break;
-  case ENDPOINT_BREATH: clear_drone_chord(89); break;
+  // Halo Pad, since Warm Pad's key is the Noise Riser's on the Breath Gate.
+  case ENDPOINT_BREATH:
+    clear_drone_chord(94);
+    c->breath_layers = 0;
+    update_breath_fx();
+    break;
   }
 
   update_fade(c->selected_endpoint);
@@ -1028,6 +1129,9 @@ void clear_status() {
   drum_chooses_notes = false;
   drum_chooses_some_notes = false;
   speech_chooses_notes = false;
+  voice_lead_on = false;
+  led_pending_number = 0;
+  led_scheduled_number = 0;
   musical_mode = MODE_MAJOR;
   most_recent_drum_pedal = MIDI_PEDAL_2;
   most_recent_choosy_drum_ts = 0;
@@ -1095,7 +1199,7 @@ void update_breath_fx(void) {
   unsigned fx = breath_fx;
   if (c->on[ENDPOINT_BREATH]) {
     for (int i = 0; i < N_BREATH_VOICES; i++) {
-      if (c->voices[ENDPOINT_BREATH] == BREATH_VOICES[i].voice) {
+      if (c->breath_layers & BREATH_VOICES[i].layer) {
         fx |= BREATH_VOICES[i].fx;
       }
     }
@@ -1116,6 +1220,13 @@ void breath_gate_breath(void) {
     breath_gate_rested = false;
     update_bass(/*force_refresh=*/true);
   }
+}
+
+// A layer key on the Breath Gate: switch that layer on or off, alongside the
+// others and the pad.
+void toggle_breath_layer(unsigned layer) {
+  c->breath_layers ^= layer;
+  update_breath_fx();
 }
 
 void toggle_breath_fx(unsigned fx) {
@@ -1162,11 +1273,13 @@ void drone_endpoint_off(int endpoint) {
 bool downbeat(int subbeat) {
   return subbeat % 72 == 0;
 }
+int preup_subbeat(void) { return jig_time ? (72/3-3) : (72/4); }
+int upbeat_subbeat(void) { return jig_time ? (2*72/3-3) : (72/2-1); }
 bool preup(int subbeat) {
-  return subbeat == (jig_time ? (72/3-3) : (72/4));
+  return subbeat == preup_subbeat();
 }
 bool upbeat(int subbeat) {
-  return subbeat == (jig_time ? (2*72/3-3) : (72/2-1));
+  return subbeat == upbeat_subbeat();
 }
 bool predown(int subbeat) {
   if (jig_time) return false;  // This beat doesn't happen in jig time.
@@ -1587,23 +1700,40 @@ void count_drum_hit(int note_in) {
 // I ii iii IV V vi vii-diminished.  Always the major key, whatever the arrow
 // keys say, the way a number chart reads; the arrows still steer what the
 // whistle snaps to.
+static const int NASHVILLE_DEGREE[7] = {0, 2, 4, 5, 7, 9, 11};
+static const int NASHVILLE_QUALITY[7] = {
+  CHORD_MAJOR, CHORD_MINOR, CHORD_MINOR, CHORD_MAJOR, CHORD_MAJOR,
+  CHORD_MINOR, CHORD_DIM,
+};
+
+void nashville_leads(int number, uint64_t due);
+static void lead_now(int number, uint64_t until);
+static uint64_t lead_beat_ns(uint64_t t);
+
 void nashville_picks_chord(int number) {
-  static const int DEGREE[7] = {0, 2, 4, 5, 7, 9, 11};
-  static const int QUALITY[7] = {
-    CHORD_MAJOR, CHORD_MINOR, CHORD_MINOR, CHORD_MAJOR, CHORD_MAJOR,
-    CHORD_MINOR, CHORD_DIM,
-  };
   if (!speech_chooses_notes || number < 1 || number > 7) return;
+  // Made before the voice-led drones have set off -- a beat come a little
+  // early, or no beat to wait for -- they glide there anyway: to where
+  // they'd have got to, or over half a beat from now.
+  if (led_pending_number != number) {
+    uint64_t t = now();
+    bool scheduled = led_scheduled_number == number &&
+                     led_scheduled_end > t;
+    lead_now(number, scheduled ? led_scheduled_end
+                               : t + lead_beat_ns(t) / 2);
+  }
+  if (led_scheduled_number == number) led_scheduled_number = 0;
 
   // What update_drum_pedal_note does with a pedal's note, minus the pedal.
-  int note = to_root(root_note + DEGREE[number - 1]);
+  int note = to_root(root_note + NASHVILLE_DEGREE[number - 1]);
   last_drum_pedal_note = current_drum_pedal_note;
   prev_chord_note = chord_note;
   prev_chord_type = chord_type;
-  chord_type = QUALITY[number - 1];
+  chord_type = NASHVILLE_QUALITY[number - 1];
   chord_note = note;
   current_drum_pedal_note = note;
   update_bass(/*force_refresh=*/false);
+  if (led_pending_number == number) led_pending_number = 0;
 }
 
 // Play in another key: the root the bass lines and drones are built on.
@@ -1621,23 +1751,218 @@ void change_key(int pitch_class) {
   update_bass(/*force_refresh=*/false);
 }
 
-void send_chord(int note_out, int vel, int endpoint) {
-  psend_midi(MIDI_ON, to_root(note_out), vel, endpoint);
+// The notes of the chord a chord drone plays on note_out: the root, the third
+// when the feet or a voice have said which, and the fifth.  `type` is the
+// chord's CHORD_*, when they have.  Returns how many.
+int drone_chord_notes(int note_out, int type, int endpoint, int* out) {
+  int n = 0;
+  out[n++] = to_root(note_out);
   if (// chord_type isn't defined when reading notes from piano
       (drum_chooses_notes || drum_chooses_some_notes) &&
       // need to turn on thirds
       c->shortish[endpoint]) {
-    psend_midi(MIDI_ON, to_root(note_out + (chord_type == CHORD_MAJOR ? 4 : 3)), vel, endpoint);
+    out[n++] = to_root(note_out + (type == CHORD_MAJOR ? 4 : 3));
   }
 
   int fifth = note_out + 7;
   if (// chord_type isn't defined when reading notes from piano
       (drum_chooses_notes || drum_chooses_some_notes) &&
-      chord_type == CHORD_DIM) {
+      type == CHORD_DIM) {
     fifth -= 1;
   }
+  out[n++] = to_root(fifth);
+  return n;
+}
 
-  psend_midi(MIDI_ON, to_root(fifth), vel, endpoint);
+void send_chord(int note_out, int vel, int endpoint) {
+  int notes[MAX_LED_NOTES];
+  int n = drone_chord_notes(note_out, chord_type, endpoint, notes);
+  for (int i = 0; i < n; i++) psend_midi(MIDI_ON, notes[i], vel, endpoint);
+}
+
+// How far a voicing is from the one before it: how far each note would have
+// to move to reach the nearest note of the other, both ways, plus a pull back
+// towards the drones' usual octave so a long run of chords can't wander off
+// the keyboard, and against a voicing spreading past an octave.
+static double voicing_cost(const int* now, int n, const int* was, int m) {
+  double cost = 0;
+  for (int i = 0; i < n; i++) {
+    int best = 99;
+    for (int j = 0; j < m; j++) {
+      if (abs(now[i] - was[j]) < best) best = abs(now[i] - was[j]);
+    }
+    cost += best;
+  }
+  for (int j = 0; j < m; j++) {
+    int best = 99;
+    for (int i = 0; i < n; i++) {
+      if (abs(now[i] - was[j]) < best) best = abs(now[i] - was[j]);
+    }
+    cost += best;
+  }
+  int lo = now[0], hi = now[0], sum = 0;
+  for (int i = 0; i < n; i++) {
+    if (now[i] < lo) lo = now[i];
+    if (now[i] > hi) hi = now[i];
+    sum += now[i];
+  }
+  cost += 0.5 * fabs((double)sum / n - 29.5);  // the middle of to_root's 24-35
+  if (hi - lo > 12) cost += 2 * (hi - lo - 12);
+  return cost;
+}
+
+// Strike or let go of a slot's note, straight, with no bend.
+static void led_strike(int endpoint, int slot, int note, int vel) {
+  int channel = led_channel(endpoint, slot);
+  if (led_bend[endpoint][slot] != 0) voice_bend(channel, 0);
+  led_bend[endpoint][slot] = 0;
+  led_glide_end[endpoint][slot] = 0;
+  send_midi(MIDI_ON, endpoint_note(note, endpoint), vel, channel);
+  led_keys[endpoint][slot] = note;
+}
+
+static void led_release(int endpoint, int slot) {
+  if (led_keys[endpoint][slot] == -1) return;
+  send_midi(MIDI_OFF, endpoint_note(led_keys[endpoint][slot], endpoint), 0,
+            led_channel(endpoint, slot));
+  led_keys[endpoint][slot] = -1;
+}
+
+// Play these notes on a drone the way a pianist would move between chords:
+// each voice to the nearest note of the new chord, in whichever octave that
+// is, and the notes the two chords share held rather than struck again.  The
+// same chord again is struck again, as it would be without voice leading.
+//
+// With glide_until in the future, the voices that move glide there by then
+// instead of being struck again -- the Mac's, and only within a bend's
+// reach.  Otherwise they move at once.
+void voice_lead(int endpoint, const int* want, int n, int vel,
+                uint64_t glide_until) {
+  int* slot_note = led_notes[endpoint];
+  int was[MAX_LED_NOTES];
+  int m = 0;
+  for (int k = 0; k < MAX_LED_NOTES; k++) {
+    if (slot_note[k] != -1) was[m++] = slot_note[k];
+  }
+
+  int best[MAX_LED_NOTES];
+  if (m == 0) {
+    // Nothing to lead from: whatever was sounding goes, and the chord comes
+    // in where it would without voice leading.
+    drone_endpoint_off(endpoint);
+    for (int i = 0; i < n; i++) {
+      led_strike(endpoint, i, want[i], vel);
+      slot_note[i] = want[i];
+    }
+    return;
+  }
+
+  // Every note in the octave it's in, or one either side: 3^n voicings.
+  double best_cost = 1e9;
+  int combos = 1;
+  for (int i = 0; i < n; i++) combos *= 3;
+  for (int combo = 0; combo < combos; combo++) {
+    int now_notes[MAX_LED_NOTES];
+    int k = combo;
+    bool ok = true;
+    for (int i = 0; i < n; i++) {
+      now_notes[i] = want[i] + 12 * (k % 3 - 1);
+      k /= 3;
+      if (now_notes[i] < 17 || now_notes[i] > 47) ok = false;
+      for (int j = 0; j < i; j++) if (now_notes[j] == now_notes[i]) ok = false;
+    }
+    if (!ok) continue;
+    double cost = voicing_cost(now_notes, n, was, m);
+    if (cost < best_cost) {
+      best_cost = cost;
+      memcpy(best, now_notes, sizeof(int) * n);
+    }
+  }
+
+  // The same chord again: strike it again.
+  bool same = n == m;
+  for (int i = 0; i < n && same; i++) {
+    bool found = false;
+    for (int j = 0; j < m; j++) if (was[j] == best[i]) found = true;
+    same = found;
+  }
+  if (same) {
+    for (int k = 0; k < MAX_LED_NOTES; k++) {
+      if (slot_note[k] == -1) continue;
+      led_release(endpoint, k);
+      led_strike(endpoint, k, slot_note[k], vel);
+    }
+    return;
+  }
+
+  // Which slot each new note goes to: the one that has least far to move,
+  // with an empty slot only for a note none of the sounding ones should go
+  // to.  Every way of putting n notes in the slots: at most 3! of them.
+  int assign[MAX_LED_NOTES], best_assign[MAX_LED_NOTES];
+  int least = 1 << 30;
+  for (int a = 0; a < MAX_LED_NOTES * MAX_LED_NOTES * MAX_LED_NOTES; a++) {
+    int x = a;
+    bool ok = true;
+    int cost = 0;
+    for (int i = 0; i < MAX_LED_NOTES; i++) {
+      assign[i] = x % MAX_LED_NOTES;
+      x /= MAX_LED_NOTES;
+    }
+    for (int i = 0; i < n && ok; i++) {
+      for (int j = 0; j < i; j++) if (assign[j] == assign[i]) ok = false;
+      int from = slot_note[assign[i]];
+      cost += from == -1 ? 50 : abs(best[i] - from);
+    }
+    if (ok && cost < least) {
+      least = cost;
+      memcpy(best_assign, assign, sizeof(assign));
+    }
+  }
+
+  uint64_t t = now();
+  bool glide = LED_CAN_GLIDE && glide_until > t;
+  int target[MAX_LED_NOTES] = {-1, -1, -1};
+  for (int i = 0; i < n; i++) target[best_assign[i]] = best[i];
+  for (int k = 0; k < MAX_LED_NOTES; k++) {
+    if (target[k] == slot_note[k]) continue;  // held, or already heading there
+    if (target[k] == -1) {
+      led_release(endpoint, k);
+      led_bend[endpoint][k] = 0;
+      led_glide_end[endpoint][k] = 0;
+    } else if (slot_note[k] != -1 && glide &&
+               abs(target[k] - led_keys[endpoint][k]) <= VOICE_BEND_RANGE) {
+      led_bend_from[endpoint][k] = led_bend[endpoint][k];
+      led_bend_to[endpoint][k] = target[k] - led_keys[endpoint][k];
+      led_glide_start[endpoint][k] = t;
+      led_glide_end[endpoint][k] = glide_until;
+    } else {
+      led_release(endpoint, k);
+      led_strike(endpoint, k, target[k], vel);
+    }
+    slot_note[k] = target[k];
+  }
+}
+
+// Move the gliding voices along.  Every tick.
+void advance_glides(void) {
+  if (!LED_CAN_GLIDE) return;
+  uint64_t t = 0;
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    for (int k = 0; k < MAX_LED_NOTES; k++) {
+      uint64_t end = led_glide_end[endpoint][k];
+      if (end == 0) continue;
+      if (t == 0) t = now();
+      uint64_t start = led_glide_start[endpoint][k];
+      double x = t >= end ? 1 : (double)(t - start) / (double)(end - start);
+      double bend = led_bend_from[endpoint][k] +
+        (led_bend_to[endpoint][k] - led_bend_from[endpoint][k]) * x;
+      if (fabs(bend - led_bend[endpoint][k]) > 0.005 || x >= 1) {
+        voice_bend(led_channel(endpoint, k), bend);
+        led_bend[endpoint][k] = bend;
+      }
+      if (x >= 1) led_glide_end[endpoint][k] = 0;
+    }
+  }
 }
 
 void update_bass(bool force_refresh) {
@@ -1656,6 +1981,15 @@ void update_bass(bool force_refresh) {
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     if (!holds_bass_note(endpoint)) continue;
     int note_out = c->chord[endpoint] ? chord_out : bass_out;
+    int type = chord_type;
+    bool led = is_drone(endpoint) && voice_lead_on;
+    if (led && led_pending_number && speech_chooses_notes) {
+      // Already on their way to a spoken chord that hasn't been made yet:
+      // that's theirs, and a breath or Pulse striking them again mustn't pull
+      // them back to the old one.
+      note_out = to_root(root_note + NASHVILLE_DEGREE[led_pending_number - 1]);
+      type = NASHVILLE_QUALITY[led_pending_number - 1];
+    }
 
     if (!c->on[endpoint]) continue;
     if (is_breath_percussion(c->voices[endpoint])) continue;
@@ -1673,14 +2007,81 @@ void update_bass(bool force_refresh) {
       vel = c->chord[endpoint] ? DRONE_CHORD_VELOCITY : DRONE_BASS_VELOCITY;
     }
 
-    drone_endpoint_off(endpoint);
-    if (c->chord[endpoint]) {
-      send_chord(note_out, vel, endpoint);
+    if (led) {
+      int want[MAX_LED_NOTES] = {note_out};
+      int n = c->chord[endpoint]
+        ? drone_chord_notes(note_out, type, endpoint, want) : 1;
+      voice_lead(endpoint, want, n, vel, /*glide_until=*/0);
     } else {
-      psend_midi(MIDI_ON, note_out, vel, endpoint);
+      drone_endpoint_off(endpoint);
+      if (c->chord[endpoint]) {
+        send_chord(note_out, vel, endpoint);
+      } else {
+        psend_midi(MIDI_ON, note_out, vel, endpoint);
+      }
     }
     current_note[endpoint] = note_out;
   }
+}
+
+// A spoken number has been heard, to be made on the beat at `due`: the
+// drones with VOICE LEAD on glide to its chord over the half beat before
+// that, each voice from its note to the new chord's (voice_lead), so they
+// arrive as the chord is made -- the beat the pedals', or 116 BPM's.  Until
+// then they stay on the old chord with everything else.  Heard too late for
+// that, they glide from now to the beat; with no beat to wait for (`due` 0,
+// or gone), over half a beat from now.  Only drones that are sounding; the
+// rest pick the chord up when it's made, as everything else does.
+static uint64_t lead_beat_ns(uint64_t t) {
+  return current_beat_ns > 0 && t - last_downbeat_ns < 3 * current_beat_ns / 2
+    ? current_beat_ns : 60 * NS_PER_SEC / 116;
+}
+
+// Start the voice-led drones gliding to this number's chord, to get there by
+// `until`.
+static void lead_now(int number, uint64_t until) {
+  led_pending_number = number;
+  int note = to_root(root_note + NASHVILLE_DEGREE[number - 1]);
+  int type = NASHVILLE_QUALITY[number - 1];
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    if (!is_drone(endpoint) || !voice_lead_on || !c->on[endpoint]) continue;
+    if (is_breath_percussion(c->voices[endpoint])) continue;
+    if (current_note[endpoint] == -1 || current_note[endpoint] == note) {
+      continue;
+    }
+    int want[MAX_LED_NOTES] = {note};
+    int n = c->chord[endpoint]
+      ? drone_chord_notes(note, type, endpoint, want) : 1;
+    voice_lead(endpoint, want, n,
+               c->chord[endpoint] ? DRONE_CHORD_VELOCITY
+                                  : DRONE_BASS_VELOCITY, until);
+    current_note[endpoint] = note;
+  }
+}
+
+void nashville_leads(int number, uint64_t due) {
+  if (!speech_chooses_notes || number < 1 || number > 7) return;
+  uint64_t t = now();
+  uint64_t half = lead_beat_ns(t) / 2;
+  if (due <= t) {
+    led_scheduled_number = 0;
+    lead_now(number, t + half);
+  } else if (due - half <= t) {
+    led_scheduled_number = 0;
+    lead_now(number, due);
+  } else if (led_pending_number != number) {
+    led_scheduled_number = number;
+    led_scheduled_start = due - half;
+    led_scheduled_end = due;
+  }
+}
+
+// Start a waiting glide when its time comes.  Every tick.
+void advance_lead_schedule(void) {
+  if (!led_scheduled_number || now() < led_scheduled_start) return;
+  int number = led_scheduled_number;
+  led_scheduled_number = 0;
+  lead_now(number, led_scheduled_end);
 }
 
 char mapping(unsigned char note_in) {
@@ -1928,14 +2329,21 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   if (c->selected_endpoint == ENDPOINT_BREATH) {
     int index = breath_voice_for_note(note_in);
     if (index >= 0) {
-      select_voice(c, BREATH_VOICES[index].voice);
+      toggle_breath_layer(BREATH_VOICES[index].layer);
       return;
     }
   }
   if (is_drone(c->selected_endpoint)) {
     int index = drone_voice_for_note(note_in);
     if (index >= 0) {
-      select_voice(c, DRONE_VOICES[index].program);
+      int program = DRONE_VOICES[index].program;
+      // On the Breath Gate the pad's key again lets go of it, leaving the
+      // layers on their own.
+      if (c->selected_endpoint == ENDPOINT_BREATH &&
+          c->voices[ENDPOINT_BREATH] == program) {
+        program = VOICE_BREATH_NO_PAD;
+      }
+      select_voice(c, program);
       return;
     }
     if (is_voice_key(note_in)) return;
@@ -2100,6 +2508,16 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '.':
     c->vel[c->selected_endpoint] = !c->vel[c->selected_endpoint];
     return;
+  case VOICE_LEAD_TOGGLE:
+    voice_lead_on = !voice_lead_on;
+    // A voice-led drone plays its notes on the voice channels rather than its
+    // own: move the sounding ones across now, so the first chord change after
+    // has voices to glide.
+    for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+      if (is_drone(endpoint)) drone_endpoint_off(endpoint);
+    }
+    update_bass(/*force_refresh=*/true);
+    return;
   case '/':
     fade_target = fade_target == 0 ? MAX_FADE : 0;
     return;
@@ -2124,6 +2542,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case SPEECH_PICKS:
     speech_chooses_notes = !speech_chooses_notes;
+    led_pending_number = 0;
+    led_scheduled_number = 0;
     // It is Drum Some underneath, so it comes and goes with it, and it can't
     // share the job with the drum picking every note.
     drum_chooses_some_notes = speech_chooses_notes;
@@ -2519,6 +2939,106 @@ void maybe_end_notes() {
   maybe_end_footbass_notes(ENDPOINT_FOOTBASS_3);
 }
 
+// The Breath Gate's Snare Roll: the kit's snare on the beat's grid for as
+// long as you blow, and faster the harder -- quarters, 8ths, 16ths, 32nds --
+// and louder too, so blowing up through it is a build.  On the pedals' grid
+// while they're going; from the start of the breath at 116 BPM when they
+// aren't.  Only ever the next hit on the grid is waited for, and a breath that
+// stops stops it.
+bool roll_open;
+uint64_t roll_origin_ns;
+int roll_division;
+int64_t roll_last_slot;
+uint64_t roll_last_hit_ns;
+
+#define ROLL_DEFAULT_BEAT_NS (60 * NS_PER_SEC / 116)
+
+void breath_roll_tick(void) {
+  double blown = breath_blown(breath);
+  if (!c->on[ENDPOINT_BREATH] ||
+      !(c->breath_layers & BREATH_LAYER_SNARE_ROLL) ||
+      blown < BREATH_GATE_SHUT) {
+    roll_open = false;
+    return;
+  }
+  uint64_t t = now();
+  if (!roll_open) {
+    if (blown <= BREATH_GATE_OPEN) return;
+    roll_open = true;
+    roll_origin_ns = t;
+    roll_division = 0;
+  }
+
+  int division = blown < 0.3 ? 1 : blown < 0.5 ? 2 : blown < 0.75 ? 4 : 8;
+  // The pedals' grid if they've kept time within the last couple of beats.
+  uint64_t beat = ROLL_DEFAULT_BEAT_NS;
+  uint64_t origin = roll_origin_ns;
+  if (current_beat_ns > 0 && t - last_downbeat_ns < 2 * current_beat_ns) {
+    beat = current_beat_ns;
+    origin = last_downbeat_ns;
+  }
+  int64_t since = (int64_t)(t - origin);
+  int64_t slot = since * division / (int64_t)beat;
+  if (division != roll_division) {
+    // A breath just starting, or moving to another speed.  Strike now if
+    // this slot has only just begun; otherwise wait for the next.
+    double into = (double)(since * division % (int64_t)beat) / beat;
+    roll_last_slot = into < 0.25 ? slot - 1 : slot;
+    roll_division = division;
+  }
+  if (slot == roll_last_slot) return;
+  roll_last_slot = slot;
+  // Speeding up just after a hit mustn't hit again straight away.
+  if (t - roll_last_hit_ns < beat / division / 2) return;
+  roll_last_hit_ns = t;
+
+  // A real snare out of the kit's set: the rim some kits use on the
+  // downbeat doesn't roll.
+  const DrumKit* kit = &KITS[c->drum_voice];
+  double scale = kit->snare == MIDI_DRUM_OUT_SNARE ? kit->snare_vel : 0.8;
+  psend_midi(MIDI_ON, MIDI_DRUM_OUT_SNARE,
+             normalize((int)((35 + 85 * blown) * scale)), ENDPOINT_DRUM);
+}
+
+// Tell the Mac's audio about the music, every tick.  NULL on the Pi.
+static void (*music_hook)(const MusicState* state) = NULL;
+
+void publish_music(void) {
+  if (!music_hook) return;
+  MusicState m;
+  m.bass_note = active_note();
+  m.chord_root = active_chord();
+  bool known = drum_chooses_notes || drum_chooses_some_notes;
+  m.chord_third = !known ? 0 : chord_type == CHORD_MAJOR ? 4 : 3;
+  m.chord_fifth = known && chord_type == CHORD_DIM ? 6 : 7;
+  m.beat_start_ns = last_downbeat_ns;
+  m.beat_ns = current_beat_ns;
+  m.jig = jig_time;
+  // The trance gate's 16ths, where the foot bass plays: the beat's 8ths are
+  // the downbeat and upbeat -- and in jig time the preup between them -- and
+  // its 16ths fall between those.  Not evenly: the foot bass leans each off
+  // the grid (see preup and upbeat), and in jig time that's the lilt.
+  int eighths[3] = {0, preup_subbeat(), upbeat_subbeat()};
+  int n_eighths = jig_time ? 3 : 2;
+  if (!jig_time) eighths[1] = upbeat_subbeat();
+  m.n_gate_steps = 0;
+  for (int i = 0; i < n_eighths; i++) {
+    int next = i + 1 < n_eighths ? eighths[i + 1] : N_SUBBEATS;
+    m.gate_steps[m.n_gate_steps++] = eighths[i];
+    // Straight, the 16th between is the foot bass's own preup and predown.
+    m.gate_steps[m.n_gate_steps++] = !jig_time
+      ? (i == 0 ? preup_subbeat() : 3*72/4)
+      : (eighths[i] + next) / 2;
+  }
+  for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
+    // The trance gate: a drone's II and Q, which drones have no other use
+    // for, chop it on the beat's grid -- 8ths, 16ths, or both for 1 . 3 4.
+    m.trance_gate[endpoint] = !is_drone(endpoint) ? TRANCE_GATE_NONE :
+      c->doubled[endpoint] + 2 * c->pre_unique[endpoint];
+  }
+  music_hook(&m);
+}
+
 uint64_t tick_n = 0;
 uint64_t subtick_n = 0;
 void jml_tick() {
@@ -2541,6 +3061,10 @@ void jml_tick() {
   trigger_subbeats();
   maybe_end_notes();
   maybe_end_pitched_kick();
+  breath_roll_tick();
+  advance_lead_schedule();
+  advance_glides();
+  publish_music();
 
   // We fade from 100 to 0 over 4000ms, so we want to progress every 40 ticks.
   if (tick_n % 40 == 0) {

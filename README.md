@@ -147,10 +147,16 @@ the physical keyboard in the middle, and what it actually does underneath:
   the edge doesn't chatter.  Each breath after the breath has come all the way
   to rest strikes the chord afresh, so it opens on the pad's attack; pulsing
   without coming to rest just chops the chord that's sounding.  It starts on
-  Warm Pad, and with it selected the voice keys pick from the drones' pads --
-  and B, N and M, empty for the other drones, are its own percussion
-  instead, played by moving the breath rather than by how hard it is, so
-  holding it steady is silence:
+  Halo Pad, and with it selected `S D F H X C V` pick from the drones'
+  pads.  The rest of the voice keys are its own voices, in place of a pad:
+  the build-and-drop voices on `A`, `Z` and `G` (see [Builds and
+  drops](#builds-and-drops)), and on B, N and M, empty for the other drones,
+  percussion played by moving the breath rather than by how hard it is, so
+  holding it steady is silence.  Its own voices, drawn in blue, are layers:
+  each key switches one on or off, and any of them can play together, over
+  the pad or without one.  There's only ever one pad, since it's the one
+  voice that uses the Breath Gate's channel; its key again lets go of it,
+  leaving the layers on their own.
   * **Guira** (B): a wire brush over a punched metal cylinder, each ridge a
     "tsch".
   * **Guiro** (N): every fortieth of the breath's range it moves is one
@@ -190,8 +196,8 @@ keyboard keys with the mouse too, shift-clicking to select.
 
 Unlike the Pi, there's no three-digit entry on `F8` or `delete`: the root note
 comes from that picker, and manual per-voice volumes aren't something worth
-typing blind.  `F8` is speech recognition instead, and `F3` number
-recognition -- see below.
+typing blind.  `F8` is speech recognition instead, `F3` number
+recognition -- see below -- and `delete` VOICE LEAD, for the drones.
 
 ### Speech recognition
 
@@ -383,7 +389,8 @@ have always been, and the pads picked out with `make pads && ./pads`.
 | `A` Church Organ | `S` Synth Strings 1 | `D` Synth Voice | `F` Synth Brass 1 | `G` Synth Brass 2 | `H` Rock Organ |
 | `Z` Warm Pad | `X` Polysynth | `C` Halo Pad | `V` Sweep Pad | | |
 
-`B`, `N` and `M` do nothing then.  The list is `DRONE_VOICES` in
+`B`, `N` and `M` do nothing then -- except on the Breath Gate, where they,
+and Church Organ's, Synth Brass 2's and Warm Pad's keys, are its own voices.  The list is `DRONE_VOICES` in
 `jammermidilib.h`, and `handle_keypad` does the picking, so the Pi's keypad
 gets it too.
 
@@ -394,9 +401,86 @@ chord drones.  The drones strike harder than they did (velocity 115 and 40,
 up from 70 and 30) so the quieter pads can get there.  `./pads --levels` works those volumes out and `./pads --check`
 (part of `make test-mac`) fails if they drift.
 
+**VOICE LEAD** (`delete`) is for all the drones at once, so none of them
+jump while the rest glide.  With it on, each new chord moves each voice to the nearest
+note of the new chord, in whichever octave that is, and holds the notes the
+two chords share rather than striking them again -- the way a pianist moves
+between chords, rather than every voice jumping in parallel.  A pull back
+towards the drones' usual octave stops a long run of chords from wandering
+off, and the same chord again is struck again, as it would be without it.
+`voice_lead` in `jammermidilib.h`.
+
+When number recognition (`F3`) hears a new chord, voice-led drones glide
+into it: each voice that moves glides from its note to the new chord's over
+the half beat before the chord's beat, so it arrives just as the chord is
+made (`nashville_leads`).  The common tones stay where they are.  Heard too
+late for that, it glides from then to the beat; with no beat to wait for,
+it glides over half a beat from when it's heard, and the chord waits for it,
+made as the glide ends.  (With VOICE LEAD off, there's nothing to wait for,
+and a number with no beat is made the moment it's heard, as ever.)  Once
+it's gliding it's the drone's chord: a breath on the Breath Gate, or Pulse,
+striking the drones again doesn't pull it back.  For that, on the Mac, each of a
+voice-led drone's notes plays on a channel of its own -- three spare channels
+per drone, 17 to 31, which follow the drone's program, volume and fade and
+are gated and ducked with it -- and glides by bending that channel.  A move
+further than an octave, or any chord change that isn't a spoken number, is
+struck again rather than glided.  Switching VOICE LEAD on or off strikes the
+sounding drones' chords again, onto or off their voice channels, so the very
+first change after has voices to glide.
+
+`DOUB` (`P`) and `PRE UNIQ` (`[`), which the drones had no use for, are their
+**trance gate**: the pad is chopped on the beat's grid, in 8ths with `P`,
+16ths with `[`, and the syncopated 1 . 3 4 with both -- or in jig time
+(`0`), where a beat is three 8ths, those three, six 16ths, and 1 . 3 4 . 6.
+The grid is the foot bass's, not an even one: the gate opens where the foot
+bass plays, the upbeat a hair early, and in jig time the 8ths at 0, 21 and 45
+of the beat's 72 subbeats rather than 0, 24 and 48, the lilt of a jig.  Only inside the beat
+the last pedal hit started -- once the feet stop, the pad just holds.  It's
+on the audio, per channel (`apply_trance_gates` in `macapi.h`), so the Pi
+doesn't have it.
+
 `8` and `9` are cleared exactly like `I` and `O`, and `is_drone()` is what
 the places that treat the drones specially ask.  Like the extra foot basses
 they aren't reachable from `kbd.py`: their pseudo-notes are `w`-`z`.
+
+### Builds and drops
+
+Prototypes for technocontra: ways into and out of a big moment that are all
+played live.  None of them keeps going more than a beat past what you're
+doing: the breath voices stop within a few milliseconds of the breath, and
+the rest only ever fill the beat the last pedal hit started.
+
+**The Breath Gate's voices.**  With `` ` `` selected, blue layers that can be
+on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
+
+| key | voice | |
+|---|---|---|
+| `A` | Snare Roll | the kit's snare on the beat's grid, faster and louder as you blow harder: quarters, 8ths, 16ths, 32nds.  The first hit comes with the breath. |
+| `Z` | Noise Riser | noise through a band that rises from 300Hz to 12kHz as you blow harder |
+| `G` | Wobble | a saw bass on the bass note, its filter swinging on the beat's grid once a beat, and 2, 3 and 4 times as you blow harder |
+
+With no pedals the grid is 116 BPM, from the start of the breath; with them
+it's theirs, and carries on at their tempo if they stop while you're still
+blowing.  The Snare Roll plays the drum channel (`breath_roll_tick`), so
+it's ducked and swept with the rest.  The other two are the Mac's own sound
+(`macapi.h`), summed in after Kick Duck and the sweeps.  They're levelled to
+sit within about 3dB of the foot bass, A-weighted, at a strong breath.
+
+**Trance gate and voice leading** are on the drones: see [The drones'
+pads](#the-drones-pads).
+
+**The Vocoder**, the whistle's voice on `B`, plays the drones' chord with
+whatever goes into the whistle's microphone: saws on the root, third (once
+the feet or a voice have picked the chord, so it's known) and fifth, with
+noise in the top bands for consonants, through 16 bands.  Each note is
+played in six octaves at once under a fixed bell over pitch centred on
+180Hz, like a Shepard tone: a higher chord leans on its lower octaves, so
+changing chord changes the notes but not the register.  A gate that settles
+on the room's noise floor keeps the band in the microphone from droning the
+chord.  The level goes as the square root of the input, so it sits against
+the foot bass at about +2 to +12dB across a 10x range of input, and it has its
+own Vocoder volume slider in the Whistle menu, apart from the whistle's.
+The whistle engine keeps listening underneath, for the meters.
 
 ### The whistle bass
 
@@ -417,7 +501,8 @@ doesn't know about it and neither does the Pi.
   an endpoint's key selects that endpoint.
 * **While it's selected** the voice keys pick its ten voices -- Bass,
   Octaveless, Reese, 808, FM, Sub FM, Square, Drawbar, High Drawbar, Accordion
-  on `A S D F G H` and `Z X C V` -- and `]`/`\` and `-`/`=` move its octave
+  on `A S D F G H` and `Z X C V` -- or the Vocoder on `B` (see [Builds and
+  drops](#builds-and-drops)), and `]`/`\` and `-`/`=` move its octave
   and its volume.  The per-endpoint flags go dark, because the endpoint they'd
   act on isn't what's on screen.  Shift over any endpoint's key hands the keys
   back.

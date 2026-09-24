@@ -56,6 +56,7 @@ static bool global_flag(int flag) {
   case GLOBAL_BASS_SWEEP:   return breath_fx & BREATH_FX_SWEEP_BASS;
   case GLOBAL_TREBLE_SWEEP: return breath_fx & BREATH_FX_SWEEP_TREBLE;
   case GLOBAL_PEAK_SWEEP:   return breath_fx & BREATH_FX_SWEEP_PEAK;
+  case GLOBAL_VOICE_LEAD:   return voice_lead_on;
   }
   return false;
 }
@@ -265,6 +266,7 @@ SPOKEN_ALIASES[] = {
   {"Poly\nsynth", "polysynth"},
   {"Octave\nless", "octaveless"},
   {"Accor\ndion", "accordion"},
+  {"Wash\nboard", "washboard"},
   {"MIXO\nLYDIAN", "mixolydian"},
 };
 
@@ -323,6 +325,9 @@ static int all_spoken_phrases(char (*out)[48], int max) {
   }
   for (int i = 0; i < N_DRONE_VOICES; i++) {
     n = add_spoken_phrases(DRONE_VOICES[i].label, out, n, max);
+  }
+  for (int i = 0; i < N_BREATH_VOICES; i++) {
+    n = add_spoken_phrases(BREATH_VOICES[i].label, out, n, max);
   }
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     n = add_spoken_phrases(WHISTLE_VOICES[i].label, out, n, max);
@@ -390,7 +395,7 @@ static bool key_is_lit(const Key* key) {
   if (drone_keys_active() && key->group == GROUP_VOICE) {
     int breath_voice = breath_voice_on_key(key);
     if (breath_voice >= 0) {
-      return c->voices[sel] == BREATH_VOICES[breath_voice].voice;
+      return c->breath_layers & BREATH_VOICES[breath_voice].layer;
     }
     int index = drone_voice_for_note(key->note);
     return index >= 0 && c->voices[sel] == DRONE_VOICES[index].program;
