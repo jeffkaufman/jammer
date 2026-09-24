@@ -724,6 +724,14 @@ static inline bool holds_bass_note(int endpoint) {
   return endpoint == ENDPOINT_JAWHARP || is_drone(endpoint);
 }
 
+// The endpoints CHORD builds a chord on -- a fifth, and sometimes a third --
+// and so moves up out of the bass.  The ones the piano plays have no chord of
+// their own to build: they play what's played.
+static inline bool plays_chords(int endpoint) {
+  return is_footbass(endpoint) || endpoint == ENDPOINT_ARP ||
+         holds_bass_note(endpoint);
+}
+
 // Given a note relative to root, convert it into a note relative to fifth.
 int to_fifth(int note_out) {
   return fifth_note + (note_out - root_note);
@@ -736,7 +744,7 @@ int endpoint_note(int note, int endpoint) {
 	c->voices[endpoint] == 18) {
     note += 12;  // organs should be up an octave
   }
-  if (c->chord[endpoint]) {
+  if (c->chord[endpoint] && plays_chords(endpoint)) {
     // chords should be higher
     note += 24;
   }

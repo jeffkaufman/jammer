@@ -236,21 +236,71 @@ static void test_voices() {
 
 static void test_modifier_flags() {
   full_reset();
-  select_ep("T");  // select low
+  select_ep("E");  // select the arp
 
-  CHECK(!lit("K"), "upbeat starts off for low");
-  press("K");
-  CHECK(c->upbeat[ENDPOINT_LOW], "K didn't set upbeat");
-  CHECK(lit("K"), "K should be lit");
-  press("K");
-  CHECK(!c->upbeat[ENDPOINT_LOW], "K didn't clear upbeat");
+  CHECK(!lit("["), "pre unique starts off for the arp");
+  press("[");
+  CHECK(c->pre_unique[ENDPOINT_ARP], "[ didn't set pre unique");
+  CHECK(lit("["), "[ should be lit");
+  press("[");
+  CHECK(!c->pre_unique[ENDPOINT_ARP], "[ didn't clear pre unique");
 
+  select_ep("W");  // select the foot bass
   press(",");
-  CHECK(c->chord[ENDPOINT_LOW] && lit(","), "comma didn't set chord");
+  CHECK(c->chord[ENDPOINT_FOOTBASS] && lit(","), "comma didn't set chord");
 
   // Flags are per endpoint, so switching endpoints switches what's lit.
-  select_ep("Y");  // select hi
-  CHECK(!lit(","), "chord leaked from low to hi");
+  select_ep("E");  // select the arp
+  CHECK(!lit(","), "chord leaked from the foot bass to the arp");
+}
+
+// A modifier the selected endpoint never reads draws dead, and dark even if
+// it's set, since being on does nothing.
+static void test_ignored_flags_are_dead() {
+  full_reset();
+
+  select_ep("R");  // flex: played from the piano, always at full velocity
+  CHECK(key_is_dead(key_for_cap("P")), "II should be dead on Flex");
+  CHECK(key_is_dead(key_for_cap("J")) && !lit("J"),
+        "DOWN BEAT is set by default but should be dead and dark on Flex");
+  CHECK(key_is_dead(key_for_cap(".")), "VEL should be dead on Flex");
+  CHECK(key_is_dead(key_for_cap(",")), "CHORD should be dead on Flex");
+  CHECK(!key_is_dead(key_for_cap("]")), "OCT+ should be live on Flex");
+  CHECK(!key_is_dead(key_for_cap("F4")), "PULSE should be live on Flex");
+
+  // Nor does it move Flex up, which it used to: the two octaves are for the
+  // chord it builds, and the piano's endpoints don't build one.
+  int plain = endpoint_note(40, ENDPOINT_FLEX);
+  press(",");
+  CHECK(endpoint_note(40, ENDPOINT_FLEX) == plain,
+        "CHORD shouldn't move Flex's notes");
+  press(",");
+
+  select_ep("T");  // low: the piano's velocity, if asked
+  CHECK(!key_is_dead(key_for_cap(".")), "VEL should be live on Low");
+  CHECK(key_is_dead(key_for_cap(";")), "SHORTISH should be dead on Low");
+
+  select_ep("W");  // the foot bass reads everything
+  for (int i = 0; i < N_KEYS; i++) {
+    CHECK(!key_is_dead(&KEYS[i]), "%s should be live on the foot bass",
+          KEYS[i].cap);
+  }
+
+  select_ep("tab");  // the drum: no pitch to move
+  CHECK(key_is_dead(key_for_cap(",")), "CHORD should be dead on the drum");
+  CHECK(key_is_dead(key_for_cap("]")) && key_is_dead(key_for_cap("\\")),
+        "OCT should be dead on the drum");
+  CHECK(!key_is_dead(key_for_cap("P")), "II should be live on the drum");
+
+  select_ep("Q");  // the jawharp holds a note: no rhythm
+  CHECK(key_is_dead(key_for_cap("P")) && key_is_dead(key_for_cap("K")),
+        "II and UP BEAT should be dead on the jawharp");
+  CHECK(!key_is_dead(key_for_cap("'")), "SHORTER re-strikes the jawharp");
+
+  select_ep("I");  // a drone: II and Q are its trance gate
+  CHECK(!key_is_dead(key_for_cap("P")) && !key_is_dead(key_for_cap("[")),
+        "II and Q should be live on a drone");
+  CHECK(key_is_dead(key_for_cap("L")), "UP HIGH should be dead on a drone");
 }
 
 static void test_octave_and_volume() {
@@ -1510,8 +1560,8 @@ static void test_voice_lead() {
   CHECK(strcmp(key_current_label(key_for_cap("del")), "VOICE\nLEAD") == 0,
         "delete should be VOICE LEAD");
   select_ep("O");
-  CHECK(strcmp(key_current_label(key_for_cap(".")), "VEL") == 0,
-        ". should be VEL, even on a drone");
+  CHECK(key_current_label(key_for_cap(".")) == NULL,
+        ". should be dead on a drone, which has no velocity to follow");
 
   press("del");
   CHECK(voice_lead_on && lit("del") && !lit("."), "delete didn't turn it on");
@@ -1957,6 +2007,7 @@ int main() {
   test_select_and_toggle();
   test_voices();
   test_modifier_flags();
+  test_ignored_flags_are_dead();
   test_octave_and_volume();
   test_musical_mode();
   test_drum_picks_notes_defaults();

@@ -179,6 +179,63 @@ static bool drone_key_is_dead(const Key* key) {
     drone_voice_for_note(key->note) < 0 && breath_voice_on_key(key) < 0;
 }
 
+// ---------------------------------------------------------------------------
+// Flags an endpoint ignores
+//
+// The per-endpoint modifiers are stored for every endpoint, but each kind of
+// endpoint only reads some of them:
+//
+//   foot basses, arp   all of them (arpeggiate_endpoint)
+//   drum               all but CHORD and OCT, since psend_midi doesn't pass
+//                      drum notes through endpoint_note (arpeggiate_drum)
+//   jawharp, drones    no rhythm and no VEL: update_bass holds the note.
+//                      The drones' II and Q are the trance gate, though
+//                      (publish_music), and S and SS still mean the third
+//                      and re-striking
+//   flex, low, upper,  the piano plays them (handle_piano), so none of the
+//   overlay            rhythm or length flags, and no CHORD (plays_chords);
+//                      Flex is always full velocity
+//
+// Switching one of these on does nothing you could hear, so the key draws
+// dead, the way the whistle's unused keys do.
+// ---------------------------------------------------------------------------
+
+static bool endpoint_uses_flag(int ep, int flag) {
+  if (is_footbass(ep) || ep == ENDPOINT_ARP) return true;
+  if (ep == ENDPOINT_DRUM) return flag != FLAG_CHORD;
+  switch (flag) {
+  case FLAG_CHORD:
+    return plays_chords(ep);
+  case FLAG_DOWNBEAT: case FLAG_UPBEAT: case FLAG_UPBEAT_HIGH:
+    return false;
+  case FLAG_DOUBLED: case FLAG_PRE_UNIQUE:
+    return is_drone(ep);
+  case FLAG_SHORTISH: case FLAG_SHORTER:
+    return holds_bass_note(ep);
+  case FLAG_VEL:
+    return !holds_bass_note(ep) && ep != ENDPOINT_FLEX;
+  }
+  return true;  // the ones every channel has: CH, P, AL, AF
+}
+
+// True if this modifier does nothing for the selected endpoint.  The whistle
+// has its own rules (whistle_key_is_dead).  Caller must hold the lock.
+static bool endpoint_key_is_dead(const Key* key) {
+  if (whistle_selected || !key->label || key->group != GROUP_MODIFIER) {
+    return false;
+  }
+  int sel = c->selected_endpoint;
+  if (key->lit == LIT_OCTAVE) return sel == ENDPOINT_DRUM;
+  if (key->lit == LIT_EP_FLAG) return !endpoint_uses_flag(sel, key->arg);
+  return false;
+}
+
+// Any reason for a key to draw dead right now.  Caller must hold the lock.
+static bool key_is_dead(const Key* key) {
+  return whistle_key_is_dead(key) || drone_key_is_dead(key) ||
+    endpoint_key_is_dead(key);
+}
+
 // Strike a key, as a keypress would, minus the drawing.  Caller must hold the
 // lock.
 static void strike_key_locked(const Key* key, bool selecting) {
@@ -207,7 +264,7 @@ static void strike_key_locked(const Key* key, bool selecting) {
 // that does nothing at the moment.  Caller must hold the lock.
 static const char* key_current_label(const Key* key) {
   if (!key->label) return NULL;
-  if (whistle_key_is_dead(key) || drone_key_is_dead(key)) return NULL;
+  if (key_is_dead(key)) return NULL;
   // The whistle first: while it's selected the voice keys are its, whatever
   // endpoint was selected before it.
   if (whistle_selected && key->group == GROUP_VOICE) {
@@ -400,6 +457,10 @@ static bool key_is_lit(const Key* key) {
     int index = drone_voice_for_note(key->note);
     return index >= 0 && c->voices[sel] == DRONE_VOICES[index].program;
   }
+
+  // A flag this endpoint ignores goes dark with the rest of its key, even if
+  // it's set: on is only worth showing if it does something.
+  if (endpoint_key_is_dead(key)) return false;
 
   LitKind lit = key->lit;
   int arg = key->arg;

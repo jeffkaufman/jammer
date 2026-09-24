@@ -105,8 +105,7 @@ typedef struct {
   bool whistle_available;
   bool whistle_on;
   bool whistle_selected;
-  bool whistle_dead[N_KEYS];
-  bool drone_dead[N_KEYS];
+  bool dead[N_KEYS];  // does nothing right now (key_is_dead)
   int drone_voice[N_KEYS];  // DRONE_VOICES index each key picks, or -1
   int breath_voice[N_KEYS];  // BREATH_VOICES index, or -1
   int whistle_voice;
@@ -135,8 +134,7 @@ static void take_snapshot(Snapshot* s) {
   for (int i = 0; i < N_KEYS; i++) {
     s->lit[i] = KEYS[i].label ? key_is_lit(&KEYS[i]) : false;
     s->selected[i] = key_is_selected_endpoint(&KEYS[i]);
-    s->whistle_dead[i] = whistle_key_is_dead(&KEYS[i]);
-    s->drone_dead[i] = drone_key_is_dead(&KEYS[i]);
+    s->dead[i] = key_is_dead(&KEYS[i]);
     s->drone_voice[i] = drone_voice_on_key(&KEYS[i]);
     s->breath_voice[i] = breath_voice_on_key(&KEYS[i]);
   }
@@ -410,8 +408,7 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   bool blank_on_drum = snapshot.selected_endpoint == ENDPOINT_DRUM &&
                        !snapshot.whistle_selected &&
                        key->drum_label && key->drum_label[0] == '\0';
-  bool unbound = (key->label == NULL) || blank_on_drum ||
-                 snapshot.whistle_dead[i] || snapshot.drone_dead[i];
+  bool unbound = (key->label == NULL) || blank_on_drum || snapshot.dead[i];
   bool selected = snapshot.selected[i];
 
   NSTimeInterval since_flash =
