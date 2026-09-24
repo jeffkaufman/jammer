@@ -550,7 +550,7 @@ static void speech_queue_action(const SwAction* action) {
 
 // numheard.h, which keeps the audio when the two recognizers disagree.
 static void nh_fast_judged(const NrStream* s, long long onset, long long end,
-                           int number);
+                           int number, const NrResult* r);
 static void nh_apple_word(int index, const char* text, int number);
 static void nh_tick(void);
 static bool nh_unreviewed(NSString* tsv);
@@ -661,11 +661,11 @@ static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
     int quiet_ms = quiet * 10 + SPEECH_TICK_MS;
     int said_ms = (int)(end - onset + 1) * 10 + quiet_ms;
     if (speech_fast_take(r.label + 1, quiet_ms, said_ms)) {
-      nh_fast_judged(s, onset, end, r.label + 1);
+      nh_fast_judged(s, onset, end, r.label + 1, &r);
     }
     return true;
   }
-  if (final) nh_fast_judged(s, onset, end, 0);
+  if (final) nh_fast_judged(s, onset, end, 0, &r);
   if (final && r.nearest >= 0 && r.nearest != NR_OTHER) {
     printf("fast: maybe %s (%.2f, runner-up %.2f), but %s; leaving it to "
            "apple\n", NR_WORDS[r.nearest], r.dist, r.runner_up,

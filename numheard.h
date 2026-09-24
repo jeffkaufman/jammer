@@ -19,14 +19,18 @@
 // They're learned from, with the sessions, at every startup -- except where
 // the fast path took a number and Apple didn't agree, which wait until you've
 // said who was right (see "Reviewing" below).  Of the first six of those,
-// Apple was wrong every time.  Where Apple wrote a word it keeps writing for
+// Apple was wrong every time.  And except the near misses, where the fast path
+// was nearly sure of a number but left it to Apple, and Apple didn't hear that
+// number: those are kept even where Apple heard nothing, or nothing like a
+// number, and wait for you too.  Where Apple wrote a word it keeps writing for
 // the number the fast path took -- "next" or "thanks" for six -- that's
 // taken as agreeing (nh_misheard_as), and nothing's kept.  They're kept to
 // NH_MAX_BYTES in all, the oldest going first.
 //
 // Only what the fast path judged can disagree with it: whole utterances, with
-// F3 on, after a moment of quiet.  And only where Apple heard something: a
-// word it didn't write at all is no opinion either way.  What Apple wrote is
+// F3 on, after a moment of quiet.  And, but for the near misses, only where
+// Apple heard something: a word it didn't write at all is no opinion either
+// way.  What Apple wrote is
 // matched to what the fast path heard by where on the microphone's timeline
 // Apple says each word was; if it gives no timestamps, by when the words
 // arrived, as belonging to the last utterance that had started by then.
@@ -45,6 +49,7 @@
 #define NH_SLACK_S 0.15    // timed, how near a word must be to count
 #define NH_PRE_S 1.0       // kept before the word, for the room
 #define NH_POST_S 0.3      // and after it: past end_hangover, to end it
+#define NH_NEAR 0.3         // a near miss is this far past accept, at most
 #define NH_MAX_JUDGED 32
 #define NH_MAX_WORDS 128
 #define NH_MAX_SAID 16
@@ -54,6 +59,8 @@ typedef struct {
   long long onset, end;
   long long start;  // where its clip starts
   int number;       // what the fast path took it as, 1-7, or 0
+  int maybe;        // not taken, but nearly: what it nearly was, 1-7, or 0
+  float dist;       // to the nearest recording
   float gate_db, room_db;
 } NhJudged;
 
@@ -142,8 +149,10 @@ static void nh_prune(void) {
 // ---------------------------------------------------------------------------
 
 // Speech queue: cut it from the microphone's last few seconds, and hand it
-// over to be written.
-static void nh_keep(const NhJudged* c, const char* label, const char* said) {
+// over to be written.  A near miss to ask about has "# maybe" in its .tsv,
+// what it nearly was.
+static void nh_keep(const NhJudged* c, const char* label, const char* said,
+                    bool ask) {
   double rate = speech_format.sampleRate;
   long long from = c->start < 0 ? 0 : c->start;
   long long to = c->end + (long long)(NH_POST_S * rate);
@@ -154,10 +163,12 @@ static void nh_keep(const NhJudged* c, const char* label, const char* said) {
   for (long long i = 0; i < n; i++) {
     x[i] = speech_mic[(from + i) & speech_mic_mask];
   }
+  NSString* maybe = ask ? [NSString stringWithFormat:
+    @"# maybe\t%s\n# dist\t%.2f\n", NR_WORDS[c->maybe - 1], c->dist] : @"";
   NSString* tsv = [NSString stringWithFormat:
-    @"# rate\t%.0f\n# gate_db\t%.0f\n# room_db\t%.1f\n# fast\t%s\n"
+    @"# rate\t%.0f\n# gate_db\t%.0f\n# room_db\t%.1f\n# fast\t%s\n%@"
     @"# apple\t%s\n0\t%s\n", rate, c->gate_db, c->room_db,
-    c->number ? NR_WORDS[c->number - 1] : "nothing", said, label];
+    c->number ? NR_WORDS[c->number - 1] : "nothing", maybe, said, label];
 
   dispatch_async(nh_queue(), ^{
     NSURL* dir = nh_dir();
@@ -196,10 +207,10 @@ static void nh_keep(const NhJudged* c, const char* label, const char* said) {
 // Setting the two side by side
 // ---------------------------------------------------------------------------
 
-// The fast path took an utterance as `number`, or, with 0, as nothing.  The
-// stream's frames, put on the microphone's timeline.
+// The fast path took an utterance as `number`, or, with 0, as nothing, having
+// matched it as `r`.  The stream's frames, put on the microphone's timeline.
 static void nh_fast_judged(const NrStream* s, long long onset, long long end,
-                           int number) {
+                           int number, const NrResult* r) {
   if (speech_record_hook || nh_n_judged == NH_MAX_JUDGED) return;
   double rate = speech_format.sampleRate;
   long long hop = s->f.hop;
@@ -213,6 +224,13 @@ static void nh_fast_judged(const NrStream* s, long long onset, long long end,
   long long quiet = s->p.pre_quiet * hop;
   if (c->start > c->onset - quiet) c->start = c->onset - quiet;
   c->number = number;
+  // Nearly a number: too close to call between two, or only a little too far
+  // from the nearest.  Of the recordings that weren't numbers, the few
+  // nearest a number were 1.41 to 1.91 from it, with accept at 1.6.
+  bool near = !number && r->nearest >= 0 && r->nearest != NR_OTHER &&
+              r->dist <= s->p.accept + NH_NEAR;
+  c->maybe = near ? r->nearest + 1 : 0;
+  c->dist = r->dist;
   c->gate_db = s->p.trigger_db;
   c->room_db = s->noise;
 }
@@ -294,7 +312,10 @@ static void nh_resolve(int i) {
     said[j].index = w->index;
     said[j].text = w->text;
   }
-  if (n_said == 0 || apple == c->number) return;  // no opinion, or agreed
+  // A near miss Apple didn't hear as that number is asked about, whatever
+  // Apple made of it.
+  bool ask = c->maybe && apple != c->maybe;
+  if (!ask && (n_said == 0 || apple == c->number)) return;  // or agreed
   if (n_said == 1 && c->number && nh_misheard_as(said[0].text, c->number)) {
     printf("heard: fast path %s, apple \"%s\", as it often writes it\n",
            NR_WORDS[c->number - 1], said[0].text);
@@ -313,11 +334,17 @@ static void nh_resolve(int i) {
   char label[64];
   snprintf(label, sizeof(label), "%s%s", apple ? "" : "other: ",
            apple ? NR_WORDS[apple - 1] : words);
-  printf("heard: fast path %s, apple %s (\"%s\"); keeping it\n",
-         c->number ? NR_WORDS[c->number - 1] : "nothing",
-         apple ? NR_WORDS[apple - 1] : "not a number", words);
+  if (ask) {
+    printf("heard: fast path maybe %s (%.2f), apple %s (\"%s\"); keeping "
+           "it to ask about\n", NR_WORDS[c->maybe - 1], c->dist,
+           apple ? NR_WORDS[apple - 1] : "not a number", words);
+  } else {
+    printf("heard: fast path %s, apple %s (\"%s\"); keeping it\n",
+           c->number ? NR_WORDS[c->number - 1] : "nothing",
+           apple ? NR_WORDS[apple - 1] : "not a number", words);
+  }
   fflush(stdout);
-  nh_keep(c, label, words);
+  nh_keep(c, label, words, ask);
 }
 
 // Every drain: settle whatever Apple's had long enough to hear.
@@ -343,8 +370,9 @@ static void nh_tick(void) {
 // where it's anybody's guess who was right: Apple writing "siri" for "three"
 // or you saying "siri".  Each plays as it comes up, and you say what it was;
 // that becomes its label, and "# reviewed" in its .tsv keeps it from coming
-// up again.  The clips where Apple heard a number the fast path let go aren't
-// asked about, since there the fast path was only unsure.
+// up again.  So do the near misses Apple didn't hear as that number, which
+// are as much a guess.  The other clips where Apple heard a number the fast
+// path let go aren't asked about, since there the fast path was only unsure.
 //
 // Then the recordings that are especially unusual, and that nobody has
 // reviewed: ones that sound more like a different word than like any other
@@ -364,10 +392,12 @@ static bool nh_reviewed(NSString* tsv) {
 }
 
 // Whether a clip's .tsv is one to review, and so not to learn from yet: the
-// fast path took a number, Apple didn't agree, and you haven't said.
+// fast path took a number, or nearly did, Apple didn't agree, and you haven't
+// said.
 static bool nh_unreviewed(NSString* tsv) {
   return !nh_reviewed(tsv) &&
-         ![tsv containsString:@"\n# fast\tnothing\n"];
+         (![tsv containsString:@"\n# fast\tnothing\n"] ||
+          [tsv containsString:@"\n# maybe\t"]);
 }
 
 // The most unusual recordings to ask about at once.
@@ -643,9 +673,14 @@ static void nh_relabel(NSString* tsv, NSString* label) {
       @"Unusual: learned as “%@”, but sounds most like “%@”", item.learned,
       item.nearest];
   } else {
+    NSString* maybe = nh_tsv_value(text, @"maybe");
+    NSString* apple = nh_tsv_value(text, @"apple");
     self.heard.stringValue = [NSString stringWithFormat:
-      @"fast recognizer: %@      Apple: “%@”",
-      nh_tsv_value(text, @"fast"), nh_tsv_value(text, @"apple")];
+      @"fast recognizer: %@      Apple: %@",
+      maybe.length ? [NSString stringWithFormat:@"nearly %@", maybe]
+                   : nh_tsv_value(text, @"fast"),
+      apple.length ? [NSString stringWithFormat:@"“%@”", apple]
+                   : @"nothing"];
   }
   NSURL* wav = [NSURL fileURLWithPath:[item.tsv.stringByDeletingPathExtension
                                        stringByAppendingPathExtension:@"wav"]];
