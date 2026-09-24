@@ -19,8 +19,10 @@
 // They're learned from, with the sessions, at every startup -- except where
 // the fast path took a number and Apple didn't agree, which wait until you've
 // said who was right (see "Reviewing" below).  Of the first six of those,
-// Apple was wrong every time.  They're kept to NH_MAX_BYTES in all, the
-// oldest going first.
+// Apple was wrong every time.  Where Apple wrote a word it keeps writing for
+// the number the fast path took -- "next" or "thanks" for six -- that's
+// taken as agreeing (nh_misheard_as), and nothing's kept.  They're kept to
+// NH_MAX_BYTES in all, the oldest going first.
 //
 // Only what the fast path judged can disagree with it: whole utterances, with
 // F3 on, after a moment of quiet.  And only where Apple heard something: a
@@ -248,6 +250,26 @@ static bool nh_matches(int i, const NhWord* w) {
   return true;
 }
 
+// Whether `word` is how Apple keeps writing `number`, so that the fast path
+// taking that number is agreement, not something to ask about.  Of the clips
+// where the fast path took six and Apple wrote "next" or "thanks", every one
+// was six.  Not acted on as numbers, though (nw_number_for_word): "next" and
+// "thanks" said to the room shouldn't change the chord.
+static bool nh_misheard_as(const char* word, int number) {
+  static const struct { int number; const char* heard; } MISHEARD[] = {
+    {6, "next"}, {6, "thanks"},
+  };
+  char clean[SW_NAME_MAX];
+  sw_normalize(word, clean, sizeof(clean));
+  for (int i = 0; i < (int)(sizeof(MISHEARD) / sizeof(MISHEARD[0])); i++) {
+    if (MISHEARD[i].number == number &&
+        strcmp(clean, MISHEARD[i].heard) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Apple's had long enough: what did it make of judged[i]?
 static void nh_resolve(int i) {
   const NhJudged* c = &nh_judged[i];
@@ -273,6 +295,12 @@ static void nh_resolve(int i) {
     said[j].text = w->text;
   }
   if (n_said == 0 || apple == c->number) return;  // no opinion, or agreed
+  if (n_said == 1 && c->number && nh_misheard_as(said[0].text, c->number)) {
+    printf("heard: fast path %s, apple \"%s\", as it often writes it\n",
+           NR_WORDS[c->number - 1], said[0].text);
+    fflush(stdout);
+    return;
+  }
 
   char words[128] = "";
   for (int j = 0; j < n_said; j++) {
