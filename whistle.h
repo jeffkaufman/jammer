@@ -321,6 +321,9 @@ static int whistle_default_high_note(void) {
 }
 
 static _Atomic unsigned whistle_pub_fx;
+// Whether there's a whistle-controlled voice for whistle_guard to keep the
+// effects clear of.
+static _Atomic int whistle_pub_guard;
 static _Atomic int whistle_pub_fx_mic;
 // The vocal effects' own gate, in dBFS peak: see RoomGate.
 #define VFX_GATE_DEFAULT_DB -54   // 0.002, where the gate was fixed before
@@ -362,6 +365,13 @@ static void whistle_publish(void) {
   unsigned fx = whistle_passthrough ? 0 : whistle_fx;
   bool vocoder = fx != 0;
   atomic_store_explicit(&whistle_pub_fx, fx, memory_order_relaxed);
+  // Whistling only needs keeping out of the effects while it's playing
+  // something: a voice, or Whistle Breath.  Not with the whistle off, or its
+  // voice silenced under them, or passing the input through.
+  atomic_store_explicit(&whistle_pub_guard,
+                        whistle_on && !whistle_passthrough &&
+                          !whistle_voice_muted,
+                        memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_fx_gate_db, whistle_fx_gate_db,
                         memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_fx_mic,
@@ -561,6 +571,60 @@ typedef struct {
 // The whistle's, and each effect's, so each fades in and out on its own.
 static WhistleRamp whistle_ramp, fx_ramp[N_VFX];
 
+// The whistle guard: whistled notes don't go through the vocal effects when
+// the effects are on the whistle's own input and the whistle is playing a
+// voice, or breathing.  While the pitch detector is
+// sure enough that it's hearing a whistle -- committed to a note, or its
+// confidence over WHISTLE_GUARD_CONFIDENCE, which gets there a median 4ms
+// into a note where committing takes 13-22ms -- the effects' input fades out
+// over about a millisecond, and stays out WHISTLE_GUARD_HOLD_S after, for a
+// note's tail and the confidence's flicker.  And the effects hear their
+// input WHISTLE_GUARD_LOOKAHEAD_S late, so the guard is mostly down before a
+// note's first sound reaches them -- always, guarding or not, so the guard
+// coming and going doesn't jump them.  Speech is over the confidence for under
+// 1% of the time it's loud, in the kept number clips.
+#define WHISTLE_GUARD_CONFIDENCE 0.8
+#define WHISTLE_GUARD_HOLD_S 0.080
+#define WHISTLE_GUARD_LOOKAHEAD_S 0.005
+#define WHISTLE_GUARD_FRAMES 1024   // the lookahead's line, at up to 192kHz
+
+typedef struct {
+  float line[WHISTLE_GUARD_FRAMES];
+  int pos, lookahead, hold, held;
+  double gain, down, up;
+} WhistleGuard;
+
+static WhistleGuard whistle_guard;
+
+static void whistle_guard_init(WhistleGuard* g, double rate) {
+  memset(g, 0, sizeof(*g));
+  g->lookahead = (int)(rate * WHISTLE_GUARD_LOOKAHEAD_S);
+  if (g->lookahead >= WHISTLE_GUARD_FRAMES) {
+    g->lookahead = WHISTLE_GUARD_FRAMES - 1;
+  }
+  g->hold = (int)(rate * WHISTLE_GUARD_HOLD_S);
+  g->gain = 1;
+  g->down = 1 - exp(-1 / (rate * 0.0003));
+  g->up = 1 - exp(-1 / (rate * 0.010));
+}
+
+// One sample of the effects' input in, `whistling` if the detector hears a
+// whistle now; the input out, lookahead late, and silent around whistles.
+static float whistle_guard_run(WhistleGuard* g, float in, bool whistling) {
+  if (whistling) {
+    g->held = g->hold;
+  } else if (g->held > 0) {
+    g->held--;
+  }
+  double target = g->held > 0 ? 0 : 1;
+  g->gain += (target - g->gain) * (target < g->gain ? g->down : g->up);
+  g->line[g->pos] = in;
+  int back = (g->pos - g->lookahead + WHISTLE_GUARD_FRAMES) %
+             WHISTLE_GUARD_FRAMES;
+  g->pos = (g->pos + 1) % WHISTLE_GUARD_FRAMES;
+  return (float)(g->line[back] * g->gain);
+}
+
 static void whistle_ramp_to(WhistleRamp* r, float target, float frames) {
   r->target = target;
   if (fabsf(target - r->live) < 1e-6f) {
@@ -664,6 +728,7 @@ static void whistle_engine_prepare(double sample_rate) {
   whistle_applied_high = -1;
   memset(&whistle_ramp, 0, sizeof(whistle_ramp));
   memset(fx_ramp, 0, sizeof(fx_ramp));
+  whistle_guard_init(&whistle_guard, sample_rate);
   bm_init(&whistle_breath_mic, sample_rate);
   whistle_applied_breath = 0;
   whistle_ring_reset();
@@ -884,10 +949,14 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
 
   whistle_apply_controls(len, sample_rate);
   whistle_pop_input(whistle_input_block, whistle_input_block_2, len);
-  // What the vocal effects hear: the first input, or the second.
-  const float* fx_in =
-    atomic_load_explicit(&whistle_pub_fx_mic, memory_order_relaxed)
-      ? whistle_input_block_2 : whistle_input_block;
+  // What the vocal effects hear: the first input, or the second.  On the
+  // first, the whistle's, the guard keeps its whistled notes out of them.
+  bool fx_on_second =
+    atomic_load_explicit(&whistle_pub_fx_mic, memory_order_relaxed);
+  bool guarding =
+    atomic_load_explicit(&whistle_pub_guard, memory_order_relaxed);
+  const float* fx_in = fx_on_second ? whistle_input_block_2
+                                    : whistle_input_block;
 
   // The effects that might be heard: those on, and those still fading out.
   unsigned fx = 0;
@@ -946,14 +1015,19 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
     // out, and they're summed in beside the voice.
     if (fx) {
       if (fabsf(fx_in[i]) > fx_peak) fx_peak = fabsf(fx_in[i]);
+      const struct PitchHint* h = &whistle_engine.detector.hint;
+      float in = fx_on_second ? fx_in[i] : whistle_guard_run(
+        &whistle_guard, fx_in[i],
+        guarding &&
+          (h->voiced || h->confidence > WHISTLE_GUARD_CONFIDENCE));
       float sum = 0;
       if (fx & VFX_BIT(VFX_VOCODER)) {
         sum += whistle_ramp_next(&fx_ramp[VFX_VOCODER]) *
-          vocoder_process(fx_in[i], chord_hz, chord_weight, chord_notes,
+          vocoder_process(in, chord_hz, chord_weight, chord_notes,
                           vocoder_volume);
       }
       if (fx & ~VFX_BIT(VFX_VOCODER)) {
-        VfxInput v = vfx_input(fx_in[i], listen);
+        VfxInput v = vfx_input(in, listen);
         for (int e = VFX_VOCODER + 1; e < N_VFX; e++) {
           if (!(fx & VFX_BIT(e))) continue;
           sum += whistle_ramp_next(&fx_ramp[e]) * vocoder_volume *

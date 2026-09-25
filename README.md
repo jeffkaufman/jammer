@@ -526,6 +526,20 @@ device's second input, so a vocal mic there can go through them while the
 whistle mic stays on the bass.  The whistle, the breath voices and speech
 recognition always listen to input 1.  It's dead on a device with one input.
 
+**Whistled notes don't go through them**, while they share input 1 with the
+whistle and the whistle is playing something -- a voice, or Whistle Breath;
+not with it off, or its voice silenced under the effects, when there's no
+whistling to keep out.  While the whistle's pitch detector is sure it's hearing a whistle --
+it's committed to a note, or its confidence is over 0.8, which comes a
+median 4ms into a note where committing takes 13-22ms -- the effects' input
+fades out within a millisecond, and stays out 80ms after, for the note's
+tail.  The effects hear their input 5ms late, so that's mostly down before a
+note's first sound reaches them -- always, so the guard coming and going
+doesn't jump them.  On whistle-synth's recordings, none of the
+whistling gets through; on the kept number clips, 98% of the voice does.  On
+input 2 there's no guard: singing there while you whistle on input 1 is
+left alone.
+
 **The Vocal FX menu** has all of this apart from the whistle: which effect is
 on (or None), which input it hears, the effects' volume, and a **gate** of
 their own, from -70 to -10dBFS peak, which nothing quieter opens.  That's on

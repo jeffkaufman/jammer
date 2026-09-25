@@ -896,6 +896,55 @@ static void test_voice_fx() {
   }
 }
 
+// The whistle guard keeps whistled notes out of the vocal effects and lets
+// a voice through, going by the whistle's own pitch detector: a whistle at
+// 1kHz and a vowel at 150Hz, each a second long, after the room.
+static double guarded_share(bool whistle) {
+  static struct Engine e;
+  engine_init(&e, 48000);
+  pitch_set_gate(&e.detector, (float)whistle_gate_margin(5));
+  WhistleGuard g;
+  whistle_guard_init(&g, 48000);
+  static uint32_t r = 9;
+  double phase = 0, in_energy = 0, out_energy = 0;
+  for (int i = 0; i < 48000 * 2; i++) {
+    r ^= r << 13;
+    r ^= r >> 17;
+    r ^= r << 5;
+    double x = 0.0005 * ((double)r / 2147483648.0 - 1);
+    if (i >= 48000) {
+      double t = (i - 48000) / 48000.0;
+      double env = fmin(1, t / 0.01) * fmin(1, (1 - t) / 0.01);
+      phase += (whistle ? 1000.0 : 150.0) / 48000;
+      if (phase >= 1) phase -= 1;
+      double v = 0;
+      if (whistle) {
+        v = sin(2 * M_PI * phase);
+      } else {
+        for (int h = 1; h <= 20; h++) v += sin(2 * M_PI * h * phase) / (h * h);
+      }
+      x += 0.1 * env * v;
+    }
+    float l, rr;
+    engine_process_stereo(&e, (float)x, &l, &rr);
+    float y = whistle_guard_run(&g, (float)x, e.detector.hint.voiced ||
+      e.detector.hint.confidence > WHISTLE_GUARD_CONFIDENCE);
+    if (i >= 48000) {
+      in_energy += x * x;
+      out_energy += (double)y * y;
+    }
+  }
+  return out_energy / in_energy;
+}
+
+static void test_whistle_guard() {
+  double whistled = guarded_share(true), spoken = guarded_share(false);
+  CHECK(whistled < 0.05, "%.0f%% of a whistle got through to the effects",
+        100 * whistled);
+  CHECK(spoken > 0.9, "only %.0f%% of a voice got through to the effects",
+        100 * spoken);
+}
+
 // The effects' own gate: a voice under it doesn't open them, however quiet
 // the room, and one over it does.
 static void test_fx_gate() {
@@ -1126,6 +1175,26 @@ static void test_whistle() {
   CHECK(c->doubled[ENDPOINT_FLEX] == flex_doubled,
         "a modifier key reached an endpoint while the whistle was selected");
   CHECK(whistle_key_is_dead(key_for_cap("P")), "P should draw as dead");
+
+  // The whistle guard keeps whistling out of the effects only while there's
+  // a whistle-controlled voice playing.
+  CHECK(atomic_load(&whistle_pub_guard) == whistle_on,
+        "the guard should follow the whistle being on");
+  bool was_on = whistle_on;
+  if (!whistle_on) strike("1", false);
+  CHECK(atomic_load(&whistle_pub_guard), "a voice playing should be guarded");
+  strike("J", false);
+  strike("D", false);
+  if (whistle_voice_muted) strike("D", false);  // D, sounding, whatever it was
+  strike("D", false);  // and D again, silenced under the vocoder
+  CHECK(whistle_voice_muted && !atomic_load(&whistle_pub_guard),
+        "with the voice silenced, there's nothing to guard");
+  strike("D", false);
+  CHECK(atomic_load(&whistle_pub_guard), "and with it back, there is");
+  strike("J", false);
+  strike("1", false);
+  CHECK(!atomic_load(&whistle_pub_guard), "nor with the whistle off");
+  if (was_on) strike("1", false);
 
   // J K L ; are the vocoder and the effects beside it: each its key on and
   // off, and any of them together.
@@ -2457,6 +2526,7 @@ int main() {
   test_vocoder_holds();
   test_voice_fx();
   test_fx_gate();
+  test_whistle_guard();
   test_speech_picks();
   test_speech_commands();
   test_nashville_numbers();
