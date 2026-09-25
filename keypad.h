@@ -277,7 +277,7 @@ static const char* key_current_label(const Key* key) {
     return whistle_voice_label(whistle_voice_for_note(key->note));
   }
   if (whistle_selected && whistle_fx_for_note(key->note) &&
-      key->group == GROUP_MODIFIER) {
+      key->group != GROUP_VOICE) {
     return WHISTLE_FX[whistle_fx_for_note(key->note)].label;
   }
   if (whistle_selected && key->note == F2) return whistle_fx_mic_label();
@@ -447,6 +447,9 @@ static bool key_is_lit(const Key* key) {
   if (key->lit == LIT_WHISTLE_ON) return whistle_on;
 
   if (whistle_selected) {
+    // The vocal effects' keys show their effects.
+    int fx = key->group == GROUP_VOICE ? 0 : whistle_fx_for_note(key->note);
+    if (fx) return (whistle_fx & VFX_BIT(fx)) != 0;
     switch (key->group) {
     case GROUP_VOICE:
     {

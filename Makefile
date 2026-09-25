@@ -138,7 +138,7 @@ numrec-eval: numrec-eval.c numrec.h
 
 # Hear pads as the drone bass and drone chord would play them; see the top
 # of pads.c.
-pads: pads.c macapi.h jammermidilib.h voices.h common.h aweight.h
+pads: pads.c macapi.h jammermidilib.h voices.h common.h loudness.h
 	@test -n "$(FLUIDSYNTH)" || \
 	  { echo "fluidsynth not found; run: brew install fluid-synth"; exit 1; }
 	clang pads.c -o pads \
@@ -147,7 +147,7 @@ pads: pads.c macapi.h jammermidilib.h voices.h common.h aweight.h
 	  -std=gnu11 -Wall -O2
 
 # Are the kits at the same perceived volume?  See the top of kitlevels.c.
-kitlevels: kitlevels.c aweight.h jammermidilib.h voices.h common.h macapi.h
+kitlevels: kitlevels.c loudness.h jammermidilib.h voices.h common.h macapi.h
 	@test -n "$(FLUIDSYNTH)" || \
 	  { echo "fluidsynth not found; run: brew install fluid-synth"; exit 1; }
 	clang kitlevels.c -o kitlevels \
@@ -162,7 +162,7 @@ breathmic-eval: breathmic-eval.c breathmic.h common.h $(WHISTLE_OBJS)
 
 # Do the whistle's vocal effects sit where the vocoder does?  See the top of
 # voicefx-levels.c.
-voicefx-levels: voicefx-levels.c voicefx.h aweight.h $(MAC_SRCS) \
+voicefx-levels: voicefx-levels.c voicefx.h loudness.h $(MAC_SRCS) \
                 $(WHISTLE_OBJS)
 	clang voicefx-levels.c $(WHISTLE_OBJS) -o voicefx-levels \
 	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
@@ -172,7 +172,7 @@ voicefx-levels: voicefx-levels.c voicefx.h aweight.h $(MAC_SRCS) \
 
 # Is the whistle at the same perceived volume as the endpoints it plays
 # beside?  See the top of whistlelevels.c.
-whistlelevels: whistlelevels.c aweight.h jammermidilib.h voices.h common.h \
+whistlelevels: whistlelevels.c loudness.h jammermidilib.h voices.h common.h \
                macapi.h $(WHISTLE_OBJS)
 	@test -n "$(FLUIDSYNTH)" || \
 	  { echo "fluidsynth not found; run: brew install fluid-synth"; exit 1; }
@@ -183,7 +183,7 @@ whistlelevels: whistlelevels.c aweight.h jammermidilib.h voices.h common.h \
 
 .PHONY: run run-fakeinput runmac soundfont run-mac app clean-mac test-mac
 
-test-mac: test-keypad.c test-startup.c kitlevels.c aweight.h \
+test-mac: test-keypad.c test-startup.c kitlevels.c loudness.h \
           $(MAC_SRCS) keypad.h $(WHISTLE_OBJS)
 	clang test-keypad.c $(WHISTLE_OBJS) -o /tmp/jammer-test-keypad \
 	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \

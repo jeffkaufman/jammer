@@ -343,9 +343,23 @@ that selecting it actually redirects the shared keys -- and, just as much,
 that leaving it puts them back.
 
 `make whistlelevels && ./whistlelevels` measures whether the whistle can
-reach the endpoints it plays beside, A-weighted, the way `kitlevels` does for
-the drum kits.  See below: the answer turns on the microphone, not on any
-volume control.
+reach the endpoints it plays beside, the way `kitlevels` does for the drum
+kits.  See below: the answer turns on the microphone, not on any volume
+control.
+
+**Levels are perceived loudness at stage volume** (`loudness.h`): the ISO
+226:2003 equal-loudness contour at 90 phon, the ear at a loud PA.  Every
+levelling tool goes by it -- `kitlevels`, `pads`, `whistlelevels`,
+`voicefx-levels`, `audition` -- and each checks it against the standard's
+own table before trusting a number.  They used to go by A-weighting, which is
+the ear at a quiet 40 phon, where bass is heard much less: 23dB down at 75Hz,
+against 12dB at stage volume.  Levelled that way, anything mostly bass came
+out about 10dB louder than it measured.  Moving over moved some levels:
+the deep kicks (the 808s, Room 2) down 2-4dB and the thin ones (Synth,
+Bongos, Blocks) up, most of the pads 1-3dB down, the vocal-effect basses
+into line.  The kit sounds set by ear (the 808s' hats, the 808 B and Room 6
+kicks) kept the sound the ear gave them, and their offsets in `kitlevels.c`
+now say what that measures.
 
 ### The extra foot basses
 
@@ -395,7 +409,7 @@ and Church Organ's, Synth Brass 2's and Warm Pad's keys, are its own voices.  Th
 gets it too.
 
 Every pad on the list is levelled to Rock Organ as the drones used to play
-it, A-weighted -- and the chord drones 2dB above that, since they'd been a
+it, by perceived loudness -- and the chord drones 2dB above that, since they'd been a
 little quiet -- with its own channel volume for the bass drones and for the
 chord drones.  The drones strike harder than they did (velocity 115 and 40,
 up from 70 and 30) so the quieter pads can get there.  `./pads --levels` works those volumes out and `./pads --check`
@@ -463,8 +477,12 @@ With no pedals the grid is 116 BPM, from the start of the breath; with them
 it's theirs, and carries on at their tempo if they stop while you're still
 blowing.  The Snare Roll plays the drum channel (`breath_roll_tick`), so
 it's ducked and swept with the rest.  The other two are the Mac's own sound
-(`macapi.h`), summed in after Kick Duck and the sweeps.  They're levelled to
-sit within about 3dB of the foot bass, A-weighted, at a strong breath.
+(`macapi.h`), summed in after Kick Duck and the sweeps.  They were levelled
+to sit within about 3dB of the foot bass, A-weighted, at a strong breath.
+By perceived loudness at stage volume they're 8-10dB under it -- mostly the
+foot bass's low E gaining -- and haven't been moved: the numbers that would
+move them are the deepest bass and the top end, where the model's least to
+be trusted.
 
 **Trance gate and voice leading** are on the drones: see [The drones'
 pads](#the-drones-pads).
@@ -485,10 +503,12 @@ It's a layer rather than a voice: `J` switches it on and off over whichever
 whistle voice is playing, and the two sound together -- or, over a breath
 voice, the vocoder sounds while the breath voice breathes.  The lit voice key
 again, while the vocoder's on, silences the voice and leaves the vocoder
-alone; any voice key brings one back, and so does switching the vocoder off.
+alone; any voice key brings one back.  Switching the vocoder off after that
+leaves nothing playing, and the status row says `silent`, until a voice key
+brings a voice back.
 
 **Vocal effects** beside the Vocoder are on the row keys next to it,
-`J K L ;`, which the whistle has no other use for while it's selected.
+`J K L ; '`, which the whistle has no other use for while it's selected.
 Like the Vocoder they're layers over the whistle's voice, and any of them can
 be on at once, side by side -- the Vocoder with Voice Bass under it, say:
 each key switches its own on and off, each
@@ -502,6 +522,7 @@ off.  They're in `voicefx.h`.
 | `K` | Robot | ring modulated with the chord: its root, with its third (once it's known) and fifth beside it, so it changes colour with the chord as well as pitch |
 | `L` | Voice Bass | a bass an octave under the voice, following its pitch and nothing else: a sub where the voice sings, with the voice itself shifted down the octave on top |
 | `;` | Saw Bass | the same pitch, an octave under, as two detuned saws through a resonant lowpass that opens from 120Hz to 2.5kHz as the voice gets louder: a growling, talking bass |
+| `'` | Wah Bass | a saw through a lowpass that follows how bright the voice is, rather than how loud, so vowels and consonants wah it |
 
 Voice Bass finds the voice's pitch itself -- YIN, 70-700Hz, every 5ms, on the
 input taken down to 12kHz -- since the whistle's detector only covers a
@@ -518,7 +539,7 @@ that meets the microphone halfway, as it does.  Like the whistle, they all
 come out of the **left output only**, where fluidsynth's endpoints are unless
 CHANNEL SWAP moves them.  `make voicefx-levels && ./voicefx-levels` plays the
 kept number clips through each and says how loud each came out against the
-Vocoder, A-weighted; they're levelled to within 1dB of it.
+Vocoder, by perceived loudness; they're levelled to within 1dB of it.
 
 **`F2`**, while the whistle's selected, picks which input the Vocoder and the
 effects hear: `FX MIC 1`, the whistle's own, or `FX MIC 2`, the audio
@@ -569,7 +590,7 @@ doesn't know about it and neither does the Pi.
 * **While it's selected** the voice keys pick its ten voices -- Bass,
   Octaveless, Reese, 808, FM, Sub FM, Square, Drawbar, High Drawbar, Accordion
   on `A S D F G H` and `Z X C V`, or the breath voices on `N` and `M` (see
-  [Breathing into the microphone](#breathing-into-the-microphone)); `J K L ;`
+  [Breathing into the microphone](#breathing-into-the-microphone)); `J K L ; '`
   layer the Vocoder or one of the effects beside it over whichever it is (see [Builds
   and drops](#builds-and-drops)); and
   `]`/`\` and `-`/`=` move its octave
@@ -671,19 +692,19 @@ The control that sets the whistle's level is **not** its volume knob -- it's
 the full-blow level in the Whistle menu.  The voice spends the player's breath
 on loudness and brightness, so a full-blow level set above what the microphone
 actually delivers leaves it permanently dark and quiet however far up the
-volume goes.  `./whistlelevels` measures it, A-weighted, against the foot bass
-as `jml_setup` leaves it:
+volume goes.  `./whistlelevels` measures it, by perceived loudness, against
+the foot bass as `jml_setup` leaves it:
 
 | input peak | step 0 | step 2 | step 5 | step 9 |
 |---|---|---|---|---|
-| 0.300 | +1.9 | +1.8 | +1.4 | −9.4 |
-| 0.100 | +1.8 | +0.9 | −7.1 | −18.5 |
-| 0.030 | −3.0 | −8.5 | −17.0 | −28.0 |
-| 0.010 | −11.8 | −17.5 | −25.8 | −36.1 |
+| 0.300 | +3.9 | +3.9 | +3.5 | −7.1 |
+| 0.100 | +3.9 | +3.0 | −4.9 | −16.0 |
+| 0.030 | −0.8 | −6.2 | −14.6 | −25.4 |
+| 0.010 | −9.5 | −15.1 | −23.2 | −33.4 |
 
 dB relative to the foot bass; 0 is matched.  Two things fall out of it:
 
-* **The engine has plenty of level** -- it beats the foot bass by about 2dB --
+* **The engine has plenty of level** -- it beats the foot bass by about 4dB --
   but only if the input reaches it.  Every 10dB of input lost costs very
   nearly 10dB of output, and no volume control gets it back.
 * **The input level is the thing to fix first.**  The status row shows what
@@ -694,7 +715,7 @@ dB relative to the foot bass; 0 is matched.  Two things fall out of it:
   rescue it.
 
 The default full-blow step is **2**, not whistle-synth's own 5: that app's 5
-is 0.22, a vocal mic at the lip, and against fluidsynth it costs 7dB even with
+is 0.22, a vocal mic at the lip, and against fluidsynth it costs 8dB even with
 a good microphone.  The bottom of the knob isn't free either -- full-blow is
 what the voice's dynamics are measured against, so setting it under what you
 actually deliver leaves you permanently maxed out with nothing left to play

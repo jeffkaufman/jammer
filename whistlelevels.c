@@ -12,9 +12,9 @@
 // actually delivers leaves the voice permanently dark and quiet however far
 // up the volume goes.  That is the failure this measures.
 //
-// Loudness is A-weighted (see aweight.h), not peak, for the same reason
-// kitlevels.c weights: a bass note and a whistle at the same peak are nowhere
-// near the same loudness.
+// Loudness is perceived loudness (see loudness.h), not peak, for the same
+// reason kitlevels.c weights: a bass note and a whistle at the same peak are
+// nowhere near the same loudness.
 //
 // Build: make whistlelevels
 // Run:   ./whistlelevels [--verbose]
@@ -49,7 +49,7 @@ void choose_voice(int channel, int bank, int voice) {
 
 #include "jammermidilib.h"
 #include "voices.h"
-#include "aweight.h"
+#include "loudness.h"
 #include "engine.h"
 
 #define RATE 48000            // what the rig came up at; see the README
@@ -108,7 +108,7 @@ static double measure_fluidsynth(int program, int cc7, int note, int velocity) {
 
   delete_fluid_synth(synth);
   delete_fluid_settings(settings);
-  return aweight_loudness(mono, RENDER_FRAMES, RATE);
+  return perceived_loudness(mono, RENDER_FRAMES, RATE);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ static void make_whistle(float* buf, int n, double hz, double amplitude) {
 }
 
 // Render that through the engine at a given full-blow step and return the
-// A-weighted loudness of what comes out.
+// perceived loudness of what comes out.
 static double measure_whistle(const float* input, int n, int voice,
                               int level_full_step, int volume_step) {
   struct Engine engine;
@@ -157,7 +157,7 @@ static double measure_whistle(const float* input, int n, int voice,
   // Measure the note once it is established, not the room before it or the
   // half second the detector spends finding it.
   int skip = LEAD_FRAMES + RATE / 2;
-  return aweight_loudness(mono + skip, n - skip, RATE);
+  return perceived_loudness(mono + skip, n - skip, RATE);
 }
 
 // The voice each key plays, by name, so this measures what jammer actually
@@ -176,15 +176,15 @@ int main(int argc, char** argv) {
     if (strcmp(argv[i], "--check") == 0) check = true;
   }
 
-  if (!aweight_self_test(RATE, verbose)) {
-    printf("the A-weighting is wrong; nothing below can be trusted\n");
+  if (!loudness_self_test(RATE, verbose)) {
+    printf("the weighting is wrong; nothing below can be trusted\n");
     return 1;
   }
 
   // Program 39 / CC7 66 is what jml_setup leaves the foot bass at.
   double reference = measure_fluidsynth(39, 66, 40, 100);
   printf("foot bass (SynBass 2, low E, as jml_setup leaves it): "
-         "%.1f dBA\n\n", reference);
+         "%.1f dB\n\n", reference);
 
   // What a microphone actually delivers.  0.22 is what every preset in the
   // table carries and what the knob is calibrated around; the levels below

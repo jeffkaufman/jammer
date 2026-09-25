@@ -9,7 +9,7 @@
 //
 // This walks every (set, note) pair for one family of sounds, plays it on a
 // loop so you hear it in a beat rather than in isolation, and prints the ones
-// you keep as a table.  Levels are A-weighted (dBA, see aweight.h), so two
+// you keep as a table.  Levels are perceived loudness (see loudness.h), so two
 // sounds showing the same number sound about equally loud -- unlike peak
 // level, which rates a kick and a hat that sound nothing alike as equals.  Sets whose sample for a note is byte-for-byte the
 // same are collapsed into one entry, so the list is only the sounds that
@@ -32,7 +32,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 
 #include "macapi.h"
-#include "aweight.h"
+#include "loudness.h"
 
 // jammermidilib.h has this too, but it's the jammer's whole brain and we
 // only want the synth.
@@ -200,7 +200,7 @@ typedef struct {
   int program;
   int note;
   float peak;             // 0..1; what clips, rather than what sounds loud
-  double loudness;        // dBA -- how loud it actually sounds
+  double loudness;        // dB -- how loud it actually sounds
   Sound aliases[MAX_ALIASES];  // other pairs that render identically
   int n_aliases;
   bool kept;
@@ -240,7 +240,7 @@ static void stop_offline_synth(void) {
 #define RENDER_FRAMES (689 * 64)
 
 // Renders one hit and returns a hash of the samples, with the peak and the
-// A-weighted loudness out of band.  Both, because they answer different
+// Perceived loudness out of band.  Both, because they answer different
 // questions: peak is what clips, loudness is what you hear, and for drums
 // they disagree by tens of dB between a kick and a hat.  Silence hashes to 0.
 //
@@ -272,7 +272,7 @@ static uint64_t render_hash(int bank, int program, int note,
     if (magnitude > peak) peak = magnitude;
   }
   *peak_out = peak;
-  *loudness_out = aweight_loudness(left, RENDER_FRAMES, 44100);
+  *loudness_out = perceived_loudness(left, RENDER_FRAMES, 44100);
   return peak == 0 ? 0 : hash;
 }
 
@@ -419,7 +419,7 @@ static void play_half(bool downbeat) {
 
 static void show(void) {
   Candidate* candidate = &candidates[current];
-  printf("\n%s %d/%d  %-20s (%d:%-3d)  note %d %-18s  %6.1f dBA%s\n",
+  printf("\n%s %d/%d  %-20s (%d:%-3d)  note %d %-18s  %6.1f dB%s\n",
          family->name, current + 1, n_candidates,
          program_name(candidate->program), family->bank, candidate->program,
          candidate->note,
@@ -535,7 +535,7 @@ static void summarize(void) {
   for (int i = 0; i < n_candidates; i++) {
     if (!candidates[i].kept) continue;
     n_kept++;
-    printf("  %d:%-3d %-20s note %2d %-18s %6.1f dBA",
+    printf("  %d:%-3d %-20s note %2d %-18s %6.1f dB",
            family->bank, candidates[i].program,
            program_name(candidates[i].program), candidates[i].note,
            family->pitched ? note_name(candidates[i].note)
@@ -646,7 +646,7 @@ int main(int argc, char** argv) {
         printf("\nnote %d %s\n", note,
                family->pitched ? note_name(note) : perc_name(note));
       }
-      printf("  %2d. %d:%-3d %-20s %6.1f dBA", i + 1, family->bank,
+      printf("  %2d. %d:%-3d %-20s %6.1f dB", i + 1, family->bank,
              candidates[i].program, program_name(candidates[i].program),
              candidates[i].loudness);
       if (candidates[i].n_aliases > 0) {

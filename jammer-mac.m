@@ -526,7 +526,7 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     shortname = NULL;
   }
   // And its vocal effects take over the row keys it has no other use for.
-  if (snapshot.whistle_selected && key->group == GROUP_MODIFIER &&
+  if (snapshot.whistle_selected && key->group != GROUP_VOICE &&
       whistle_fx_for_note(key->note)) {
     label = WHISTLE_FX[whistle_fx_for_note(key->note)].label;
     shortname = NULL;
@@ -777,6 +777,8 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     if (voice[0]) strncat(voice, "+", sizeof(voice) - strlen(voice) - 1);
     strncat(voice, WHISTLE_FX[i].name, sizeof(voice) - strlen(voice) - 1);
   }
+  // A voice silenced under effects that have since gone off: nothing plays.
+  if (!voice[0]) snprintf(voice, sizeof(voice), "silent");
   if (snapshot.whistle_blow_on) {
     strncat(voice, "+blow", sizeof(voice) - strlen(voice) - 1);
   }
@@ -1905,8 +1907,8 @@ static void flash_from_speech(int key) {
         stringByReplacingOccurrencesOfString:@"-\n" withString:@"-"]
         stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
       // Its key, while the whistle's selected.
-      title = [NSString stringWithFormat:@"%@   (%c)", label,
-               (char)WHISTLE_FX[i].note];
+      title = [NSString stringWithFormat:@"%@   (%s)", label,
+               WHISTLE_FX[i].cap];
     }
     NSMenuItem* item = [menu addItemWithTitle:title
                                        action:@selector(chooseFx:)

@@ -1,6 +1,7 @@
 // Do the vocal effects sit where the vocoder does?  Plays the spoken number
 // clips the speech recognizer has kept through the vocoder and through each
-// of its alternatives (voicefx.h), and says how loud each came out, A-weighted,
+// of its alternatives (voicefx.h), and says how loud each came out, by
+// perceived loudness at stage volume (loudness.h),
 // against the vocoder, with the VFX_LEVEL that would bring it level.
 //
 //   make voicefx-levels && ./voicefx-levels [clip.wav ...]
@@ -19,7 +20,7 @@
 #include "jammermidilib.h"
 #include "voices.h"
 #include "whistle.h"
-#include "aweight.h"
+#include "loudness.h"
 
 #define RATE 48000
 
@@ -50,7 +51,7 @@ static float* read_wav(const char* path, long* n) {
   return out;
 }
 
-// The clip through `fx`, A-weighted loudness in dB.
+// The clip through `fx`, its perceived loudness in dB.
 static double loudness(int fx, const float* clip, long n) {
   long lead = 2 * RATE, total = lead + n + RATE;
   float* out = calloc(total, sizeof(float));
@@ -70,7 +71,7 @@ static double loudness(int fx, const float* clip, long n) {
       : vfx_process(fx, in, &b);
     out[i] = i < lead ? 0 : l;
   }
-  double db = aweight_loudness(out, (int)total, RATE);
+  double db = perceived_loudness(out, (int)total, RATE);
   free(out);
   return db;
 }

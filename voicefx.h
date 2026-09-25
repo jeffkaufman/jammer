@@ -3,9 +3,9 @@
 
 // The whistle's vocal effects beside the vocoder: what goes into the
 // microphone, through these, out to the rig.  Any of them at once, side by
-// side, on the row keys from J while the whistle's selected, or from the
-// Vocal FX menu, and over whichever whistle voice is playing, as the vocoder
-// is.
+// side, on keys the whistle has no other use for while it's selected, or
+// from the Vocal FX menu, and over whichever whistle voice is playing, as
+// the vocoder is.
 //
 //   Robot      ring modulated with the chord: its root, and its third and
 //              fifth beside it, so it changes colour with the chord as well
@@ -16,6 +16,9 @@
 //   Saw Bass   the same pitch, as two detuned saws through a resonant
 //              lowpass that opens the louder the voice goes: a talking,
 //              growling bass rather than a clean one
+//   Wah        a saw an octave under too, through a lowpass that follows
+//              how bright the voice is rather than how loud, so vowels and
+//              consonants wah it
 //
 // Each goes through the same gate as the vocoder (RoomGate), so the band in
 // the microphone doesn't reach the PA through it, and a gain that meets the
@@ -26,10 +29,11 @@
 // vocoder, which this shares its gate with.  Which is which: the VFX_
 // numbers in whistle.h, beside the keys they're on.
 
-// Where each sits against the vocoder, by level, measured with
-// ./voicefx-levels over the kept number clips.
+// Where each sits against the vocoder, by perceived loudness at stage
+// volume (loudness.h), measured with ./voicefx-levels over the kept number
+// clips.
 static const double VFX_LEVEL[N_VFX] = {
-  [VFX_ROBOT] = 0.58, [VFX_BASS] = 1.41, [VFX_SAW] = 1.02,
+  [VFX_ROBOT] = 0.56, [VFX_BASS] = 1.16, [VFX_SAW] = 0.77, [VFX_WAH] = 0.44,
 };
 
 // The halfway gain: the voice's level goes as the square root of what comes
@@ -63,6 +67,32 @@ typedef struct {
   double grain[2];  // and their lengths, in samples
 } VfxShifter;
 
+// A resonant lowpass, state-variable, its cutoff set sample by sample.
+typedef struct {
+  double ic1, ic2;
+} VfxSvf;
+
+static double vfx_lowpass(VfxSvf* f, double in, double hz, double q,
+                          double rate) {
+  double g = tan(M_PI * fmin(hz, 0.45 * rate) / rate), k = 1 / q;
+  double a1 = 1 / (1 + g * (g + k)), a2 = g * a1;
+  double v1 = a1 * f->ic1 + a2 * (in - f->ic2);
+  double v2 = f->ic2 + g * v1;
+  f->ic1 = 2 * v1 - f->ic1;
+  f->ic2 = 2 * v2 - f->ic2;
+  return v2;
+}
+
+// A band-limited saw, -1 to 1, at `hz`: nothing at all until there's a
+// pitch, since at 0Hz it would divide by its step.
+static double vfx_saw_wave(double* phase, double hz, double rate) {
+  if (hz <= 0) return 0;
+  double dt = hz / rate;
+  *phase += dt;
+  if (*phase >= 1) *phase -= 1;
+  return 2 * *phase - 1 - poly_blep(*phase, dt);
+}
+
 static struct {
   double rate;
   RoomGate room;
@@ -86,7 +116,11 @@ static struct {
 
   // Saw Bass
   double saw_phase[2];
-  double svf_ic1, svf_ic2;   // its lowpass
+  VfxSvf saw_filter;
+
+  // Wah
+  double wah_phase, wah_bright, wah_high;
+  VfxSvf wah_filter;
 } vfx;
 
 static void vfx_prepare(double rate) {
@@ -270,28 +304,31 @@ static float vfx_bass(float x) {
 // through a resonant lowpass from 120Hz, closed, up to about 2.5kHz as the
 // voice gets louder.  Nothing of the voice itself.
 static float vfx_saw(float x) {
-  // Nothing to play before the first pitch: and a saw at 0Hz would divide by
-  // its step, and the NaN would ring in the filter from then on.
-  if (vfx.sub_hz <= 0) return 0;
   double saw = 0;
   for (int i = 0; i < 2; i++) {
     double hz = vfx.sub_hz * (i ? VFX_SAW_DETUNE : 1 / VFX_SAW_DETUNE);
-    double dt = hz / vfx.rate;
-    vfx.saw_phase[i] += dt;
-    if (vfx.saw_phase[i] >= 1) vfx.saw_phase[i] -= 1;
-    saw += 0.5 * (2 * vfx.saw_phase[i] - 1 - poly_blep(vfx.saw_phase[i], dt));
+    saw += 0.5 * vfx_saw_wave(&vfx.saw_phase[i], hz, vfx.rate);
   }
   // How open: the voice's level against where the halfway gain puts a
   // strong one.
   double open = fmin(1, vfx.sub_level / 0.25);
   double cutoff = 120 * pow(2500 / 120.0, open);
-  double g = tan(M_PI * cutoff / vfx.rate), k = 1 / VFX_SAW_Q;
-  double a1 = 1 / (1 + g * (g + k)), a2 = g * a1;
-  double v1 = a1 * vfx.svf_ic1 + a2 * (saw - vfx.svf_ic2);
-  double v2 = vfx.svf_ic2 + g * v1;
-  vfx.svf_ic1 = 2 * v1 - vfx.svf_ic1;
-  vfx.svf_ic2 = 2 * v2 - vfx.svf_ic2;
-  return (float)(1.57 * vfx.sub_level * v2 * 2);
+  double y = vfx_lowpass(&vfx.saw_filter, saw, cutoff, VFX_SAW_Q, vfx.rate);
+  return (float)(1.57 * vfx.sub_level * y * 2);
+}
+
+// Wah: a saw bass through a lowpass that follows the voice's brightness --
+// how much of it is above about 1.5kHz -- from 150Hz up to 3kHz.
+static float vfx_wah(float x) {
+  vfx.wah_high += (x - vfx.wah_high) * (1 - exp(-2 * M_PI * 1500 / vfx.rate));
+  double high = x - vfx.wah_high;  // what's left above the one-pole
+  double share = high * high / (x * x + 1e-9);
+  vfx.wah_bright += (fmin(1, share * 3) - vfx.wah_bright) *
+                    (1 - exp(-1 / (vfx.rate * 0.020)));
+  double saw = vfx_saw_wave(&vfx.wah_phase, vfx.sub_hz, vfx.rate);
+  double cutoff = 150 * pow(3000 / 150.0, vfx.wah_bright);
+  double y = vfx_lowpass(&vfx.wah_filter, saw, cutoff, 5, vfx.rate);
+  return (float)(1.57 * vfx.sub_level * y * 2);
 }
 
 // The input as the effects take it, worked out once a sample however many
@@ -312,8 +349,9 @@ static VfxInput vfx_input(float in, bool listen) {
   return v;
 }
 
+// Every one but Robot follows the voice's pitch.
 static bool vfx_listens(int fx) {
-  return fx == VFX_BASS || fx == VFX_SAW;
+  return fx != VFX_ROBOT && fx != VFX_VOCODER;
 }
 
 // One effect's sample, from the input vfx_input made, before the volume.
@@ -323,6 +361,7 @@ static float vfx_effect(int fx, VfxInput v, const VfxBlock* b) {
   case VFX_ROBOT: y = vfx_robot(v.x, b); break;
   case VFX_BASS:  y = vfx_bass(v.x); break;
   case VFX_SAW:   y = vfx_saw(v.x); break;
+  case VFX_WAH:   y = vfx_wah(v.x); break;
   }
   return (float)tanh(y * VFX_LEVEL[fx]);
 }

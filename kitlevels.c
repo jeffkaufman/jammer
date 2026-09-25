@@ -6,7 +6,8 @@
 // change of sound.  Each kit therefore carries a velocity scale per sound,
 // and this is where those numbers come from.
 //
-// Loudness is A-weighted (see aweight.h), not peak.  That matters a lot here:
+// Loudness is perceived loudness (see loudness.h), not peak.  That matters a
+// lot here:
 // a kick and a hihat at the same peak are nowhere near the same loudness,
 // and matching a kit by peak leaves the kick buried.
 //
@@ -47,7 +48,7 @@ void choose_voice(int channel, int bank, int voice) {
 
 #include "jammermidilib.h"
 #include "voices.h"
-#include "aweight.h"
+#include "loudness.h"
 
 #define RATE 44100
 #define RENDER_FRAMES (RATE * 2)  // 2s, long enough for the slowest tail
@@ -56,7 +57,7 @@ static fluid_synth_t* synth;
 static int sfont_id;
 static float left[RENDER_FRAMES], right[RENDER_FRAMES];
 
-// Plays one sound the way arpeggiate_drum would and returns its A-weighted
+// Plays one sound the way arpeggiate_drum would and returns its perceived
 // loudness.  A pitched kick is released after its gate, exactly as the
 // jammer releases it; a percussion sample is left to ring.
 static double measure(int bank, int program, int note, int velocity,
@@ -80,7 +81,7 @@ static double measure(int bank, int program, int note, int velocity,
   } else {
     fluid_synth_write_float(synth, RENDER_FRAMES, left, 0, 1, right, 0, 1);
   }
-  return aweight_loudness(left, RENDER_FRAMES, RATE);
+  return perceived_loudness(left, RENDER_FRAMES, RATE);
 }
 
 // The velocity whose loudness comes closest to the target.  Loudness rises
@@ -119,9 +120,11 @@ typedef struct {
 //
 //  * a sound whose role is quieter or louder by nature, so levelling it
 //    would turn it into something else;
-//  * a correction by ear.  A-weighting is a good model of loudness, but it's
+//  * a correction by ear.  The loudness weighting is a good model, but it's
 //    a model -- one number for a whole spectrum -- and the room and the
-//    music get the last word.  Recording the correction here rather than
+//    music get the last word.  These were set by ear against A-weighting;
+//    moving to the loudness contour at stage volume, each kept its sound and
+//    took the offset that sound now measures.  Recording the correction here rather than
 //    editing a scale directly keeps the scales derivable: change a kit or
 //    the soundfont, re-run, and the ear correction is still applied.
 static const struct {
@@ -132,10 +135,10 @@ static const struct {
 } LEVEL_OFFSETS[] = {
   {KIT_RIM, SND_SNARE, -3.9, "a side stick is a quiet sound by nature"},
   {KIT_CLAP, SND_SNARE, 8.0, "FluidR3's hand clap is simply loud"},
-  {KIT_808_A, SND_HIHAT, -3.0, "by ear"},
-  {KIT_808_B, SND_KICK, 3.0, "by ear"},
-  {KIT_808_B, SND_HIHAT, -3.0, "by ear"},
-  {KIT_ROOM6, SND_KICK, 3.0, "by ear"},
+  {KIT_808_A, SND_HIHAT, -5.6, "by ear"},
+  {KIT_808_B, SND_KICK, 6.5, "by ear"},
+  {KIT_808_B, SND_HIHAT, -5.6, "by ear"},
+  {KIT_ROOM6, SND_KICK, 5.5, "by ear"},
 };
 
 static double expected_offset(int kit, int sound) {
@@ -166,9 +169,9 @@ int main(int argc, char** argv) {
 
   int failures = 0;
 
-  printf("checking the A-weighting against the published curve:\n");
-  if (!aweight_self_test(RATE, verbose)) {
-    printf("A-weighting is wrong; the numbers below would be meaningless\n");
+  printf("checking the loudness weighting against the published curve:\n");
+  if (!loudness_self_test(RATE, verbose)) {
+    printf("the weighting is wrong; the numbers below would be meaningless\n");
     return 1;
   }
   printf("  ok\n\n");
@@ -207,7 +210,7 @@ int main(int argc, char** argv) {
                                 NOMINAL_VELOCITY * reference->hihat_vel, 0);
   if (!check) {
     printf("reference (Standard set at velocity %d):\n", NOMINAL_VELOCITY);
-    printf("  kick %6.1f dBA   snare %6.1f dBA   hihat %6.1f dBA\n\n",
+    printf("  kick %6.1f dB   snare %6.1f dB   hihat %6.1f dB\n\n",
            target_kick, target_snare, target_hihat);
     printf("%-8s %-22s %-24s %s\n", "kit", "kick", "snare", "hihat");
     printf("%-8s %-22s %-24s %s\n", "", "now -> want  scale",
@@ -271,13 +274,13 @@ int main(int argc, char** argv) {
              "scales to use\n", failures);
       return 1;
     }
-    printf("kit level check passed: %d kits within %.1f dBA\n",
+    printf("kit level check passed: %d kits within %.1f dB\n",
            (int)(sizeof(KIT_NAMES) / sizeof(KIT_NAMES[0])),
            LEVEL_TOLERANCE_DB);
     return 0;
   }
 
-  printf("\n\"now\" is dBA at the kit's current scale, then how far that is\n"
+  printf("\n\"now\" is dB at the kit's current scale, then how far that is\n"
          "from the reference, then the scale that would match it.\n");
   return 0;
 }

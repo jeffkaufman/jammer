@@ -148,8 +148,8 @@
 // mixed to match each other at all, so without them switching kits would be
 // a jump in volume rather than a change of sound.
 //
-// kitlevels.c produces these: it renders each sound, measures it A-weighted
-// against the Standard set, and searches for the velocity that matches.
+// kitlevels.c produces these: it renders each sound, measures its perceived
+// loudness (loudness.h) against the Standard set, and searches for the velocity that matches.
 // Don't hand-edit them without re-running it -- and in particular don't
 // reason about them from peak levels, which is how they were first set and
 // which was wrong by up to 20dB.  A kick's energy sits where the ear is
@@ -207,36 +207,36 @@ typedef struct {
 static const DrumKit KITS[N_KITS] = {
   // set            kick                  snare                 hihat
   [KIT_RIM] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
-               MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.65, 1.0, NO_PITCHED_KICK, 0},
+               MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0, NO_PITCHED_KICK, 0},
   [KIT_RIM2] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_RIM,
-                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 1.0, 1.0, NO_PITCHED_KICK, 0},
   [KIT_SNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
   [KIT_CLAP] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_CLAP,
-                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.93, 1.0, NO_PITCHED_KICK, 0},
   [KIT_ESNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_ESNARE,
-                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.88, 1.0, NO_PITCHED_KICK, 0},
   [KIT_RIDE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
                 MIDI_DRUM_OUT_RIDE, 1.41, 0.8, 0.61, NO_PITCHED_KICK, 0},
   [KIT_BONGO] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_BONGO,
                  MIDI_DRUM_OUT_HI_BONGO, MIDI_DRUM_OUT_CABASA,
-                 0.61, 0.94, 0.69, NO_PITCHED_KICK, 0},
+                 0.88, 1.03, 0.69, NO_PITCHED_KICK, 0},
   // The claves need nearly full velocity to keep up, so this kit has little
   // headroom left when the foot hits hard.
   [KIT_BLOCK] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_WOOD, MIDI_DRUM_OUT_HI_WOOD,
-                 MIDI_DRUM_OUT_CLAVES, 0.83, 1.11, 1.39, NO_PITCHED_KICK, 0},
+                 MIDI_DRUM_OUT_CLAVES, 1.20, 1.11, 1.39, NO_PITCHED_KICK, 0},
 
   // The 808's two kicks, each with its own set's snare and hat.  The two
-  // kicks measure 8dB apart despite near-identical peaks -- 35 is the short
+  // kicks measure far apart despite near-identical peaks -- 35 is the short
   // one, 36 the long boom -- so they need quite different scales.
   [KIT_808_A] = {PERC_808, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.34, 0.46, 0.60,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.08, 0.54, 0.60,
                  NO_PITCHED_KICK, 0},
   [KIT_808_B] = {PERC_808, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.99, 0.46, 0.60,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.99, 0.54, 0.60,
                  NO_PITCHED_KICK, 0},
   [KIT_ROOM2] = {PERC_ROOM_2, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.38, 0.54, 0.84,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.26, 0.54, 0.84,
                  NO_PITCHED_KICK, 0},
   [KIT_ROOM6] = {PERC_ROOM_6, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.23, 0.84, 0.84,
@@ -246,7 +246,7 @@ static const DrumKit KITS[N_KITS] = {
   // hat can't come from Synth Drum, since note 42 of a melodic program is
   // just a higher note.
   [KIT_SYNTH] = {PERC_808, 12 /* C0 */, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.41, 0.46, 0.72,
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 0.60, 0.54, 0.82,
                  PROG_SYNTH_DRUM, 120},
 };
 
@@ -261,7 +261,8 @@ static const DrumKit KITS[N_KITS] = {
 // octaves up at a different velocity come out nowhere near the same.  These
 // replace the per-voice volumes in voices.h while it's a drone playing.
 //
-// `pads --levels` produces the volumes: every pad as loud, A-weighted, as
+// `pads --levels` produces the volumes: every pad as loud, by perceived
+// loudness at stage volume (loudness.h), as
 // Rock Organ was on that drone before any of this -- channel volume 65 and
 // the old velocities of 70 and 30 -- and the chord drones 2dB louder than
 // that, since by ear they'd been a little quiet.  Re-run it rather than
@@ -274,16 +275,16 @@ static const struct {
   int bass_volume;   // CC7 on Db and Db2
   int chord_volume;  // CC7 on Dc and Dc2
 } DRONE_VOICES[] = {
-  {'A', 19, "Church\nOrgan",    35,  58},
-  {'S', 50, "Synth\nStrings",   83,  82},
-  {'D', 54, "Synth\nVoice",     96, 100},
-  {'F', 62, "Synth\nBrass 1",   61,  81},
-  {'G', 63, "Synth\nBrass 2",   61,  86},
+  {'A', 19, "Church\nOrgan",    41,  57},
+  {'S', 50, "Synth\nStrings",   74,  64},
+  {'D', 54, "Synth\nVoice",     98,  74},
+  {'F', 62, "Synth\nBrass 1",   58,  72},
+  {'G', 63, "Synth\nBrass 2",   58,  75},
   {'H', 18, "Rock\nOrgan",      40,  55},
-  {'Z', 89, "Warm\nPad",        95,  95},
-  {'X', 90, "Poly\nsynth",      82,  83},
-  {'C', 94, "Halo\nPad",       104,  95},
-  {'V', 95, "Sweep\nPad",       83,  71},
+  {'Z', 89, "Warm\nPad",        79,  75},
+  {'X', 90, "Poly\nsynth",      70,  63},
+  {'C', 94, "Halo\nPad",        90,  70},
+  {'V', 95, "Sweep\nPad",       71,  63},
 };
 #define N_DRONE_VOICES ((int)(sizeof(DRONE_VOICES) / sizeof(DRONE_VOICES[0])))
 

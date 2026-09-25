@@ -81,7 +81,7 @@ static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
 };
 
 // The vocal effects over the voice: the vocoder and those beside it
-// (voicefx.h), on J K L ; -- row keys the whistle has no other use for
+// (voicefx.h), on J K L ; ' -- row keys the whistle has no other use for
 // -- or from the Vocal FX menu.  Any of them at once, each its key on and
 // off, summed side by side.
 enum {
@@ -90,20 +90,23 @@ enum {
   VFX_ROBOT,
   VFX_BASS,
   VFX_SAW,
+  VFX_WAH,
   N_VFX,
 };
 
 typedef struct {
   int note;           // the key's pseudo-note, as KEYS[] sends it
+  const char* cap;    // and the key, as the Vocal FX menu names it
   const char* label;  // what to draw on the key; "\n" splits lines
   const char* name;   // what the status row calls it
 } WhistleFx;
 
 static const WhistleFx WHISTLE_FX[N_VFX] = {
-  [VFX_VOCODER] = {'J', "Vocoder", "voc"},
-  [VFX_ROBOT] = {'K', "Robot", "robot"},
-  [VFX_BASS] = {'L', "Voice\nBass", "vbass"},
-  [VFX_SAW] = {';', "Saw\nBass", "sawbass"},
+  [VFX_VOCODER] = {'J', "J", "Vocoder", "voc"},
+  [VFX_ROBOT] = {'K', "K", "Robot", "robot"},
+  [VFX_BASS] = {'L', "L", "Voice\nBass", "vbass"},
+  [VFX_SAW] = {';', ";", "Saw\nBass", "sawbass"},
+  [VFX_WAH] = {'\'', "'", "Wah\nBass", "wah"},
 };
 
 #define VFX_BIT(fx) (1u << (fx))
@@ -130,8 +133,9 @@ static bool whistle_has_second_mic(void) {
   return atomic_load_explicit(&whistle_input_count, memory_order_relaxed) >= 2;
 }
 // The voice silenced under the vocoder, so it plays alone: the lit voice key
-// again while the vocoder's on.  Any voice key brings a voice back, and so
-// does switching the vocoder off, so the whistle is never left silent.
+// again while the vocoder's on.  Any voice key brings a voice back.
+// Switching the effects off doesn't: silenced is what you asked for, and
+// with them off too the whistle plays nothing until a voice key's pressed.
 static bool whistle_voice_muted;
 
 // Blow Noise, on and off over the voice: M.  Whistle Breath, if that's the
@@ -198,12 +202,13 @@ static double whistle_gate_margin(int step) {
 // costs 7dB even with a good microphone, because the voice spends the
 // player's breath on loudness and a level_full it never reaches leaves the
 // voice permanently dark and quiet.  Measured (./whistlelevels), the bass
-// voice against the foot bass as jml_setup leaves it:
+// voice against the foot bass as jml_setup leaves it, by perceived loudness
+// at stage volume:
 //
 //     input peak      step 0   step 2   step 5
-//     0.300            +1.9     +1.8     +1.4
-//     0.100            +1.8     +0.9     -7.1
-//     0.030            -3.0     -8.5    -17.0
+//     0.300            +3.9     +3.9     +3.5
+//     0.100            +3.9     +3.0     -4.9
+//     0.030            -0.8     -6.2    -14.6
 //
 // 2 rather than 0 because the bottom of the knob is not free: level_full is
 // what the voice's dynamics are measured against, so setting it under what
@@ -1129,11 +1134,10 @@ static void whistle_select(void) {
   whistle_selected = true;
 }
 
-// These effects over the voice, a VFX_BIT each.  None leaves a voice
-// sounding, so the whistle is never left silent.
+// These effects over the voice, a VFX_BIT each.  A voice silenced under
+// them stays silenced when they go.
 static void whistle_choose_fx(unsigned fx) {
   whistle_fx = fx;
-  if (!whistle_fx) whistle_voice_muted = false;
   whistle_publish();
 }
 

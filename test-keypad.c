@@ -842,6 +842,39 @@ static void test_voice_fx() {
   for (int i = 24000; i < 48000; i++) saw_rms += (double)sung[i] * sung[i];
   CHECK(sqrt(saw_rms / 24000) > 0.01, "Saw Bass is silent");
 
+  // Wah goes an octave under a voice at 150Hz too: the output's best
+  // self-match over a bass's range is at 75Hz.
+  int more[] = {VFX_WAH};
+  for (int m = 0; m < 1; m++) {
+    vfx_prepare(48000);
+    phase = 0;
+    for (int i = 0; i < 48000; i++) {
+      phase += 150.0 / 48000;
+      if (phase >= 1) phase -= 1;
+      double v = 0;
+      for (int h = 1; h <= 20; h++) v += sin(2 * M_PI * h * phase) / (h * h);
+      sung[i] = vfx_process(more[m], (float)(0.1 * v), &chord);
+    }
+    double want = 75;
+    int lag = 0;
+    double best_r = -1;
+    for (int l = 48000 / 200; l <= 48000 / 30; l++) {
+      double xy = 0, xx = 0, yy = 0;
+      for (int i = 24000; i < 48000 - l; i++) {
+        xy += (double)sung[i] * sung[i + l];
+        xx += (double)sung[i] * sung[i];
+        yy += (double)sung[i + l] * sung[i + l];
+      }
+      double r = xy / sqrt(xx * yy + 1e-20);
+      if (r > best_r + 1e-3) {  // the first of equals: the fundamental
+        best_r = r;
+        lag = l;
+      }
+    }
+    CHECK(fabs(48000.0 / lag - want) < 2, "%s came out at %.1fHz, not %.1f",
+          WHISTLE_FX[more[m]].name, 48000.0 / lag, want);
+  }
+
   // Both basses at once share the one pitch, listened for once a sample, and
   // both sound: the way whistle_mix runs them side by side.
   vfx_prepare(48000);
@@ -1062,7 +1095,7 @@ static void test_whistle() {
   CHECK((atomic_load(&whistle_pub_fx) == VFX_BIT(VFX_VOCODER)) && lit("J") && lit("F"),
         "a voice key shouldn't stop the vocoder");
   // The lit voice again silences it, for the vocoder alone; any voice key
-  // brings one back, and so does switching the vocoder off.
+  // brings one back, and switching the vocoder off leaves it silenced.
   strike("F", false);
   CHECK(atomic_load(&whistle_pub_target_gain) == 0 && !lit("F") &&
         atomic_load(&whistle_pub_vocoder_gain) > 0,
@@ -1076,9 +1109,12 @@ static void test_whistle() {
         whistle_voice == 2, "another voice key should bring a voice back");
   strike("D", false);
   strike("J", false);
-  CHECK(atomic_load(&whistle_pub_target_gain) > 0 && lit("D") &&
-        !(atomic_load(&whistle_pub_fx) == VFX_BIT(VFX_VOCODER)),
-        "switching the vocoder off shouldn't leave the whistle silent");
+  CHECK(atomic_load(&whistle_pub_target_gain) == 0 && !lit("D") &&
+        !lit("J") && atomic_load(&whistle_pub_fx) == 0,
+        "whistle, vocoder, voice, vocoder: nothing should be left playing");
+  strike("D", false);
+  CHECK(atomic_load(&whistle_pub_target_gain) > 0 && lit("D"),
+        "a voice key should bring the voice back");
   strike("D", false);
   CHECK(atomic_load(&whistle_pub_target_gain) > 0,
         "with no vocoder, the lit voice again shouldn't silence it");
@@ -1170,11 +1206,11 @@ static void test_whistle() {
 
   // Per-endpoint flags are swallowed rather than applied to whoever was
   // selected last.
-  bool flex_doubled = c->doubled[ENDPOINT_FLEX];
-  strike("P", false);
-  CHECK(c->doubled[ENDPOINT_FLEX] == flex_doubled,
+  bool flex_chord = c->chord[ENDPOINT_FLEX];
+  strike(",", false);
+  CHECK(c->chord[ENDPOINT_FLEX] == flex_chord,
         "a modifier key reached an endpoint while the whistle was selected");
-  CHECK(whistle_key_is_dead(key_for_cap("P")), "P should draw as dead");
+  CHECK(whistle_key_is_dead(key_for_cap(",")), ", should draw as dead");
 
   // The whistle guard keeps whistling out of the effects only while there's
   // a whistle-controlled voice playing.
@@ -1196,12 +1232,13 @@ static void test_whistle() {
   CHECK(!atomic_load(&whistle_pub_guard), "nor with the whistle off");
   if (was_on) strike("1", false);
 
-  // J K L ; are the vocoder and the effects beside it: each its key on and
-  // off, and any of them together.
-  const char* fx_keys[] = {"J", "K", "L", ";"};
-  const char* fx_labels[] = {"Vocoder", "Robot", "Voice\nBass", "Saw\nBass"};
+  // The vocoder and the effects beside it: each its key on and off, and any
+  // of them together.
+  const char* fx_keys[] = {"J", "K", "L", ";", "'"};
+  const char* fx_labels[] = {"Vocoder", "Robot", "Voice\nBass", "Saw\nBass",
+                             "Wah\nBass"};
   unsigned all = 0;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     int fx = VFX_VOCODER + i;
     strike(fx_keys[i], false);
     all |= VFX_BIT(fx);
@@ -1216,7 +1253,7 @@ static void test_whistle() {
         !lit("K") && lit("J") && lit("L"),
         "K again should switch Robot off and leave the rest");
   whistle_choose_fx(0);
-  CHECK(whistle_key_is_dead(key_for_cap("'")), "' should be dead");
+  CHECK(whistle_key_is_dead(key_for_cap(",")), ", should be dead");
 
   // F2 moves the effects to the second input -- when there is one.
   atomic_store(&whistle_input_count, 1);

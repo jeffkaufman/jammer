@@ -17,7 +17,7 @@
 // and an organ (16 or 18) goes up another octave on top of that.  Each can
 // be moved by octaves, as the jammer's octave keys would.
 //
-// The dBA shown for each is what that voicing measures at the jammer's own
+// The dB shown for each is what that voicing measures at the jammer's own
 // channel volume for the program, next to how far that is from where the
 // drones' pads are levelled to: Rock Organ as the drones used to play it,
 // and a little more on the chord.  The ones on the
@@ -39,7 +39,7 @@
 #include "macapi.h"
 #include "jammermidilib.h"
 #include "voices.h"
-#include "aweight.h"
+#include "loudness.h"
 
 #define PAD_BANK 0
 #define MAX_CANDIDATES 128
@@ -171,7 +171,7 @@ static int jammer_cc7(int endpoint, int program) {
 
 static const char* measure_soundfont = NULL;
 
-// The loudest A-weighted moment of these notes, on a synth made for the
+// The loudest perceived moment of these notes, on a synth made for the
 // purpose and thrown away after.  A fresh one every time because a reused
 // one doesn't give the same answer twice: a pad's release and its LFOs carry
 // over through a reset, and moved a quiet note by as much as 20dB depending
@@ -204,7 +204,7 @@ static double measure(int program, int cc7, const int* notes, int n_notes,
 
   delete_fluid_synth(synth);
   delete_fluid_settings(settings);
-  return aweight_loudness(mono, MEASURE_FRAMES, RATE);
+  return perceived_loudness(mono, MEASURE_FRAMES, RATE);
 }
 
 // A drone's voicing at the jammer's default root, D, and no octave shift,
@@ -295,7 +295,7 @@ static void measure_candidates(void) {
 
 // --levels: the volumes DRONE_VOICES should have, ready to paste in.
 static void print_levels(void) {
-  printf("pads aim for %.1f dBA on the bass drones and %.1f on the chord "
+  printf("pads aim for %.1f dB on the bass drones and %.1f on the chord "
          "drones\n\n", bass_target_dba, chord_target_dba);
   for (int i = 0; i < N_DRONE_VOICES; i++) {
     int program = DRONE_VOICES[i].program;
@@ -329,7 +329,7 @@ static int check_levels(void) {
            "use\n", failures);
     return 1;
   }
-  printf("pad level check passed: %d pads within %.1f dBA of the drones' old "
+  printf("pad level check passed: %d pads within %.1f dB of the drones' old "
          "Rock Organ\n", N_DRONE_VOICES, LEVEL_TOLERANCE_DB);
   return 0;
 }
@@ -431,8 +431,8 @@ static const char* key_name(int note) {
 
 static void show(void) {
   Candidate* candidate = &candidates[current];
-  printf("\npads %d/%d  %-20s (%d:%-3d)  Db %5.1f dBA (%+.1f)  "
-         "Dc %5.1f dBA (%+.1f)%s\n",
+  printf("\npads %d/%d  %-20s (%d:%-3d)  Db %5.1f dB (%+.1f)  "
+         "Dc %5.1f dB (%+.1f)%s\n",
          current + 1, n_candidates, candidate->name, PAD_BANK,
          candidate->program,
          candidate->db_dba, candidate->db_dba - bass_target_dba,
@@ -532,17 +532,17 @@ static void summarize(void) {
     printf("  %d:%-3d %-20s for %-5s", PAD_BANK, candidate->program,
            candidate->name, PART_NAMES[candidate->kept_part]);
     if (candidate->kept_part != PART_DC) {
-      printf("  Db oct %+d %5.1f dBA (%+.1f)", candidate->kept_db_octave,
+      printf("  Db oct %+d %5.1f dB (%+.1f)", candidate->kept_db_octave,
              candidate->db_dba, candidate->db_dba - bass_target_dba);
     }
     if (candidate->kept_part != PART_DB) {
-      printf("  Dc oct %+d %5.1f dBA (%+.1f)", candidate->kept_dc_octave,
+      printf("  Dc oct %+d %5.1f dB (%+.1f)", candidate->kept_dc_octave,
              candidate->dc_dba, candidate->dc_dba - chord_target_dba);
     }
     printf("\n");
   }
   if (n_kept == 0) printf("  (nothing)\n");
-  printf("\n(dBA at octave 0 and the jammer's levels, relative to where the "
+  printf("\n(dB at octave 0 and the jammer's levels, relative to where the "
          "drones' pads are levelled to)\n");
 }
 
@@ -614,12 +614,12 @@ int main(int argc, char** argv) {
   if (check_only) return check_levels();
 
   measure_candidates();
-  printf("%d programs; pads aim for Db %.1f dBA, Dc %.1f dBA\n",
+  printf("%d programs; pads aim for Db %.1f dB, Dc %.1f dB\n",
          n_candidates, bass_target_dba, chord_target_dba);
 
   if (list_only) {
     for (int i = 0; i < n_candidates; i++) {
-      printf("  %d:%-3d %-20s  Db %5.1f dBA (%+5.1f)  Dc %5.1f dBA (%+5.1f)\n",
+      printf("  %d:%-3d %-20s  Db %5.1f dB (%+5.1f)  Dc %5.1f dB (%+5.1f)\n",
              PAD_BANK, candidates[i].program, candidates[i].name,
              candidates[i].db_dba, candidates[i].db_dba - bass_target_dba,
              candidates[i].dc_dba, candidates[i].dc_dba - chord_target_dba);
