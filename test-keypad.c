@@ -2421,6 +2421,52 @@ static void test_breath_mic() {
 }
 
 // The Snare Roll: starts with the breath, speeds up with it, stops with it.
+// With the kit on and playing the downbeat, every kick on the pedal plays
+// the kit's kick: one on the beat, which starts a beat, and an extra one
+// between, which doesn't fit the tempo and so starts none.
+static void play_kick_after(double offset_beats) {
+  // Four kicks already, a 116 BPM beat apart, ending offset_beats of a beat
+  // before now.
+  uint64_t beat = 60 * NS_PER_SEC / 116, t = now();
+  for (int i = 0; i < KICK_TIMES_LENGTH; i++) kick_times[i] = 0;
+  for (int k = 0; k < 4; k++) {
+    kick_times[k] = t - (uint64_t)((k + offset_beats) * beat);
+  }
+  kick_times_index = 4;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+}
+
+static void test_every_kick_plays() {
+  full_reset();
+  midi_tap = tap_midi;
+  c->on[ENDPOINT_DRUM] = true;
+  c->downbeat[ENDPOINT_DRUM] = true;
+  int kick = KITS[c->drum_voice].kick;
+  int channel = KITS[c->drum_voice].kick_program == NO_PITCHED_KICK
+    ? CHANNEL_KICK : CHANNEL_PITCHED_KICK;
+
+  n_tapped = 0;
+  play_kick_after(1);
+  CHECK(current_beat_ns > 0, "a kick on the beat should keep the tempo");
+  CHECK(count_tapped(MIDI_ON, kick, channel) == 1,
+        "a kick on the beat played %d kicks", count_tapped(MIDI_ON, kick,
+                                                           channel));
+  n_tapped = 0;
+  play_kick_after(0.5);  // an extra, half way between
+  CHECK(count_tapped(MIDI_ON, kick, channel) == 1,
+        "an extra kick between beats played %d kicks, not one",
+        count_tapped(MIDI_ON, kick, channel));
+
+  // Without DOWNBEAT the kit leaves the kick alone, extra or not.
+  c->downbeat[ENDPOINT_DRUM] = false;
+  n_tapped = 0;
+  play_kick_after(0.5);
+  CHECK(count_tapped(MIDI_ON, kick, channel) == 0,
+        "without DOWNBEAT the pedal shouldn't play the kit's kick");
+  midi_tap = NULL;
+  full_reset();
+}
+
 static void test_snare_roll() {
   full_reset();
   midi_tap = tap_midi;
@@ -2577,6 +2623,7 @@ int main() {
   test_voice_channels_reach_the_synth();
   test_trance_gate();
   test_snare_roll();
+  test_every_kick_plays();
   test_build_voices();
   test_vocoder();
   test_percussion_bank_reaches_the_synth();

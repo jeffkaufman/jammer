@@ -1430,6 +1430,33 @@ void kick_duck_kick(uint64_t current_time) {
   kick_hook(current_beat_ns ? current_beat_ns : 60 * NS_PER_SEC / 116);
 }
 
+// When the kit's kick last sounded, so a kick pedal hit that didn't start a
+// beat can tell it still needs one.
+uint64_t kit_kick_ns;
+
+// The kit's kick, at the drum's velocity.
+void play_kit_kick(uint64_t current_time) {
+  int vel = c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90;
+  const DrumKit* kit = &KITS[c->drum_voice];
+  kit_kick_ns = current_time;
+  kick_duck_kick(current_time);
+  if (kit->kick_program == NO_PITCHED_KICK) {
+    send_midi(MIDI_ON,
+              kit->kick,
+              vel * kit->kick_vel,
+              CHANNEL_KICK);
+  } else {
+    // Retrigger cleanly if the last one is somehow still held.
+    end_pitched_kick();
+    send_midi(MIDI_ON,
+              kit->kick,
+              vel * kit->kick_vel,
+              CHANNEL_PITCHED_KICK);
+    pitched_kick_note = kit->kick;
+    pitched_kick_off_at = current_time + kit->kick_gate_ms * 1000000LL;
+  }
+}
+
 void arpeggiate_drum(int subbeat, uint64_t current_time) {
   if (!c->on[ENDPOINT_DRUM]) return;
 
@@ -1438,22 +1465,7 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   const DrumKit* kit = &KITS[c->drum_voice];
 
   if (downbeat(subbeat) && c->downbeat[ENDPOINT_DRUM]) {
-    kick_duck_kick(current_time);
-    if (kit->kick_program == NO_PITCHED_KICK) {
-      send_midi(MIDI_ON,
-                kit->kick,
-                vel * kit->kick_vel,
-                CHANNEL_KICK);
-    } else {
-      // Retrigger cleanly if the last one is somehow still held.
-      end_pitched_kick();
-      send_midi(MIDI_ON,
-                kit->kick,
-                vel * kit->kick_vel,
-                CHANNEL_PITCHED_KICK);
-      pitched_kick_note = kit->kick;
-      pitched_kick_off_at = current_time + kit->kick_gate_ms * 1000000LL;
-    }
+    play_kit_kick(current_time);
 
     float snare_min = 65.0;
     float snare_max = 110.0;
@@ -1689,6 +1701,13 @@ void count_drum_hit(int note_in) {
     kick_times[kick_times_index] = current_time;
     estimate_tempo(current_time, note_in);
     kick_times_index = (kick_times_index+1) % KICK_TIMES_LENGTH;
+    // With the kit playing the kick, every kick on the pedal is one, not
+    // just those that start a beat: an extra kick between beats doesn't fit
+    // the tempo, so starts no beat, and went unheard.
+    if (c->on[ENDPOINT_DRUM] && c->downbeat[ENDPOINT_DRUM] &&
+        kit_kick_ns != current_time) {
+      play_kit_kick(current_time);
+    }
   } else if (note_in == MIDI_DRUM_IN_SNARE) {
     snare_times[snare_times_index] = current_time;
     estimate_tempo(current_time, note_in);

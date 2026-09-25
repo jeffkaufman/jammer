@@ -185,7 +185,9 @@ the physical keyboard in the middle, and what it actually does underneath:
   See below.
 * **Modifier keys** (purple) are the per-endpoint flags: downbeat, upbeat,
   chord, octave, and so on.  They light up for whichever endpoint is selected,
-  so switching endpoints switches what's lit.
+  so switching endpoints switches what's lit.  On the drum kit, downbeat puts
+  the kit's kick on the kick pedal: every kick, including extra ones between
+  beats, which don't fit the tempo and so start no beat of their own.
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.
 * **`1`** (pink) is the whistle bass, which is its own synthesis engine rather
