@@ -278,7 +278,7 @@ static void test_ignored_flags_are_dead() {
 
   select_ep("T");  // low: the piano's velocity, if asked
   CHECK(!key_is_dead(key_for_cap(".")), "VEL should be live on Low");
-  CHECK(key_is_dead(key_for_cap(";")), "SHORTISH should be dead on Low");
+  CHECK(key_is_dead(key_for_cap(";")), "CLIPPED should be dead on Low");
 
   select_ep("W");  // the foot bass reads everything
   for (int i = 0; i < N_KEYS; i++) {
@@ -1659,8 +1659,21 @@ static void test_spoken_presses() {
   CHECK(strcmp(PHRASE(false, "press", "upper"), "press Y") == 0, "upper");
   CHECK(strcmp(PHRASE(false, "press", "mixolydian"), "press ←") == 0,
         "mixolydian");
-  CHECK(strcmp(PHRASE(true, "press", "banana", "four"), "4") == 0,
-        "a keyword that names nothing should be dropped");
+  CHECK(strcmp(PHRASE(true, "press", "banana", "four"), "") == 0,
+        "a keyword that names nothing should be dropped, with what followed "
+        "it: the four was part of the misheard name, not a chord");
+  select_ep("W");  // the foot bass, which has lengths to shorten
+  // Not "shortish", heard as "shorter", nor "shorty", which "shorter" was
+  // then heard as: nothing like the key beside it.
+  CHECK(strcmp(PHRASE(true, "press", "clipped"), "press ;") == 0, "clipped");
+  CHECK(strcmp(PHRASE(true, "press", "shorter"), "press '") == 0, "shorter");
+  c->selected_endpoint = ENDPOINT_FLEX;
+  CHECK(strcmp(PHRASE(true, "press", "bass", "one"), "press S") == 0,
+        "'press bass one' is how the recognizer writes 'press synbass 1'");
+  CHECK(strcmp(PHRASE(true, "press", "send", "bass", "one"), "press S") == 0,
+        "and on the way there, 'press send bass one'");
+  CHECK(strcmp(PHRASE(true, "press", "synth", "bass", "two"), "press A") == 0,
+        "synth bass 2");
   CHECK(strcmp(PHRASE(true, "press", "octave", "up"), "press ]") == 0,
         "aliases should work");
   CHECK(strcmp(PHRASE(true, "select", "skip", "bass"), "select 3") == 0,
@@ -1741,7 +1754,17 @@ static void test_spoken_presses() {
   CHECK(strcmp(PHRASE(true, "change", "the", "key", "to", "A"), "") == 0,
         "not quite the phrase: nothing");
   CHECK(strcmp(PHRASE(true, "change", "key", "to", "banana", "five"),
-               "5") == 0, "a key that names nothing, then a number");
+               "") == 0, "a key that names nothing takes what followed with it");
+  // And what's said after that, once it's over, is heard as ever.
+  {
+    int consumed = 0;
+    const char* first[] = {"press", "banana"};
+    CHECK(next_action(first, 2, &consumed, true).kind == SW_NONE,
+          "a misheard press should do nothing");
+    const char* then[] = {"press", "banana", "four"};
+    CHECK(next_action(then, 3, &consumed, true).kind == SW_NUMBER,
+          "a number said after the misheard press was dropped should count");
+  }
 
   // The voice keys answer to whatever they show.
   select_ep("I");

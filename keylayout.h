@@ -221,7 +221,7 @@ static const Key KEYS[] = {
    FLAG_UPBEAT, NOLABEL, 3, 8.75, 1},
   {kVK_ANSI_L, 'L', 0, "L", "UH", "UP\nHIGH", GROUP_MODIFIER, LIT_EP_FLAG,
    FLAG_UPBEAT_HIGH, NOLABEL, 3, 9.75, 1},
-  {kVK_ANSI_Semicolon, ';', 0, ";", "S", "SHORT\nISH", GROUP_MODIFIER,
+  {kVK_ANSI_Semicolon, ';', 0, ";", "S", "CLIPPED", GROUP_MODIFIER,
    LIT_EP_FLAG, FLAG_SHORTISH, NOLABEL, 3, 10.75, 1},
   {kVK_ANSI_Quote, '\'', 0, "'", "SS", "SHORT\nER", GROUP_MODIFIER,
    LIT_EP_FLAG, FLAG_SHORTER, NOLABEL, 3, 11.75, 1},

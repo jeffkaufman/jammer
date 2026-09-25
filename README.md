@@ -228,7 +228,10 @@ With `F8` on, any button can be pressed by saying "press" and then its name:
 key to B" and "change mode to minor" do what the key picker and the arrow
 keys do; only the natural keys, with no sharps or flats.  Without the
 lead-in words a name does nothing, so talking to the room is safe.  These
-happen the moment they're heard; only numbers wait for the beat.
+happen the moment they're heard; only numbers wait for the beat.  A lead-in
+followed by no name it knows -- a name misheard -- is dropped along with
+everything after it, so "press bass one" for a misheard "SynBass 1" can't
+turn into a change to the I.
 
 A button's name is what's written on it right now, so the voice keys answer to
 the drum kits, the drones' pads or the whistle's voices when those are showing
@@ -236,7 +239,9 @@ the drum kits, the drones' pads or the whistle's voices when those are showing
 symbols, or cut short to fit also answer to spelled-out names -- "volume up",
 "octave down", "clear endpoint", "electric piano", "speech recognition" (F8),
 "number recognition" (F3),
-"drum chooses notes" (F9), "frequency modulator" -- listed in
+"drum chooses notes" (F9), "frequency modulator", and "synth bass 1" or
+"bass 1" for SynBass 1, since the recognizer doesn't know "synbass" and
+drops it -- listed in
 `SPOKEN_ALIASES` in `keypad.h`.  Spaces and number words don't matter: "room
 two" is Room 2.
 
@@ -371,7 +376,7 @@ rather than being retyped between tunes:
 |---|---|---|
 | downbeat | on | **off** |
 | upbeat / up high | on | on |
-| shortish (`S`) | — | **on** |
+| clipped (`S`) | — | **on** |
 | shorter (`SS`) | **on** | **on** |
 | doubled (`II`) | **on** | **on** |
 | voice | SynBass 2 (39) | **SynBass 1 (38)** |

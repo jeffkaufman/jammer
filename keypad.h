@@ -313,8 +313,12 @@ SPOKEN_ALIASES[] = {
   {"OCT−", "octave down", true},
   {"OCT+", "octave up", true},
   {"PRE\nUNIQ", "pre unique"},
+  // And as the recognizer writes them: "synbass" isn't a word it knows, and
+  // "press synbass one" comes out "press bass one".
   {"SynBass\n2", "synth bass 2"},
+  {"SynBass\n2", "bass 2"},
   {"SynBass\n1", "synth bass 1"},
+  {"SynBass\n1", "bass 1"},
   {"Acou\nBass", "acoustic bass"},
   {"E.\nPiano", "electric piano"},
   {"Bari\nSax", "baritone sax"},
@@ -325,7 +329,6 @@ SPOKEN_ALIASES[] = {
   {"Arpeg\ngiator", "arpeggiator"},
   {"Over\nlay", "overlay"},
   {"DOUB\nLED", "doubled"},
-  {"SHORT\nISH", "shortish"},
   {"SHORT\nER", "shorter"},
   {"DOWN\nBEAT", "downbeat"},
   {"UP\nBEAT", "upbeat"},

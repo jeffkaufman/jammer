@@ -69,6 +69,9 @@ static void sw_normalize_named(const char* word, char* out, int out_size) {
     {"won", "1"}, {"to", "2"}, {"too", "2"}, {"tree", "3"},
     {"for", "4"}, {"fore", "4"}, {"ate", "8"},
     {"hi", "high"}, {"cord", "chord"}, {"chords", "chord"},
+    // "synth", said the way "SynBass" reads, and written down on the way
+    // to the recognizer dropping it.
+    {"syn", "synth"}, {"sin", "synth"}, {"send", "synth"},
   };
   sw_normalize(word, out, out_size);
   for (int i = 0; i < (int)(sizeof(SOUNDS) / sizeof(SOUNDS[0])); i++) {
@@ -334,9 +337,12 @@ static SwAction sw_next_action(const char* const* words, int n_words,
       // want it.
       dropped = true;
     }
+    // A lead-in that came to nothing takes what followed it with it: that
+    // was the name, misheard, and a number in it -- "press bass one" -- is
+    // no chord change.
     if (dropped) {
-      *consumed = i + 1;  // a lead-in that came to nothing
-      continue;
+      *consumed = n_words;
+      return none;
     }
 
     int number = nw_number_for_word(words[i]);

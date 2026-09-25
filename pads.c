@@ -127,7 +127,7 @@ static int drone_note(int program, int note, bool chord, int octave) {
 }
 
 // What send_chord puts under a root: root and fifth, and the third only when
-// asked for, the way SHORTISH adds it when the drum is choosing the notes.
+// asked for, the way CLIPPED adds it when the drum is choosing the notes.
 static int chord_notes(int root, bool minor, bool third, int* out) {
   int n = 0;
   out[n++] = to_root(root);

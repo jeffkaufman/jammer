@@ -142,7 +142,7 @@
 // With the drum endpoint selected the voice keys pick a kit instead: the
 // percussion set the drum channel plays out of, and the sounds it uses from
 // it -- the kick on the downbeat (DB), the snare-ish hit that goes along with
-// it when SHORTISH is on, and the hihat-ish sound on the upbeats (UB).
+// it when CLIPPED is on, and the hihat-ish sound on the upbeats (UB).
 //
 // The velocity scales are what keep the kits at one level.  The sets are not
 // mixed to match each other at all, so without them switching kits would be
