@@ -296,11 +296,11 @@ static int drone_voice_for_note(int note) {
   return -1;
 }
 
-// The Breath Gate's own voices, in place of a pad: on the three voice keys the
-// drones leave empty, percussion the breath plays by moving (macapi.h), and
-// on three of the pads' keys -- the Breath Gate's only; the other drones keep
-// all ten pads -- voices for builds and drops (see the README's "Builds and
-// drops"):
+// The Breath Gate's own voices, in place of a pad, on the home row: the Snare
+// Roll and the percussion the breath plays by moving (macapi.h), then the
+// voices for builds and drops (see the README's "Builds and drops").  Its
+// pads are on the row below (BREATH_PADS), so the two kinds are a row each
+// rather than mixed; the other drones keep all ten pads where they are.
 //
 //   Snare Roll      the kit's snare on the beat's grid, faster the harder you
 //                   blow: quarters, 8ths, 16ths, 32nds (breath_roll_tick)
@@ -328,12 +328,38 @@ static const struct {
   unsigned fx;  // what it has the Mac's audio play
 } BREATH_VOICES[] = {
   {'A', BREATH_LAYER_SNARE_ROLL, "Snare\nRoll",  0},
-  {'Z', BREATH_LAYER_RISER,      "Noise\nRiser", BREATH_FX_RISER},
-  {'G', BREATH_LAYER_WOBBLE,     "Wobble",       BREATH_FX_WOBBLE},
-  {'B', BREATH_LAYER_GUIRA,      "Guira",        BREATH_FX_GUIRA},
-  {'N', BREATH_LAYER_GUIRO,      "Guiro",        BREATH_FX_GUIRO},
-  {'M', BREATH_LAYER_WASHBOARD,  "Wash\nboard",  BREATH_FX_WASHBOARD},
+  {'S', BREATH_LAYER_GUIRA,      "Guira",        BREATH_FX_GUIRA},
+  {'D', BREATH_LAYER_GUIRO,      "Guiro",        BREATH_FX_GUIRO},
+  {'F', BREATH_LAYER_WASHBOARD,  "Wash\nboard",  BREATH_FX_WASHBOARD},
+  {'G', BREATH_LAYER_RISER,      "Noise\nRiser", BREATH_FX_RISER},
+  {'H', BREATH_LAYER_WOBBLE,     "Wobble",       BREATH_FX_WOBBLE},
 };
+
+// And its pads, on the row below: seven of the drones' ten, by program, so
+// their levels and labels are the drones'.  Polysynth, Halo Pad (where it
+// starts) and Sweep Pad are where they are on every drone; the rest fill in
+// around them.
+static const struct {
+  char note;
+  int program;
+} BREATH_PADS[] = {
+  {'Z', 50}, {'X', 90}, {'C', 94}, {'V', 95}, {'B', 54}, {'N', 62},
+  {'M', 18},
+};
+#define N_BREATH_PADS ((int)(sizeof(BREATH_PADS) / sizeof(BREATH_PADS[0])))
+
+// The DRONE_VOICES entry on this key for this drone, or -1: the Breath
+// Gate's are on its own keys.
+static int drone_voice_for(int endpoint, int note) {
+  if (endpoint != ENDPOINT_BREATH) return drone_voice_for_note(note);
+  for (int i = 0; i < N_BREATH_PADS; i++) {
+    if (BREATH_PADS[i].note != note) continue;
+    for (int v = 0; v < N_DRONE_VOICES; v++) {
+      if (DRONE_VOICES[v].program == BREATH_PADS[i].program) return v;
+    }
+  }
+  return -1;
+}
 #define N_BREATH_VOICES \
   ((int)(sizeof(BREATH_VOICES) / sizeof(BREATH_VOICES[0])))
 
@@ -2362,7 +2388,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     }
   }
   if (is_drone(c->selected_endpoint)) {
-    int index = drone_voice_for_note(note_in);
+    int index = drone_voice_for(c->selected_endpoint, note_in);
     if (index >= 0) {
       int program = DRONE_VOICES[index].program;
       // On the Breath Gate the pad's key again lets go of it, leaving the

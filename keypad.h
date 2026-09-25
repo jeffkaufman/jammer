@@ -175,14 +175,15 @@ static int breath_voice_on_key(const Key* key) {
 static int drone_voice_on_key(const Key* key) {
   if (!drone_keys_active() || key->group != GROUP_VOICE) return -1;
   if (breath_voice_on_key(key) >= 0) return -1;
-  return drone_voice_for_note(key->note);
+  return drone_voice_for(c->selected_endpoint, key->note);
 }
 
 // A voice key with no pad on it does nothing while a drone is selected.
 // Caller must hold the lock.
 static bool drone_key_is_dead(const Key* key) {
   return drone_keys_active() && key->group == GROUP_VOICE && key->label &&
-    drone_voice_for_note(key->note) < 0 && breath_voice_on_key(key) < 0;
+    drone_voice_for(c->selected_endpoint, key->note) < 0 &&
+    breath_voice_on_key(key) < 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +485,7 @@ static bool key_is_lit(const Key* key) {
     if (breath_voice >= 0) {
       return c->breath_layers & BREATH_VOICES[breath_voice].layer;
     }
-    int index = drone_voice_for_note(key->note);
+    int index = drone_voice_for(sel, key->note);
     return index >= 0 && c->voices[sel] == DRONE_VOICES[index].program;
   }
 

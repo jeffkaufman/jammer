@@ -514,7 +514,8 @@ static void test_breath_gate() {
         "the next breath didn't strike it again");
 
   // Its own voices are layers, over the pad: each on and off by itself.
-  const char* caps[] = {"B", "N", "M", "Z", "G"};
+  // They're the home row, the blue keys, apart from the pads below.
+  const char* caps[] = {"S", "D", "F", "G", "H"};
   unsigned fxs[] = {BREATH_FX_GUIRA, BREATH_FX_GUIRO, BREATH_FX_WASHBOARD,
                     BREATH_FX_RISER, BREATH_FX_WOBBLE};
   const char* labels[] = {"Guira", "Guiro", "Wash\nboard", "Noise\nRiser",
@@ -535,11 +536,11 @@ static void test_breath_gate() {
           "%s again didn't switch it off", caps[i]);
   }
 
-  press("Z");
   press("G");
+  press("H");
   press("A");
   CHECK(told_fx == (BREATH_FX_RISER | BREATH_FX_WOBBLE) &&
-        lit("Z") && lit("G") && lit("A") && lit("C") &&
+        lit("G") && lit("H") && lit("A") && lit("C") &&
         c->breath_layers == (BREATH_LAYER_RISER | BREATH_LAYER_WOBBLE |
                              BREATH_LAYER_SNARE_ROLL),
         "the riser, wobble and snare roll should all be on, over the pad");
@@ -561,19 +562,25 @@ static void test_breath_gate() {
 
   // A pad again, and the layers stay.
   press("X");
-  CHECK(c->voices[ENDPOINT_BREATH] == 90 && lit("X") && lit("Z") &&
+  CHECK(c->voices[ENDPOINT_BREATH] == 90 && lit("X") && lit("G") &&
         current_note[ENDPOINT_BREATH] != -1,
         "X should bring a pad back under the layers");
   handle_cc(CC_BREATH, 0);
 
-  // The rest of the voice keys are the drones' pads, as on any drone.
-  const char* pads[] = {"S", "D", "F", "H", "X", "C", "V"};
+  // The bottom row is its pads, the orange keys: seven of the drones', with
+  // Polysynth, Halo and Sweep where they are on every drone.
+  const char* pads[] = {"Z", "X", "C", "V", "B", "N", "M"};
+  const int programs[] = {50, 90, 94, 95, 54, 62, 18};
   for (int i = 0; i < 7; i++) {
     const Key* k = key_for_cap(pads[i]);
-    CHECK(breath_voice_for_note(k->note) < 0 &&
-          drone_voice_for_note(k->note) >= 0,
-          "%s should pick a pad on the Breath Gate", pads[i]);
+    int v = drone_voice_on_key(k);
+    CHECK(breath_voice_for_note(k->note) < 0 && v >= 0 &&
+          DRONE_VOICES[v].program == programs[i] && !drone_key_is_dead(k),
+          "%s should pick pad %d on the Breath Gate", pads[i], programs[i]);
   }
+  press("M");
+  CHECK(c->voices[ENDPOINT_BREATH] == 18 && lit("M"),
+        "M should pick Rock Organ on the Breath Gate");
 
   // The other drones still leave B, N and M empty, and keep all ten pads.
   select_ep("9");

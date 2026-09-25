@@ -147,21 +147,23 @@ the physical keyboard in the middle, and what it actually does underneath:
   the edge doesn't chatter.  Each breath after the breath has come all the way
   to rest strikes the chord afresh, so it opens on the pad's attack; pulsing
   without coming to rest just chops the chord that's sounding.  It starts on
-  Halo Pad, and with it selected `S D F H X C V` pick from the drones'
-  pads.  The rest of the voice keys are its own voices, in place of a pad:
-  the build-and-drop voices on `A`, `Z` and `G` (see [Builds and
-  drops](#builds-and-drops)), and on B, N and M, empty for the other drones,
-  percussion played by moving the breath rather than by how hard it is, so
-  holding it steady is silence.  Its own voices, drawn in blue, are layers:
+  Halo Pad.  With it selected the voice keys are a row each: the bottom row,
+  in orange, picks from seven of the drones' pads -- Synth Strings on `Z`,
+  Polysynth, Halo Pad and Sweep Pad on `X C V` as on every drone, then Synth
+  Voice, Synth Brass 1 and Rock Organ on `B N M` -- and the home row, in
+  blue, is its own voices, in place of a pad: the Snare Roll on `A`,
+  percussion on `S D F` played by moving the breath rather than by how hard
+  it is, so holding it steady is silence, and the build-and-drop voices on
+  `G` and `H` (see [Builds and drops](#builds-and-drops)).  Its own voices are layers:
   each key switches one on or off, and any of them can play together, over
   the pad or without one.  There's only ever one pad, since it's the one
   voice that uses the Breath Gate's channel; its key again lets go of it,
   leaving the layers on their own.
-  * **Guira** (B): a wire brush over a punched metal cylinder, each ridge a
+  * **Guira** (S): a wire brush over a punched metal cylinder, each ridge a
     "tsch".
-  * **Guiro** (N): every fortieth of the breath's range it moves is one
+  * **Guiro** (D): every fortieth of the breath's range it moves is one
     click, so slow is a ratchet and fast a zip.
-  * **Washboard** (M): the same over finer ridges, with a thimble on metal.
+  * **Washboard** (F): the same over finer ridges, with a thimble on metal.
 
   The percussion is its own sound, not fluidsynth's, so the sweeps and Kick
   Duck leave it alone.  The pad goes through them like any other.
@@ -477,8 +479,8 @@ on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
 | key | voice | |
 |---|---|---|
 | `A` | Snare Roll | the kit's snare on the beat's grid, faster and louder as you blow harder: quarters, 8ths, 16ths, 32nds.  The first hit comes with the breath. |
-| `Z` | Noise Riser | noise through a band that rises from 300Hz to 12kHz as you blow harder |
-| `G` | Wobble | a saw bass on the bass note, its filter swinging on the beat's grid once a beat, and 2, 3 and 4 times as you blow harder |
+| `G` | Noise Riser | noise through a band that rises from 300Hz to 12kHz as you blow harder |
+| `H` | Wobble | a saw bass on the bass note, its filter swinging on the beat's grid once a beat, and 2, 3 and 4 times as you blow harder |
 
 With no pedals the grid is 116 BPM, from the start of the breath; with them
 it's theirs, and carries on at their tempo if they stop while you're still
