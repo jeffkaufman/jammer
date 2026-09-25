@@ -146,15 +146,26 @@ the physical keyboard in the middle, and what it actually does underneath:
   opens a little way into the breath and shuts a little below that, so a breath at
   the edge doesn't chatter.  Each breath after the breath has come all the way
   to rest strikes the chord afresh, so it opens on the pad's attack; pulsing
-  without coming to rest just chops the chord that's sounding.  It starts on
-  Halo Pad.  With it selected the voice keys are a row each: the bottom row,
+  without coming to rest just chops the chord that's sounding.  It starts as
+  the Tamb Shake alone, with no pad: switch it on and shake the breath, and
+  a pad's key adds a pad under it.  With it selected the voice keys are a row each: the bottom row,
   in orange, picks from seven of the drones' pads -- Synth Strings on `Z`,
   Polysynth, Halo Pad and Sweep Pad on `X C V` as on every drone, then Synth
   Voice, Synth Brass 1 and Rock Organ on `B N M` -- and the home row, in
   blue, is its own voices, in place of a pad: the Snare Roll on `A`,
   percussion on `S D F` played by moving the breath rather than by how hard
   it is, so holding it steady is silence, and the build-and-drop voices on
-  `G` and `H` (see [Builds and drops](#builds-and-drops)).  Its own voices are layers:
+  `G` and `H` (see [Builds and drops](#builds-and-drops)).  `J` and `K`,
+  DOWNBEAT and UPBEAT elsewhere but nothing to a drone, are shakers: the
+  Brushes on `J` and the Tamb Shake on `K`.  A moving breath stirs the
+  brushes on the head, the jazz drummer's stirring the soup, or jangles the
+  tambourine, and one blown up past medium, or past hard, slaps or hits them.
+  The tambourine is the soundfont's own, the same in every kit.  The
+  brushes' stir is the Mac's own sound, noise through the head's swish and
+  the bristles' hiss, as loud as the breath is moving; their slaps are the
+  soundfont's Brush kit, soft, on a channel of their own (on the Pi, the
+  drum's, playing what that kit has on their notes).
+  Its own voices are layers:
   each key switches one on or off, and any of them can play together, over
   the pad or without one.  There's only ever one pad, since it's the one
   voice that uses the Breath Gate's channel; its key again lets go of it,
@@ -184,7 +195,18 @@ the physical keyboard in the middle, and what it actually does underneath:
   gets a yellow outline whether or not it's switched on.
 * **Letter keys** (orange) pick the voice for the selected endpoint — or the
   drum sound, when the drum endpoint is selected, or a pad, when a drone is.
-  See below.
+  See below.  The jaw harp (`Q`) has voices of its own, since it plays down
+  at C1-B1, struck again each beat with PULSE, where most of the usual ones
+  are slow to start or mud: Charang `A`, SynBass 1 `S`, Drive Guitar `F`,
+  Fuzz Guitar `G`, Synth Brass 1 `H`, Bassoon `X`, Tenor Sax `C`, Bari Sax
+  `V`, Saw Lead `B`, Bass Lead `N`, Fifths Lead `M`, with `D` and `Z` empty.
+  All but Charang and Bari Sax sit higher, as if OCT+ had been pressed --
+  once, and five times for Fifths Lead -- on top of any presses of your own,
+  and CHORD takes each up its own way: two octaves, as everywhere else, for
+  Charang and Bari Sax; one for SynBass 1, Drive and Fuzz Guitar, Tenor Sax
+  and Bass Lead; none for the rest.  The new ones are levelled to Bari
+  Sax, by perceived loudness where they play (`JAWHARP_VOICES` in
+  `jammermidilib.h`).
 * **Modifier keys** (purple) are the per-endpoint flags: downbeat, upbeat,
   chord, octave, and so on.  They light up for whichever endpoint is selected,
   so switching endpoints switches what's lit.  On the drum kit, downbeat puts
@@ -479,6 +501,8 @@ on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
 | key | voice | |
 |---|---|---|
 | `A` | Snare Roll | the kit's snare on the beat's grid, faster and louder as you blow harder: quarters, 8ths, 16ths, 32nds.  The first hit comes with the breath. |
+| `J` | Brushes | a jazz kit's brushes: moving the breath stirs them on the head, a continuous swish as loud as it's moving, gone when it's still; past about three quarters of the breath a soft slap, and past about 92% a harder one with a tap under it |
+| `K` | Tamb Shake | a tambourine the breath shakes: wiggling it jangles, soft touches a little louder the harder you're blowing, through the bottom three quarters of the breath; blowing up past that hits it, and past about 92% hits it as hard as it goes, each armed again once you've backed off.  A steady breath is silence |
 | `G` | Noise Riser | noise through a band that rises from 300Hz to 12kHz as you blow harder |
 | `H` | Wobble | a saw bass on the bass note, its filter swinging on the beat's grid once a beat, and 2, 3 and 4 times as you blow harder |
 

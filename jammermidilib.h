@@ -298,12 +298,19 @@ static int drone_voice_for_note(int note) {
 
 // The Breath Gate's own voices, in place of a pad, on the home row: the Snare
 // Roll and the percussion the breath plays by moving (macapi.h), then the
-// voices for builds and drops (see the README's "Builds and drops").  Its
+// voices for builds and drops (see the README's "Builds and drops").  And
+// the tambourines, on J and K: modifier keys, but DOWNBEAT and UPBEAT mean
+// nothing to a drone.  Its
 // pads are on the row below (BREATH_PADS), so the two kinds are a row each
 // rather than mixed; the other drones keep all ten pads where they are.
 //
 //   Snare Roll      the kit's snare on the beat's grid, faster the harder you
 //                   blow: quarters, 8ths, 16ths, 32nds (breath_roll_tick)
+//   Brushes         a jazz kit's brushes, on J: moving the breath stirs them
+//                   on the head, a swish as loud as it's moving (macapi.h),
+//                   and blowing up past medium slaps them softly, and past
+//                   hard a little harder (breath_shake)
+//   Tamb Shake      the same with a tambourine, on K: a wiggle jangles it
 //   Noise Riser     noise through a filter the breath opens (macapi.h)
 //   Wobble          a saw bass on the bass note, its filter swinging on the
 //                   beat's grid, 1-4 times a beat the harder you blow
@@ -320,6 +327,8 @@ enum {
   BREATH_LAYER_GUIRA = 1 << 3,
   BREATH_LAYER_GUIRO = 1 << 4,
   BREATH_LAYER_WASHBOARD = 1 << 5,
+  BREATH_LAYER_BRUSHES = 1 << 6,
+  BREATH_LAYER_TAMB_SHAKE = 1 << 7,
 };
 static const struct {
   char note;
@@ -333,12 +342,13 @@ static const struct {
   {'F', BREATH_LAYER_WASHBOARD,  "Wash\nboard",  BREATH_FX_WASHBOARD},
   {'G', BREATH_LAYER_RISER,      "Noise\nRiser", BREATH_FX_RISER},
   {'H', BREATH_LAYER_WOBBLE,     "Wobble",       BREATH_FX_WOBBLE},
+  {'J', BREATH_LAYER_BRUSHES,    "Brushes",      BREATH_FX_BRUSH},
+  {'K', BREATH_LAYER_TAMB_SHAKE, "Tamb\nShake",  0},
 };
 
 // And its pads, on the row below: seven of the drones' ten, by program, so
-// their levels and labels are the drones'.  Polysynth, Halo Pad (where it
-// starts) and Sweep Pad are where they are on every drone; the rest fill in
-// around them.
+// their levels and labels are the drones'.  Polysynth, Halo Pad and Sweep
+// Pad are where they are on every drone; the rest fill in around them.
 static const struct {
   char note;
   int program;
@@ -403,6 +413,81 @@ static int drone_volume(int endpoint, int voice) {
     if (DRONE_VOICES[i].program != voice) continue;
     return is_chord_drone(endpoint) ? DRONE_VOICES[i].chord_volume
                                     : DRONE_VOICES[i].bass_volume;
+  }
+  return -1;
+}
+
+// The jaw harp's own voices.  It plays down at C1-B1, struck again every beat
+// with PULSE, so what works there is what starts fast and has bite above
+// the fundamental -- which the usual voice keys mostly don't: Pan Flute and
+// Drawbar are slow to start, Vox Lead and Rock Organ are mud down there, and
+// the plucked and struck ones die away.  Bari Sax, Saw Lead, Bass Lead and
+// SynBass 1 stay where they are; the rest are what rendering every program
+// at the jaw harp's notes turned up as starting within about 70ms, holding
+// through the beat, and carrying above 300Hz.
+//
+// Most sit higher than the jaw harp's own C1-B1: `octave` is how many
+// presses of OCT+ each has built in, on top of any made on the key -- one
+// lifts the notes under F#1 an octave, as OCT+ does on the jaw harp.  And
+// `chord` is how far CHORD takes each up, in semitones: two octaves, as for
+// every other endpoint, for the two that haven't been moved; one, or none,
+// for those that have.
+//
+// Each new one's channel volume matches Bari Sax, by perceived loudness at
+// stage volume, as the jaw harp plays it, where it plays it; the kept ones,
+// -1 here, keep voices.h's, and sit under Bari Sax as they did.  D and Z are
+// empty.
+static const struct {
+  char note;
+  int program;
+  const char* label;
+  int volume;
+  int octave;
+  int chord;
+} JAWHARP_VOICES[] = {
+  {'A',  84, "Charang",        109, 0, 24},
+  {'S',  38, "SynBass\n1",      -1, 1, 12},
+  {'F',  29, "Drive\nGuitar",    68, 1, 12},
+  {'G',  30, "Fuzz\nGuitar",     68, 1, 12},
+  {'H',  62, "Synth\nBrass 1",   97, 1,  0},
+  {'X',  70, "Bassoon",          75, 1,  0},
+  {'C',  66, "Tenor\nSax",       81, 1, 12},
+  {'V',  67, "Bari\nSax",        -1, 0, 24},
+  {'B',  81, "Saw\nLead",        -1, 1,  0},
+  {'N',  87, "Bass\nLead",       -1, 1, 12},
+  {'M',  86, "Fifths\nLead",    124, 5,  0},
+};
+#define N_JAWHARP_VOICES \
+  ((int)(sizeof(JAWHARP_VOICES) / sizeof(JAWHARP_VOICES[0])))
+
+// The JAWHARP_VOICES entry on this key, or -1.
+static int jawharp_voice_for_note(int note) {
+  for (int i = 0; i < N_JAWHARP_VOICES; i++) {
+    if (JAWHARP_VOICES[i].note == note) return i;
+  }
+  return -1;
+}
+
+// The OCT+ presses this voice has built in on the jaw harp.
+static int jawharp_octave(int voice) {
+  for (int i = 0; i < N_JAWHARP_VOICES; i++) {
+    if (JAWHARP_VOICES[i].program == voice) return JAWHARP_VOICES[i].octave;
+  }
+  return 0;
+}
+
+// How far CHORD takes this voice up on the jaw harp, in semitones.
+static int jawharp_chord(int voice) {
+  for (int i = 0; i < N_JAWHARP_VOICES; i++) {
+    if (JAWHARP_VOICES[i].program == voice) return JAWHARP_VOICES[i].chord;
+  }
+  return 24;
+}
+
+// The jaw harp's own channel volume for this voice, or -1 for voices.h's.
+static int jawharp_volume(int voice) {
+  for (int i = 0; i < N_JAWHARP_VOICES; i++) {
+    if (JAWHARP_VOICES[i].program == voice) return JAWHARP_VOICES[i].volume;
   }
   return -1;
 }
@@ -771,9 +856,14 @@ int endpoint_note(int note, int endpoint) {
 	c->voices[endpoint] == 18) {
     note += 12;  // organs should be up an octave
   }
+  // The jaw harp's voices each go up their own way for a chord, since most
+  // sit higher already -- see JAWHARP_VOICES.
+  int built_in = endpoint == ENDPOINT_JAWHARP
+    ? jawharp_octave(c->voices[endpoint]) : 0;
   if (c->chord[endpoint] && plays_chords(endpoint)) {
     // chords should be higher
-    note += 24;
+    note += endpoint == ENDPOINT_JAWHARP
+      ? jawharp_chord(c->voices[endpoint]) : 24;
   }
 
   // Normally this is like:
@@ -790,8 +880,9 @@ int endpoint_note(int note, int endpoint) {
 
   if (is_footbass(endpoint) ||
       endpoint == ENDPOINT_JAWHARP) {
-    note += (c->octave_deltas[endpoint] / 2) * 12;
-    if (c->octave_deltas[endpoint] % 2 == 1) {
+    int presses = c->octave_deltas[endpoint] + built_in;
+    note += (presses / 2) * 12;
+    if (presses % 2 == 1) {
       if (to_root(note) < 30) {
         note += 12;
       }
@@ -1089,10 +1180,11 @@ void clear_endpoint() {
   case ENDPOINT_DRONE_CHORD: clear_drone_chord(18); break;
   case ENDPOINT_DRONE_BASS_2: clear_drone_bass(89); break;
   case ENDPOINT_DRONE_CHORD_2: clear_drone_chord(89); break;
-  // Halo Pad, since Warm Pad's key is the Noise Riser's on the Breath Gate.
+  // The Breath Gate starts as the Tamb Shake alone, with no pad: switch it
+  // on and shake the breath.  A pad's key under it adds one.
   case ENDPOINT_BREATH:
-    clear_drone_chord(94);
-    c->breath_layers = 0;
+    clear_drone_chord(VOICE_BREATH_NO_PAD);
+    c->breath_layers = BREATH_LAYER_TAMB_SHAKE;
     update_breath_fx();
     break;
   }
@@ -2387,6 +2479,16 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       return;
     }
   }
+  // The jaw harp's voice keys are its own too -- see JAWHARP_VOICES.  Those
+  // without one do nothing, rather than pick a voice that isn't on them.
+  if (c->selected_endpoint == ENDPOINT_JAWHARP) {
+    int index = jawharp_voice_for_note(note_in);
+    if (index >= 0) {
+      select_voice(c, JAWHARP_VOICES[index].program);
+      return;
+    }
+    if (is_voice_key(note_in)) return;
+  }
   if (is_drone(c->selected_endpoint)) {
     int index = drone_voice_for(c->selected_endpoint, note_in);
     if (index >= 0) {
@@ -2725,6 +2827,8 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
+void breath_shakers(void);  // below, with the Snare Roll
+
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc != CC_BREATH && cc != CC_11) {
     printf("Unknown Control change %d\n", cc);
@@ -2738,6 +2842,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
   breath = val;
   update_breath_fx();
   breath_gate_breath();
+  breath_shakers();
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
@@ -3006,6 +3111,10 @@ int64_t roll_last_slot;
 uint64_t roll_last_hit_ns;
 
 #define ROLL_DEFAULT_BEAT_NS (60 * NS_PER_SEC / 116)
+// The tambourine's velocity, against the roll's snare on the Standard kit:
+// FluidR3's tambourine is the same in every percussion set, and within half a
+// dB of that snare at the same velocity, so it takes the snare's scale.
+#define TAMB_VEL 0.81
 
 void breath_roll_tick(void) {
   double blown = breath_blown(breath);
@@ -3052,6 +3161,124 @@ void breath_roll_tick(void) {
   double scale = kit->snare == MIDI_DRUM_OUT_SNARE ? kit->snare_vel : 0.8;
   psend_midi(MIDI_ON, MIDI_DRUM_OUT_SNARE,
              normalize((int)((35 + 85 * blown) * scale)), ENDPOINT_DRUM);
+}
+
+// The Breath Gate's shakers, the Tamb Shake and the Brushes: an instrument
+// the breath shakes.  Three ways, by how hard you're blowing:
+//
+//   jangle    any wiggle of the breath, a soft touch every 1/SHAKE_STEPS of
+//             its range it moves, quieter the less you're blowing -- a
+//             shimmer, or a swirl, not a hit
+//   hit       blowing up past SHAKE_HIT: one proper hit
+//   big hit   up past SHAKE_BIG: one as hard as it goes
+//
+// Each hit is armed again once the breath's come back down a way below it,
+// so hovering at the edge doesn't hit again and again, and the jangle holds
+// off a moment after one so the hit reads clean.  Held steady, it's quiet.
+// Played from the breath as it comes, on MIDI, so it's the soundfont's own
+// samples, the Pi's too.
+#define SHAKE_STEPS 36
+#define SHAKE_GAP_NS (22 * 1000000LL)
+#define SHAKE_HIT 0.75              // of the breath's range: jangle below
+#define SHAKE_BIG 0.92
+#define SHAKE_REARM 0.12            // how far back down before it's armed again
+#define SHAKE_AFTER_HIT_NS (90 * 1000000LL)
+#define SHAKE_BACKLASH 0.012        // of the range: the controller's jitter
+
+// What a shaker plays: notes on a channel, how hard, and the velocity scale
+// that puts it level with the rest.  A jangle of -1 is none: the Brushes'
+// wiggle is their swish, which the Mac synthesizes (macapi.h).
+typedef struct {
+  unsigned layer;
+  int channel;
+  int jangle, hit, big, big_under;  // big_under: -1, or a note under the big
+  int hit_vel, big_vel;
+  double vel;
+} ShakerSound;
+
+// The tambourine, off whichever kit the drum's on -- FluidR3's is the same in
+// every one -- and the brushes off the Brush kit: a slap to hit, and a tap
+// under the big one, both a good deal softer than the tambourine's -- a
+// brush slap is a light thing.  Their slap is about 3dB under the tambourine
+// at the same velocity, so their scale is 16% up to start from level.
+static const ShakerSound TAMB_SHAKE = {
+  BREATH_LAYER_TAMB_SHAKE, CHANNEL_DRUM, MIDI_DRUM_OUT_TAMBOURINE,
+  MIDI_DRUM_OUT_TAMBOURINE, MIDI_DRUM_OUT_TAMBOURINE, -1, 100, 127, TAMB_VEL,
+};
+static const ShakerSound BRUSHES = {
+  BREATH_LAYER_BRUSHES, CHANNEL_BRUSH, -1, MIDI_BRUSH_SLAP, MIDI_BRUSH_SLAP,
+  MIDI_BRUSH_TAP, 55, 80, TAMB_VEL * 1.16,
+};
+
+typedef struct {
+  double stick;       // where the breath's got to, through the slack; -1 idle
+  double travel;      // since the last touch
+  uint64_t last_ns;   // when it last sounded
+  bool hit_armed, big_armed;
+  uint64_t hit_ns;    // when it was last hit, jangle aside
+} Shaker;
+
+Shaker tamb_shaker = {-1}, brush_shaker = {-1};
+
+static void shaker_play(const ShakerSound* sound, int note, int velocity) {
+  send_midi(MIDI_ON, note, normalize((int)(velocity * sound->vel)),
+            sound->channel);
+}
+
+static void breath_shake(Shaker* s, const ShakerSound* sound) {
+  if (!c->on[ENDPOINT_BREATH] || !(c->breath_layers & sound->layer)) {
+    s->stick = -1;
+    return;
+  }
+  double blown = breath_blown(breath);
+  uint64_t t = now();
+  if (s->stick < 0) {
+    s->stick = blown;
+    s->travel = 0;
+    s->hit_armed = blown < SHAKE_HIT;
+    s->big_armed = blown < SHAKE_BIG;
+    return;
+  }
+
+  // The hits, going up through them.  Past both at once is the big one.
+  if (s->big_armed && blown >= SHAKE_BIG) {
+    s->big_armed = s->hit_armed = false;
+    if (sound->big_under >= 0) {
+      shaker_play(sound, sound->big_under, sound->big_vel * 3 / 4);
+    }
+    shaker_play(sound, sound->big, sound->big_vel);
+    s->last_ns = s->hit_ns = t;
+  } else if (s->hit_armed && blown >= SHAKE_HIT) {
+    s->hit_armed = false;
+    shaker_play(sound, sound->hit, sound->hit_vel);
+    s->last_ns = s->hit_ns = t;
+  }
+  if (blown < SHAKE_HIT - SHAKE_REARM) s->hit_armed = true;
+  if (blown < SHAKE_BIG - SHAKE_REARM) s->big_armed = true;
+
+  // The jangle: movement, through the slack.
+  if (sound->jangle < 0) return;
+  double was = s->stick;
+  if (blown > s->stick + SHAKE_BACKLASH) {
+    s->stick = blown - SHAKE_BACKLASH;
+  } else if (blown < s->stick - SHAKE_BACKLASH) {
+    s->stick = blown + SHAKE_BACKLASH;
+  }
+  double moved = s->stick - was;
+  s->travel += fabs(moved);
+  if (s->travel < 1.0 / SHAKE_STEPS) return;
+  s->travel = 0;
+  if (t - s->hit_ns < SHAKE_AFTER_HIT_NS) return;
+  if (t - s->last_ns < SHAKE_GAP_NS) return;
+  s->last_ns = t;
+  // 20 at a whisper to 55 blowing hard; the way down a little softer.
+  shaker_play(sound, sound->jangle,
+              (int)((20 + 35 * blown) * (moved > 0 ? 1 : 0.8)));
+}
+
+void breath_shakers(void) {
+  breath_shake(&tamb_shaker, &TAMB_SHAKE);
+  breath_shake(&brush_shaker, &BRUSHES);
 }
 
 // Tell the Mac's audio about the music, every tick.  NULL on the Pi.

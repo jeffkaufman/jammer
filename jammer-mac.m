@@ -108,6 +108,7 @@ typedef struct {
   bool dead[N_KEYS];  // does nothing right now (key_is_dead)
   int drone_voice[N_KEYS];  // DRONE_VOICES index each key picks, or -1
   int breath_voice[N_KEYS];  // BREATH_VOICES index, or -1
+  int jawharp_voice[N_KEYS];  // JAWHARP_VOICES index, or -1
   int whistle_voice;
   unsigned whistle_fx;
   bool whistle_blow_on;
@@ -143,6 +144,7 @@ static void take_snapshot(Snapshot* s) {
     s->dead[i] = key_is_dead(&KEYS[i]);
     s->drone_voice[i] = drone_voice_on_key(&KEYS[i]);
     s->breath_voice[i] = breath_voice_on_key(&KEYS[i]);
+    s->jawharp_voice[i] = jawharp_voice_on_key(&KEYS[i]);
   }
   int sel = c->selected_endpoint;
   s->selected_endpoint = sel;
@@ -504,9 +506,13 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     label = DRONE_VOICES[snapshot.drone_voice[i]].label;
     shortname = NULL;
   }
-  // And the Breath Gate's own voices.
+  // And the Breath Gate's own voices, and the jaw harp's.
   if (snapshot.breath_voice[i] >= 0) {
     label = BREATH_VOICES[snapshot.breath_voice[i]].label;
+    shortname = NULL;
+  }
+  if (snapshot.jawharp_voice[i] >= 0) {
+    label = JAWHARP_VOICES[snapshot.jawharp_voice[i]].label;
     shortname = NULL;
   }
   // The whistle's ten voices take over the voice keys while it is selected,

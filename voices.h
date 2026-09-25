@@ -75,9 +75,13 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     break;
   }
 
-  // The drones level their pads themselves; see DRONE_VOICES.
+  // The drones level their pads themselves; see DRONE_VOICES.  And the jaw
+  // harp its own voices, JAWHARP_VOICES.
   if (is_drone(endpoint) && drone_volume(endpoint, voice) >= 0) {
     volume = drone_volume(endpoint, voice);
+  }
+  if (endpoint == ENDPOINT_JAWHARP && jawharp_volume(voice) >= 0) {
+    volume = jawharp_volume(voice);
   }
 
   if (endpoint == ENDPOINT_DRUM) {

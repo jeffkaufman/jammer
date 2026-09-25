@@ -24,6 +24,8 @@
 // Past the sixteen channels the endpoints and pitched kick use, so the synth
 // has thirty-two (start_synth).
 #define CHANNEL_KICK 16
+// And the Breath Gate's brushes, past the drones' voice channels, below.
+#define CHANNEL_BRUSH 32
 
 #include "common.h"
 
@@ -273,7 +275,7 @@ static bool trance_gate_open(int pattern, double phase,
 // it isn't ducked; it isn't fluidsynth's.
 // ---------------------------------------------------------------------------
 
-#define SYNTH_CHANNELS 32  // MIDI channels, each rendered to its own pair
+#define SYNTH_CHANNELS 33  // MIDI channels, each rendered to its own pair
 #define KICK_DUCK_DEPTH 0.788f   // taken off at the bottom: about -13.5dB
 #define KICK_DUCK_ATTACK_MS 5    // down this fast, so it doesn't click
 #define KICK_DUCK_RELEASE 0.6    // back up over this much of a beat
@@ -765,6 +767,52 @@ static void play_scraper(Scraper* s, BreathPlayer* p, const ScraperSound* sound,
   }
 }
 
+// The Brushes' swish: brushes stirring on a snare head -- the jazz
+// drummer's "stirring the soup" -- as loud as the breath is moving.  Noise
+// through two bands, the head's swish and the bristles' hiss, at a level
+// that follows how fast the breath moves: up over BRUSH_ATTACK_MS as it
+// starts to, and away over BRUSH_RELEASE_MS once it stops, so a steady
+// wiggle is a steady stir and a still breath is silence.  Its own, apart
+// from the scrapers, which click on ridges; this doesn't click at all.  The
+// slaps are the Brush kit's, on MIDI (jammermidilib.h's breath_shake).
+#define BRUSH_ATTACK_MS 25
+#define BRUSH_RELEASE_MS 150
+#define BRUSH_FULL_SPEED 1.5  // of the breath's range a second: full swish
+// A moderate stir at about -52dB, by perceived loudness: level with the Tamb
+// Shake's jangle, and under the Brush kit's slaps, the soft one about -49dB
+// and the big one about -42dB.
+#define BRUSH_LEVEL 0.015
+
+typedef struct {
+  double swish;     // how hard it's stirring, 0-1, followed
+  Bandpass head, bristles;
+} BrushSwish;
+
+static BreathPlayer brush_player;
+static BrushSwish brush;
+
+static void play_brush(float* left, float* right, int len, bool playing,
+                       double blown, double sample_rate) {
+  double k = 1 - exp(-1 / (sample_rate * BREATH_PLAY_SMOOTH_MS / 1000));
+  double up = 1 - exp(-1 / (sample_rate * BRUSH_ATTACK_MS / 1000));
+  double down = 1 - exp(-1 / (sample_rate * BRUSH_RELEASE_MS / 1000));
+  bandpass_set(&brush.head, 3000, 0.7, sample_rate);
+  bandpass_set(&brush.bristles, 6500, 1.2, sample_rate);
+  for (int i = 0; i < len; i++) {
+    double moved = breath_player_move(&brush_player, playing ? blown : 0, k);
+    double speed = playing ? fabs(moved) * sample_rate / BRUSH_FULL_SPEED : 0;
+    if (speed > 1) speed = 1;
+    brush.swish += (speed - brush.swish) * (speed > brush.swish ? up : down);
+    double x = breath_noise();
+    double y = 0.8 * bandpass_run(&brush.head, x) +
+               0.45 * bandpass_run(&brush.bristles, x);
+    // A soft start to the curve: a little stirring is a whisper, not half.
+    double level = BRUSH_LEVEL * pow(brush.swish, 1.3);
+    left[i] += (float)(y * level);
+    right[i] += (float)(y * level);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Builds and drops
 //
@@ -959,6 +1007,11 @@ static void play_breath_instruments(float* left, float* right, int len,
                         sample_rate, len)) {
     play_scraper(&guira, &guira_player, &GUIRA_SOUND, left, right, len, on,
                  blown, sample_rate);
+  }
+  on = fx & BREATH_FX_BRUSH;
+  if (breath_player_run(&brush_player, on, &brush, sizeof(brush),
+                        sample_rate, len)) {
+    play_brush(left, right, len, on, blown, sample_rate);
   }
 }
 
@@ -1187,7 +1240,9 @@ void start_synth(const char* soundfont_path, const char* device) {
   // reads the same setting as how many channels to open the device with.
   fluid_settings_setint(fl_settings, "synth.audio-channels", SYNTH_CHANNELS);
   fluid_settings_setint(fl_settings, "synth.audio-groups", SYNTH_CHANNELS);
-  fluid_settings_setint(fl_settings, "synth.midi-channels", SYNTH_CHANNELS);
+  // In sixteens, as fluidsynth has them.
+  fluid_settings_setint(fl_settings, "synth.midi-channels",
+                        (SYNTH_CHANNELS + 15) / 16 * 16);
   fluid_settings_setint(fl_settings, "synth.reverb.active", 0);
   fluid_settings_setint(fl_settings, "synth.chorus.active", 0);
   // Channel 9 is percussion, as on the Pi (ENDPOINT_DRUM == CHANNEL_DRUM == 9).
@@ -1197,6 +1252,7 @@ void start_synth(const char* soundfont_path, const char* device) {
   if (!fl_synth) die("couldn't create fluidsynth synth");
   fluid_settings_setint(fl_settings, "synth.audio-channels", 1);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_KICK, CHANNEL_TYPE_DRUM);
+  fluid_synth_set_channel_type(fl_synth, CHANNEL_BRUSH, CHANNEL_TYPE_DRUM);
 
   fl_sfont_id = fluid_synth_sfload(fl_synth, soundfont_path, 1);
   if (fl_sfont_id == FLUID_FAILED) {
@@ -1204,6 +1260,8 @@ void start_synth(const char* soundfont_path, const char* device) {
     die("couldn't load soundfont");
   }
   printf("loaded soundfont %s\n", soundfont_path);
+  fluid_synth_program_select(fl_synth, CHANNEL_BRUSH, fl_sfont_id,
+                             PERCUSSION_BANK, BRUSH_KIT);
 
   set_synth_gain(synth_gain);
   set_audio_device(device);
@@ -1237,8 +1295,10 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   if (action == MIDI_CC) {
     fluid_synth_cc(fl_synth, channel, note, velocity);
     // The kick's channel is the drum's, split off: same volume, pan, fade.
+    // And so are the brushes', on their own kit.
     if (channel == CHANNEL_DRUM) {
       fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
+      fluid_synth_cc(fl_synth, CHANNEL_BRUSH, note, velocity);
     }
     // And a drone's voice channels are the drone's.
     int base = voice_channel_base(channel);

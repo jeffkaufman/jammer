@@ -36,6 +36,19 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 #define CHANNEL_KICK CHANNEL_DRUM
 #endif
 
+// The Breath Gate's brushes: a percussion channel set to the Brush kit, apart
+// from the drum's, which is on whichever kit's picked.  The Mac makes it,
+// past the voice channels (macapi.h); the Pi's fluidsynth has only sixteen
+// channels, so there they're the drum's, and play what that kit has on the
+// brushes' notes.
+#ifndef CHANNEL_BRUSH
+#define CHANNEL_BRUSH CHANNEL_DRUM
+#endif
+#define BRUSH_KIT 40            // FluidR3's Brush set
+#define MIDI_BRUSH_TAP 38       // on it
+#define MIDI_BRUSH_SLAP 39
+#define MIDI_BRUSH_SWIRL 40
+
 // The breath controller's range, as the Mac's breath effects read it: below
 // BREATH_FLOOR is the controller at rest, and BREATH_FULL is as far as it
 // goes.  The Breath Gate opens BREATH_GATE_OPEN of the way between them and
@@ -70,6 +83,9 @@ enum {
   // jammermidilib.h, and has no bit.
   BREATH_FX_RISER = 1 << 6,
   BREATH_FX_WOBBLE = 1 << 7,
+  // The Brushes' swish: brushes stirring on a snare head, as fast as the
+  // breath moves.
+  BREATH_FX_BRUSH = 1 << 8,
 };
 
 // The trance gate's patterns on a drone, from its DOUB and PRE UNIQ flags:

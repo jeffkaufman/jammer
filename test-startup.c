@@ -68,10 +68,21 @@ int main(void) {
     if (i == ENDPOINT_FLEX) continue;  // its expression is its breath
     CHECK(cc11[i] == MAX_FADE, "endpoint %d expression is %d, want %d",
           i, cc11[i], MAX_FADE);
-    if (i != ENDPOINT_DRUM) {
+    // The Breath Gate starts with no pad, so nothing on its channel to
+    // set a volume for until one's picked.
+    bool no_pad = i == ENDPOINT_BREATH &&
+      c->voices[ENDPOINT_BREATH] == VOICE_BREATH_NO_PAD;
+    if (i != ENDPOINT_DRUM && !no_pad) {
       CHECK(cc7[i] > 0, "endpoint %d volume is 0", i);
     }
   }
+  // And picking one sets it.
+  int was = c->selected_endpoint;
+  c->selected_endpoint = ENDPOINT_BREATH;
+  select_voice(c, 94);
+  CHECK(cc7[ENDPOINT_BREATH] > 0, "a pad on the Breath Gate has volume 0");
+  select_voice(c, VOICE_BREATH_NO_PAD);
+  c->selected_endpoint = was;
 
   // The drum channel used to never be sent a program change at all, so every
   // kit came out of whatever set the synth defaulted to.

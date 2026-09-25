@@ -161,9 +161,10 @@ static bool drone_keys_active(void) {
 
 // The Breath Gate's BREATH_VOICES entry on this key, or -1.  Caller must
 // hold the lock.
+// The voice keys, and J and K, whose flags a drone has no use for.
 static int breath_voice_on_key(const Key* key) {
-  if (!drone_keys_active() || key->group != GROUP_VOICE ||
-      c->selected_endpoint != ENDPOINT_BREATH) {
+  if (!drone_keys_active() || c->selected_endpoint != ENDPOINT_BREATH ||
+      (key->group != GROUP_VOICE && key->group != GROUP_MODIFIER)) {
     return -1;
   }
   return breath_voice_for_note(key->note);
@@ -176,6 +177,24 @@ static int drone_voice_on_key(const Key* key) {
   if (!drone_keys_active() || key->group != GROUP_VOICE) return -1;
   if (breath_voice_on_key(key) >= 0) return -1;
   return drone_voice_for(c->selected_endpoint, key->note);
+}
+
+// The JAWHARP_VOICES entry this key picks right now, or -1: the voice keys
+// while the jaw harp's selected.  Caller must hold the lock.
+static int jawharp_voice_on_key(const Key* key) {
+  if (whistle_selected || c->selected_endpoint != ENDPOINT_JAWHARP ||
+      key->group != GROUP_VOICE) {
+    return -1;
+  }
+  return jawharp_voice_for_note(key->note);
+}
+
+// A voice key with no voice on it does nothing while the jaw harp's selected.
+// Caller must hold the lock.
+static bool jawharp_key_is_dead(const Key* key) {
+  return !whistle_selected && c->selected_endpoint == ENDPOINT_JAWHARP &&
+    key->group == GROUP_VOICE && key->label &&
+    jawharp_voice_for_note(key->note) < 0;
 }
 
 // A voice key with no pad on it does nothing while a drone is selected.
@@ -232,6 +251,7 @@ static bool endpoint_key_is_dead(const Key* key) {
     return false;
   }
   int sel = c->selected_endpoint;
+  if (breath_voice_on_key(key) >= 0) return false;  // J and K: tambourines
   if (key->lit == LIT_OCTAVE) return sel == ENDPOINT_DRUM;
   if (key->lit == LIT_EP_FLAG) return !endpoint_uses_flag(sel, key->arg);
   return false;
@@ -240,7 +260,7 @@ static bool endpoint_key_is_dead(const Key* key) {
 // Any reason for a key to draw dead right now.  Caller must hold the lock.
 static bool key_is_dead(const Key* key) {
   return whistle_key_is_dead(key) || drone_key_is_dead(key) ||
-    endpoint_key_is_dead(key);
+    jawharp_key_is_dead(key) || endpoint_key_is_dead(key);
 }
 
 // Strike a key, as a keypress would, minus the drawing.  Caller must hold the
@@ -286,6 +306,8 @@ static const char* key_current_label(const Key* key) {
   if (drone >= 0) return DRONE_VOICES[drone].label;
   int breath_voice = breath_voice_on_key(key);
   if (breath_voice >= 0) return BREATH_VOICES[breath_voice].label;
+  int jawharp = jawharp_voice_on_key(key);
+  if (jawharp >= 0) return JAWHARP_VOICES[jawharp].label;
   if (c->selected_endpoint == ENDPOINT_DRUM && key->drum_label) {
     if (key->drum_label[0] == '\0') return NULL;  // blank with the drum
     return key->drum_label;
@@ -339,6 +361,7 @@ SPOKEN_ALIASES[] = {
   {"Octave\nless", "octaveless"},
   {"Accor\ndion", "accordion"},
   {"Wash\nboard", "washboard"},
+  {"Tamb\nShake", "tambourine shake"},
   {"MIXO\nLYDIAN", "mixolydian"},
 };
 
@@ -400,6 +423,9 @@ static int all_spoken_phrases(char (*out)[48], int max) {
   }
   for (int i = 0; i < N_BREATH_VOICES; i++) {
     n = add_spoken_phrases(BREATH_VOICES[i].label, out, n, max);
+  }
+  for (int i = 0; i < N_JAWHARP_VOICES; i++) {
+    n = add_spoken_phrases(JAWHARP_VOICES[i].label, out, n, max);
   }
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     n = add_spoken_phrases(WHISTLE_VOICES[i].label, out, n, max);
@@ -480,11 +506,15 @@ static bool key_is_lit(const Key* key) {
     }
   }
 
+  int breath_layer = breath_voice_on_key(key);
+  if (breath_layer >= 0) {
+    return c->breath_layers & BREATH_VOICES[breath_layer].layer;
+  }
+  int jawharp = jawharp_voice_on_key(key);
+  if (jawharp >= 0) {
+    return c->voices[ENDPOINT_JAWHARP] == JAWHARP_VOICES[jawharp].program;
+  }
   if (drone_keys_active() && key->group == GROUP_VOICE) {
-    int breath_voice = breath_voice_on_key(key);
-    if (breath_voice >= 0) {
-      return c->breath_layers & BREATH_VOICES[breath_voice].layer;
-    }
     int index = drone_voice_for(sel, key->note);
     return index >= 0 && c->voices[sel] == DRONE_VOICES[index].program;
   }

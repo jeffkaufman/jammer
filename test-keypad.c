@@ -486,13 +486,23 @@ static void test_breath_gate() {
   CHECK(key && key->lit == LIT_EP_ON && key->arg == ENDPOINT_BREATH,
         "` isn't the Breath Gate");
   CHECK(is_drone(ENDPOINT_BREATH) && c->chord[ENDPOINT_BREATH] &&
-        c->voices[ENDPOINT_BREATH] == 94,
-        "the Breath Gate should start as a drone chord on Halo Pad");
+        c->voices[ENDPOINT_BREATH] == VOICE_BREATH_NO_PAD &&
+        c->breath_layers == BREATH_LAYER_TAMB_SHAKE,
+        "the Breath Gate should start as the Tamb Shake alone, with no pad");
 
   press("`");
   CHECK(c->on[ENDPOINT_BREATH] && c->selected_endpoint == ENDPOINT_BREATH,
         "` didn't switch the Breath Gate on and select it");
-  CHECK(told_fx == 0, "on a pad there's no percussion to play");
+  CHECK(lit("K") && !lit("A") && !lit("C"),
+        "K should show the Tamb Shake on, and no pad");
+  CHECK(told_fx == 0, "the Tamb Shake is the drum's; there's nothing else "
+        "to play");
+
+  // The rest of this is a pad, Halo Pad, on its own.
+  press("C");
+  press("K");
+  CHECK(c->voices[ENDPOINT_BREATH] == 94 && c->breath_layers == 0,
+        "C and A should leave Halo Pad alone");
 
   // Its chord waits for a breath, and each breath after a rest strikes it
   // afresh; a dip that doesn't come to rest leaves it sounding.
@@ -1607,13 +1617,14 @@ static void test_spoken_presses() {
   // it: a name that's the start of another has to wait to see whether it's
   // going to grow, and saying the longer one with a pause in it presses the
   // shorter.
-  for (int state = 0; state < 5; state++) {
+  for (int state = 0; state < 6; state++) {
     static const char* STATES[] = {"flex", "drum", "drone", "whistle",
-                                   "breath gate"};
+                                   "breath gate", "jaw harp"};
     whistle_reset();
     c->selected_endpoint = state == 1 ? ENDPOINT_DRUM :
                            state == 2 ? ENDPOINT_DRONE_BASS :
-                           state == 4 ? ENDPOINT_BREATH : ENDPOINT_FLEX;
+                           state == 4 ? ENDPOINT_BREATH :
+                           state == 5 ? ENDPOINT_JAWHARP : ENDPOINT_FLEX;
     if (state == 3) whistle_selected = true;
     n = key_spoken_names(names, keys, 256);
     for (int j = 0; j < n; j++) {
@@ -1817,11 +1828,12 @@ static void test_speech_dictionary() {
   full_reset();
   static char known[1024][SW_NAME_MAX];
   int n_known = 0;
-  for (int state = 0; state < 5; state++) {
+  for (int state = 0; state < 6; state++) {
     whistle_reset();
     c->selected_endpoint = state == 1 ? ENDPOINT_DRUM :
                            state == 2 ? ENDPOINT_DRONE_BASS :
-                           state == 4 ? ENDPOINT_BREATH : ENDPOINT_FLEX;
+                           state == 4 ? ENDPOINT_BREATH :
+                           state == 5 ? ENDPOINT_JAWHARP : ENDPOINT_FLEX;
     if (state == 3) whistle_selected = true;
     static char names[256][SW_NAME_MAX];
     static int keys[256];
@@ -2478,7 +2490,8 @@ static void test_snare_roll() {
   full_reset();
   midi_tap = tap_midi;
   press("`");
-  press("A");
+  press("K");  // the Tamb Shake it starts with, off
+  press("A");  // and the Snare Roll on
   n_tapped = 0;
   handle_cc(CC_BREATH, 60);
   breath_roll_tick();
@@ -2508,6 +2521,264 @@ static void test_snare_roll() {
         "the roll should stop with the breath");
   midi_tap = NULL;
   full_reset();
+}
+
+// Tambourines sent, with velocity in [lo, hi]; and the loudest.
+static int tamb_taps(int lo, int hi) {
+  int n = 0;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].action == MIDI_ON && tapped[i].channel == CHANNEL_DRUM &&
+        tapped[i].note == MIDI_DRUM_OUT_TAMBOURINE &&
+        tapped[i].velocity >= lo && tapped[i].velocity <= hi) {
+      n++;
+    }
+  }
+  return n;
+}
+static int tamb_loudest(void) {
+  int loudest = 0;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].note == MIDI_DRUM_OUT_TAMBOURINE &&
+        tapped[i].velocity > loudest) {
+      loudest = tapped[i].velocity;
+    }
+  }
+  return loudest;
+}
+// The loudest a jangle goes, blowing hard.
+#define TAMB_JANGLE_LOUDEST ((int)(55 * TAMB_VEL) + 1)
+
+// The jaw harp's voice keys are its own: the four that work kept where they
+// were, and the rest what suits it at its pitch, each at its own volume.
+static void test_jawharp_voices() {
+  full_reset();
+  midi_tap = tap_midi;
+  select_ep("Q");
+  const char* keep[] = {"S", "V", "B", "N"};
+  const int keep_programs[] = {38, 67, 81, 87};
+  for (int i = 0; i < 4; i++) {
+    press(keep[i]);
+    CHECK(c->voices[ENDPOINT_JAWHARP] == keep_programs[i] && lit(keep[i]),
+          "%s should still be program %d on the jaw harp", keep[i],
+          keep_programs[i]);
+  }
+  press("A");
+  CHECK(c->voices[ENDPOINT_JAWHARP] == 84 && lit("A") && !lit("N") &&
+        strcmp(key_current_label(key_for_cap("A")), "Charang") == 0,
+        "A should be Charang on the jaw harp");
+  // At its own volume, not voices.h's default.
+  int volume = -1;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].action == MIDI_CC && tapped[i].note == CC_07 &&
+        tapped[i].channel == ENDPOINT_JAWHARP) {
+      volume = tapped[i].velocity;
+    }
+  }
+  CHECK(volume == 109, "Charang should be at volume 109, not %d", volume);
+  press("M");
+  CHECK(c->voices[ENDPOINT_JAWHARP] == 86, "M should be Fifths Lead");
+
+  // Most sit higher, as if OCT+ had been pressed: SynBass 1 once, which lifts
+  // an E1 (28) an octave and leaves a G1 (31) be, and Fifths Lead five times.
+  CHECK(endpoint_note(28, ENDPOINT_JAWHARP) == 28 + 24 + 12 &&
+        endpoint_note(31, ENDPOINT_JAWHARP) == 31 + 24,
+        "Fifths Lead should be five OCT+ presses up, not %d and %d",
+        endpoint_note(28, ENDPOINT_JAWHARP), endpoint_note(31,
+                                                          ENDPOINT_JAWHARP));
+  press("S");
+  CHECK(endpoint_note(28, ENDPOINT_JAWHARP) == 40 &&
+        endpoint_note(31, ENDPOINT_JAWHARP) == 31,
+        "SynBass 1 should be one OCT+ press up");
+  // on top of the key's own presses,
+  press("]");
+  CHECK(endpoint_note(28, ENDPOINT_JAWHARP) == 40 &&
+        endpoint_note(31, ENDPOINT_JAWHARP) == 43,
+        "OCT+ on SynBass 1 should make two presses in all");
+  press("\\");
+  // and CHORD takes each up its own way: SynBass 1 an octave, Saw Lead not
+  // at all, and Bari Sax two, as it always has.
+  c->chord[ENDPOINT_JAWHARP] = true;
+  CHECK(endpoint_note(31, ENDPOINT_JAWHARP) == 31 + 12,
+        "CHORD should move SynBass 1 up an octave");
+  press("B");
+  CHECK(endpoint_note(31, ENDPOINT_JAWHARP) == 31,
+        "CHORD shouldn't move Saw Lead up");
+  press("V");
+  CHECK(endpoint_note(31, ENDPOINT_JAWHARP) == 31 + 24,
+        "CHORD should still move Bari Sax up, as it did");
+  c->chord[ENDPOINT_JAWHARP] = false;
+
+  // D and Z are empty on the jaw harp: they do nothing, and draw dead.
+  press("D");
+  CHECK(c->voices[ENDPOINT_JAWHARP] == 67 && key_is_dead(key_for_cap("D")) &&
+        key_is_dead(key_for_cap("Z")),
+        "D and Z should be empty on the jaw harp");
+
+  // Every other endpoint keeps the usual voices.
+  select_ep("W");
+  press("A");
+  CHECK(c->voices[ENDPOINT_FOOTBASS] == 39 &&
+        strcmp(key_current_label(key_for_cap("A")), "SynBass\n2") == 0,
+        "A should still be SynBass 2 on the foot bass");
+  midi_tap = NULL;
+  full_reset();
+}
+
+// The tambourines on the Breath Gate's J and K.  J rolls like the Snare
+// Roll, alongside it if both are on; K is shaken by moving the breath.
+static void test_tambourines() {
+  full_reset();
+  midi_tap = tap_midi;
+  breath_hook = record_breath;
+  press("`");
+  press("K");  // the Tamb Shake it starts with, off, for the Brushes first
+  const char* caps[] = {"J", "K"};
+  const char* labels[] = {"Brushes", "Tamb\nShake"};
+  for (int i = 0; i < 2; i++) {
+    const Key* k = key_for_cap(caps[i]);
+    CHECK(!key_is_dead(k) && strcmp(key_current_label(k), labels[i]) == 0,
+          "%s should be %s on the Breath Gate", caps[i], labels[i]);
+  }
+  const char* spoken[] = {"press", "brushes"};
+  CHECK(strcmp(phrase(spoken, 2, true), "press J") == 0, "'press brushes'");
+
+  // J: brushes.  A wiggle stirs them, which is the Mac's own swish (see
+  // test_brush_swish) and no notes at all; past the hit a soft slap off the
+  // Brush kit, on a channel of its own, and past hard a harder one with a
+  // tap under it.
+  press("J");
+  CHECK(lit("J") && (c->breath_layers & BREATH_LAYER_BRUSHES) &&
+        (told_fx & BREATH_FX_BRUSH), "J should switch the Brushes on");
+  handle_cc(CC_BREATH, 20);
+  n_tapped = 0;
+  for (int w = 0; w < 12; w++) {
+    handle_cc(CC_BREATH, w % 2 ? 16 : 30);
+    usleep(30000);
+  }
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 0,
+        "a wiggle should stir the brushes, not play a note");
+  n_tapped = 0;
+  handle_cc(CC_BREATH, 90);
+  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 1 &&
+        count_tapped(MIDI_ON, MIDI_BRUSH_TAP, CHANNEL_BRUSH) == 0,
+        "past the hit should be one slap");
+  usleep(100000);
+  handle_cc(CC_BREATH, 108);
+  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 2 &&
+        count_tapped(MIDI_ON, MIDI_BRUSH_TAP, CHANNEL_BRUSH) == 1,
+        "past hard should be a slap with a tap under it");
+  // Softer than the tambourine's.
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].channel == CHANNEL_BRUSH) {
+      CHECK(tapped[i].velocity < 90, "a brush slap at %d is too hard",
+            tapped[i].velocity);
+    }
+  }
+  CHECK(tamb_taps(0, 127) == 0, "the brushes shouldn't play the tambourine");
+  handle_cc(CC_BREATH, 0);
+  press("J");
+
+  // K: shaken.  Holding the breath still is silence; wiggling it gently
+  // jangles, softly; blowing up past medium hits, and past hard hits big.
+  press("K");
+  handle_cc(CC_BREATH, 20);
+  n_tapped = 0;
+  for (int i = 0; i < 20; i++) handle_cc(CC_BREATH, 20);
+  CHECK(tamb_taps(0, 127) == 0, "a steady breath shouldn't shake it");
+  for (int w = 0; w < 12; w++) {  // a gentle wiggle, low down
+    handle_cc(CC_BREATH, w % 2 ? 16 : 30);
+    usleep(30000);
+  }
+  int jangles = tamb_taps(1, 127);
+  CHECK(jangles >= 8, "a wiggle should jangle, not %d times", jangles);
+  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 0,
+        "a gentle wiggle should only jangle, never hit");
+  n_tapped = 0;
+  for (int w = 0; w < 12; w++) {  // wiggling higher, still under the hit
+    handle_cc(CC_BREATH, w % 2 ? 60 : 78);
+    usleep(30000);
+  }
+  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 0,
+        "wiggling at 60-78 should still only jangle");
+  n_tapped = 0;
+  handle_cc(CC_BREATH, 90);  // past the hit
+  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 1,
+        "blowing up past the hit should hit it once");
+  for (int i = 0; i < 10; i++) handle_cc(CC_BREATH, 90);
+  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 1,
+        "staying there shouldn't hit it again");
+  int hit = tamb_loudest();
+  usleep(100000);
+  handle_cc(CC_BREATH, 108);  // hard
+  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 2 && tamb_loudest() > hit,
+        "blowing up past hard should hit it again, and bigger");
+  n_tapped = 0;
+  handle_cc(CC_BREATH, 30);  // back down, which arms it again
+  usleep(100000);
+  handle_cc(CC_BREATH, 90);
+  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 1,
+        "down and back up past the hit should hit it again");
+  press("K");
+  n_tapped = 0;
+  for (int v = 10; v <= 110; v += 2) handle_cc(CC_BREATH, v);
+  CHECK(tamb_taps(0, 127) == 0, "K again should stop it");
+  handle_cc(CC_BREATH, 0);
+
+  // Away from the Breath Gate, J and K are DOWNBEAT and UPBEAT as ever.
+  select_ep("W");
+  CHECK(strcmp(key_current_label(key_for_cap("J")), "DOWN\nBEAT") == 0,
+        "J should be DOWNBEAT on the foot bass");
+  breath_hook = NULL;
+  midi_tap = NULL;
+  full_reset();
+}
+
+// The Brushes' swish, rendered: a still breath is silence, a moving one
+// stirs, faster louder, and it's gone soon after the breath stops moving.
+// The breath goes up and down between `from` and `to` one step every
+// `blocks_per_step` 64-frame blocks: 8 is about 90 steps a second, most of
+// a slow stir's range in a second; 2 is four times that.  Measured after
+// `settle` seconds, for `seconds`.
+static double swish_rms(int from, int to, int blocks_per_step, double settle,
+                        double seconds) {
+  const double sr = 48000;
+  float l[64], r[64];
+  double sum = 0;
+  long n = 0;
+  int skip = (int)(settle * sr / 64);
+  int blocks = skip + (int)(seconds * sr / 64);
+  for (int b = 0; b < blocks; b++) {
+    int span = to - from;
+    int steps = blocks_per_step ? b / blocks_per_step : 0;
+    int pos = span ? steps % (2 * span) : 0;
+    int value = from + (pos < span ? pos : 2 * span - pos);
+    atomic_store(&audio_breath, value);
+    atomic_store(&audio_breath_fx, BREATH_FX_BRUSH);
+    memset(l, 0, sizeof(l));
+    memset(r, 0, sizeof(r));
+    play_breath_instruments(l, r, 64, sr);
+    if (b < skip) continue;
+    for (int i = 0; i < 64; i++) {
+      sum += (double)l[i] * l[i];
+      n++;
+    }
+  }
+  return sqrt(sum / n);
+}
+
+static void test_brush_swish() {
+  double still = swish_rms(50, 50, 0, 1.0, 0.5);
+  double slow = swish_rms(40, 60, 16, 0.2, 1.0);
+  double fast = swish_rms(40, 60, 4, 0.2, 1.0);
+  double after = swish_rms(50, 50, 0, 0.5, 0.5);
+  CHECK(slow > 1e-4, "a slow stir should swish: %.5f", slow);
+  CHECK(still < slow * 0.05, "a still breath shouldn't stir: %.5f", still);
+  CHECK(fast > slow * 1.5, "stirring faster should swish louder: %.5f vs "
+        "%.5f", fast, slow);
+  CHECK(after < 0.02 * fast, "it should fade once the breath is still: %.5f",
+        after);
+  atomic_store(&audio_breath_fx, 0);
+  atomic_store(&audio_breath, 0);
 }
 
 // The Breath Gate's synthesized voices, rendered off a simulated clock: each
@@ -2631,6 +2902,9 @@ int main() {
   test_trance_gate();
   test_snare_roll();
   test_every_kick_plays();
+  test_tambourines();
+  test_brush_swish();
+  test_jawharp_voices();
   test_build_voices();
   test_vocoder();
   test_percussion_bank_reaches_the_synth();
