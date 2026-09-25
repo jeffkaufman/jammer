@@ -460,7 +460,7 @@ static bool key_is_lit(const Key* key) {
       // Only the two the whistle actually uses light; the per-endpoint flags
       // go dark, because what they would be reporting isn't on screen.
       if (whistle_fx_for_note(key->note)) {
-        return whistle_fx == whistle_fx_for_note(key->note);
+        return whistle_fx & VFX_BIT(whistle_fx_for_note(key->note));
       }
       if (key->note == F2) return whistle_fx_mic;
       if (key->lit == LIT_OCTAVE) return whistle_octave * key->arg > 0;

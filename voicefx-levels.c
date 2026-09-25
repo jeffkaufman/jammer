@@ -99,7 +99,10 @@ int main(int argc, char** argv) {
     if (d) closedir(d);
   }
 
+  // Summed per effect over the clips it made a sound for: the basses are
+  // silent for a clip they never heard a pitch in, and that's no level.
   double sum[N_VFX] = {0};
+  int counted[N_VFX] = {0};
   int clips = 0;
   for (int p = 0; p < n_paths; p++) {
     long n;
@@ -110,7 +113,11 @@ int main(int argc, char** argv) {
     }
     double vocoder = loudness(VFX_VOCODER, clip, n);
     for (int fx = VFX_ROBOT; fx < N_VFX; fx++) {
-      sum[fx] += loudness(fx, clip, n) - vocoder;
+      double db = loudness(fx, clip, n);
+      if (isfinite(db) && isfinite(vocoder)) {
+        sum[fx] += db - vocoder;
+        counted[fx]++;
+      }
     }
     clips++;
     free(clip);
@@ -121,7 +128,7 @@ int main(int argc, char** argv) {
   }
   printf("%d clips, against the vocoder:\n", clips);
   for (int fx = VFX_ROBOT; fx < N_VFX; fx++) {
-    double db = sum[fx] / clips;
+    double db = counted[fx] ? sum[fx] / counted[fx] : 0;
     printf("  %-8s %+5.1f dB   VFX_LEVEL %.2f -> %.2f\n", WHISTLE_FX[fx].name,
            db, VFX_LEVEL[fx], VFX_LEVEL[fx] * pow(10, -db / 20));
   }

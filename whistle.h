@@ -80,15 +80,16 @@ static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'M', NULL,             "Blow\nNoise", WHISTLE_BREATH_BLOW},
 };
 
-// The vocal effect over the voice, if any: the vocoder, or one of the
-// effects beside it (voicefx.h), on J K L -- row keys the whistle has no
-// other use for -- or from the Vocal FX menu.  One at a time, and the key
-// that's on switches it off.
+// The vocal effects over the voice: the vocoder and those beside it
+// (voicefx.h), on J K L ; -- row keys the whistle has no other use for
+// -- or from the Vocal FX menu.  Any of them at once, each its key on and
+// off, summed side by side.
 enum {
   VFX_NONE,
   VFX_VOCODER,
   VFX_ROBOT,
   VFX_BASS,
+  VFX_SAW,
   N_VFX,
 };
 
@@ -102,7 +103,10 @@ static const WhistleFx WHISTLE_FX[N_VFX] = {
   [VFX_VOCODER] = {'J', "Vocoder", "voc"},
   [VFX_ROBOT] = {'K', "Robot", "robot"},
   [VFX_BASS] = {'L', "Voice\nBass", "vbass"},
+  [VFX_SAW] = {';', "Saw\nBass", "sawbass"},
 };
+
+#define VFX_BIT(fx) (1u << (fx))
 
 // The effect on a modifier key, or VFX_NONE.
 static int whistle_fx_for_note(int note) {
@@ -112,7 +116,7 @@ static int whistle_fx_for_note(int note) {
   return VFX_NONE;
 }
 
-static int whistle_fx;  // VFX_NONE, or the effect that's on
+static unsigned whistle_fx;  // the effects that are on, VFX_BIT each
 
 // Which input the vocal effects hear: 0 for the first, the whistle's, or 1
 // for the second, so a vocal mic in input 2 can go through them while the
@@ -316,7 +320,7 @@ static int whistle_default_high_note(void) {
   return (int)floor(69.0 + 12.0 * log2(ENGINE_MAX_HZ / 440.0));
 }
 
-static _Atomic int whistle_pub_fx;
+static _Atomic unsigned whistle_pub_fx;
 static _Atomic int whistle_pub_fx_mic;
 // The vocal effects' own gate, in dBFS peak: see RoomGate.
 #define VFX_GATE_DEFAULT_DB -54   // 0.002, where the gate was fixed before
@@ -355,8 +359,8 @@ static double whistle_current_gain(void) {
 static void whistle_publish(void) {
   // The effects aren't the engine's: they're summed in beside whatever the
   // engine's playing, and apart from the whistle's own level.
-  int fx = whistle_passthrough ? VFX_NONE : whistle_fx;
-  bool vocoder = fx != VFX_NONE;
+  unsigned fx = whistle_passthrough ? 0 : whistle_fx;
+  bool vocoder = fx != 0;
   atomic_store_explicit(&whistle_pub_fx, fx, memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_fx_gate_db, whistle_fx_gate_db,
                         memory_order_relaxed);
@@ -554,10 +558,8 @@ typedef struct {
   float target;  // where the slew is heading
 } WhistleRamp;
 
-static WhistleRamp whistle_ramp, fx_ramp;
-// The effect the audio thread is running, which trails whistle_pub_fx: a
-// change fades the old one out before the new one starts.
-static int whistle_applied_fx;
+// The whistle's, and each effect's, so each fades in and out on its own.
+static WhistleRamp whistle_ramp, fx_ramp[N_VFX];
 
 static void whistle_ramp_to(WhistleRamp* r, float target, float frames) {
   r->target = target;
@@ -640,12 +642,12 @@ static void whistle_apply_controls(int frames, double sample_rate) {
   whistle_ramp_to(&whistle_ramp, 0.001f * (float)atomic_load_explicit(
                     &whistle_pub_target_gain, memory_order_relaxed),
                   ramp_frames);
-  int fx = atomic_load_explicit(&whistle_pub_fx, memory_order_relaxed);
-  whistle_ramp_to(&fx_ramp,
-                  fx != whistle_applied_fx ? 0 :
-                    0.001f * (float)atomic_load_explicit(
-                      &whistle_pub_vocoder_gain, memory_order_relaxed),
-                  ramp_frames);
+  unsigned fx = atomic_load_explicit(&whistle_pub_fx, memory_order_relaxed);
+  float fx_gain = 0.001f * (float)atomic_load_explicit(
+    &whistle_pub_vocoder_gain, memory_order_relaxed);
+  for (int i = VFX_VOCODER; i < N_VFX; i++) {
+    whistle_ramp_to(&fx_ramp[i], fx & VFX_BIT(i) ? fx_gain : 0, ramp_frames);
+  }
   (void)frames;
 }
 
@@ -661,8 +663,7 @@ static void whistle_engine_prepare(double sample_rate) {
   whistle_applied_low = -1;
   whistle_applied_high = -1;
   memset(&whistle_ramp, 0, sizeof(whistle_ramp));
-  memset(&fx_ramp, 0, sizeof(fx_ramp));
-  whistle_applied_fx = VFX_NONE;
+  memset(fx_ramp, 0, sizeof(fx_ramp));
   bm_init(&whistle_breath_mic, sample_rate);
   whistle_applied_breath = 0;
   whistle_ring_reset();
@@ -888,18 +889,21 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
     atomic_load_explicit(&whistle_pub_fx_mic, memory_order_relaxed)
       ? whistle_input_block_2 : whistle_input_block;
 
-  // Once the old effect has faded out, the new one starts afresh.
-  int want_fx = atomic_load_explicit(&whistle_pub_fx, memory_order_relaxed);
-  if (want_fx != whistle_applied_fx && fx_ramp.live == 0) {
-    whistle_applied_fx = want_fx;
-    if (want_fx > VFX_VOCODER) vfx_prepare(sample_rate);
+  // The effects that might be heard: those on, and those still fading out.
+  unsigned fx = 0;
+  bool listen = false;
+  for (int i = VFX_VOCODER; i < N_VFX; i++) {
+    if (fx_ramp[i].live > 0 || fx_ramp[i].target > 0) {
+      fx |= VFX_BIT(i);
+      if (vfx_listens(i)) listen = true;
+    }
   }
-  int fx = whistle_applied_fx;
+  if (vfx.rate != sample_rate) vfx_prepare(sample_rate);
   room_gate_threshold = pow(10, atomic_load_explicit(
     &whistle_pub_fx_gate_db, memory_order_relaxed) / 20.0);
   float fx_peak = 0;
   VfxBlock fx_block;
-  if (fx > VFX_VOCODER) vfx_block(&fx_block);
+  if (fx & ~VFX_BIT(VFX_VOCODER)) vfx_block(&fx_block);
   double chord_hz[VOCODER_VOICES], chord_weight[VOCODER_VOICES];
   int chord_notes = vocoder_chord(chord_hz, chord_weight);
   if (vocoder.rate != sample_rate) vocoder_prepare(sample_rate);
@@ -938,25 +942,32 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
     float gain = whistle_ramp_next(&whistle_ramp);
     left *= gain;
     right *= gain;
-    // The effect runs whenever it might be heard, including while it fades
-    // out, and is summed in beside the voice.
-    float fx_gain = whistle_ramp_next(&fx_ramp);
-    if (fabsf(fx_in[i]) > fx_peak) fx_peak = fabsf(fx_in[i]);
-    if (fx == VFX_VOCODER) {
-      float v = vocoder_process(fx_in[i], chord_hz,
-                                chord_weight, chord_notes, vocoder_volume);
-      left += v * fx_gain;
-      right += v * fx_gain;
-    } else if (fx != VFX_NONE) {
-      float v = vfx_process(fx, fx_in[i], &fx_block) * vocoder_volume;
-      left += v * fx_gain;
-      right += v * fx_gain;
+    // Each effect runs whenever it might be heard, including while it fades
+    // out, and they're summed in beside the voice.
+    if (fx) {
+      if (fabsf(fx_in[i]) > fx_peak) fx_peak = fabsf(fx_in[i]);
+      float sum = 0;
+      if (fx & VFX_BIT(VFX_VOCODER)) {
+        sum += whistle_ramp_next(&fx_ramp[VFX_VOCODER]) *
+          vocoder_process(fx_in[i], chord_hz, chord_weight, chord_notes,
+                          vocoder_volume);
+      }
+      if (fx & ~VFX_BIT(VFX_VOCODER)) {
+        VfxInput v = vfx_input(fx_in[i], listen);
+        for (int e = VFX_VOCODER + 1; e < N_VFX; e++) {
+          if (!(fx & VFX_BIT(e))) continue;
+          sum += whistle_ramp_next(&fx_ramp[e]) * vocoder_volume *
+                 vfx_effect(e, v, &fx_block);
+        }
+      }
+      left += sum;
+      right += sum;
     }
     // All of it on the left, folded to mono, the way fluidsynth's endpoints
     // are panned unless CHANNEL SWAP moves them.
     out[0][i] += 0.5f * (left + right);
   }
-  if (fx != VFX_NONE) {
+  if (fx) {
     int scaled = (int)(fx_peak * 10000);
     if (scaled > atomic_load_explicit(&whistle_meter_fx_level,
                                       memory_order_relaxed)) {
@@ -1044,17 +1055,17 @@ static void whistle_select(void) {
   whistle_selected = true;
 }
 
-// That effect over the voice, or none.  None leaves a voice sounding, so the
-// whistle is never left silent.
-static void whistle_choose_fx(int fx) {
+// These effects over the voice, a VFX_BIT each.  None leaves a voice
+// sounding, so the whistle is never left silent.
+static void whistle_choose_fx(unsigned fx) {
   whistle_fx = fx;
   if (!whistle_fx) whistle_voice_muted = false;
   whistle_publish();
 }
 
-// An effect's key: that effect, or off if it was already on.
+// An effect's key, or its menu item: that effect on, or off, beside the rest.
 static void whistle_set_fx(int fx) {
-  whistle_choose_fx(whistle_fx == fx ? VFX_NONE : fx);
+  whistle_choose_fx(whistle_fx ^ VFX_BIT(fx));
 }
 
 // What F2 says while the whistle's selected.
@@ -1119,7 +1130,7 @@ static void whistle_reset(void) {
   whistle_on = false;
   whistle_selected = false;
   whistle_voice = 0;
-  whistle_fx = VFX_NONE;
+  whistle_fx = 0;
   whistle_voice_muted = false;
   whistle_blow_on = false;
   whistle_octave = 0;
@@ -1143,7 +1154,7 @@ static void whistle_breath_tick(void) {
 
 static void whistle_init_state(void) {
   whistle_voice = 0;
-  whistle_fx = VFX_NONE;
+  whistle_fx = 0;
   whistle_voice_muted = false;
   whistle_blow_on = false;
   whistle_volume = WHISTLE_VOLUME_DEFAULT;

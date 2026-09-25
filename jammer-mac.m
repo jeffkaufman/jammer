@@ -109,7 +109,7 @@ typedef struct {
   int drone_voice[N_KEYS];  // DRONE_VOICES index each key picks, or -1
   int breath_voice[N_KEYS];  // BREATH_VOICES index, or -1
   int whistle_voice;
-  int whistle_fx;
+  unsigned whistle_fx;
   bool whistle_blow_on;
   const char* whistle_fx_mic_label;
   float fx_level;  // the effects' input, peak, held like whistle_level
@@ -765,14 +765,17 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSMutableString* text = [NSMutableString stringWithString:@"whistle "];
   [text appendFormat:@"%s", snapshot.whistle_on ? "on " : "off"];
   // Wide enough for "eight-oh-eight+voc".
-  char voice[40];
-  const char* fx = WHISTLE_FX[snapshot.whistle_fx].name;
-  if (snapshot.whistle_voice_muted) {
-    snprintf(voice, sizeof(voice), "%s", fx);
-  } else {
-    snprintf(voice, sizeof(voice), "%s%s%s",
-             whistle_voice_name(snapshot.whistle_voice), fx ? "+" : "",
-             fx ? fx : "");
+  char voice[96];
+  // The voice, then each effect that's on: "reese+voc+vbass".
+  voice[0] = '\0';
+  if (!snapshot.whistle_voice_muted) {
+    snprintf(voice, sizeof(voice), "%s",
+             whistle_voice_name(snapshot.whistle_voice));
+  }
+  for (int i = VFX_VOCODER; i < N_VFX; i++) {
+    if (!(snapshot.whistle_fx & VFX_BIT(i))) continue;
+    if (voice[0]) strncat(voice, "+", sizeof(voice) - strlen(voice) - 1);
+    strncat(voice, WHISTLE_FX[i].name, sizeof(voice) - strlen(voice) - 1);
   }
   if (snapshot.whistle_blow_on) {
     strncat(voice, "+blow", sizeof(voice) - strlen(voice) - 1);
@@ -1853,9 +1856,15 @@ static void flash_from_speech(int key) {
   if (menu == self.fxMenu) [self rebuildFxMenu];
 }
 
+// An effect's item switches it on or off beside the rest; None, all of them
+// off.
 - (void)chooseFx:(NSMenuItem*)item {
   LOCK();
-  whistle_choose_fx((int)item.tag);
+  if (item.tag == VFX_NONE) {
+    whistle_choose_fx(0);
+  } else {
+    whistle_set_fx((int)item.tag);
+  }
   UNLOCK();
   [self.view setNeedsDisplay:YES];
 }
@@ -1883,7 +1892,7 @@ static void flash_from_speech(int key) {
   NSMenu* menu = self.fxMenu;
   [menu removeAllItems];
   LOCK();
-  int fx = whistle_fx;
+  unsigned fx = whistle_fx;
   int mic = whistle_fx_mic;
   bool two_mics = whistle_has_second_mic();
   int gate_db = whistle_fx_gate_db;
@@ -1904,7 +1913,8 @@ static void flash_from_speech(int key) {
                                 keyEquivalent:@""];
     item.target = self;
     item.tag = i;
-    item.state = i == fx ? NSControlStateValueOn : NSControlStateValueOff;
+    bool on = i == VFX_NONE ? fx == 0 : (fx & VFX_BIT(i)) != 0;
+    item.state = on ? NSControlStateValueOn : NSControlStateValueOff;
   }
 
   [menu addItem:[NSMenuItem separatorItem]];

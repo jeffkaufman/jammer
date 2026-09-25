@@ -2,9 +2,10 @@
 #define JML_VOICE_FX_H
 
 // The whistle's vocal effects beside the vocoder: what goes into the
-// microphone, through one of these, out to the rig.  One at a time, on J K L
-// while the whistle's selected, or from the Vocal FX menu, and over
-// whichever whistle voice is playing, as the vocoder is.
+// microphone, through these, out to the rig.  Any of them at once, side by
+// side, on the row keys from J while the whistle's selected, or from the
+// Vocal FX menu, and over whichever whistle voice is playing, as the vocoder
+// is.
 //
 //   Robot      ring modulated with the chord: its root, and its third and
 //              fifth beside it, so it changes colour with the chord as well
@@ -12,6 +13,9 @@
 //   Voice Bass a bass an octave under the voice, following its pitch and
 //              nothing else: a sub that sings where the voice does, and the
 //              voice itself taken down the octave with it
+//   Saw Bass   the same pitch, as two detuned saws through a resonant
+//              lowpass that opens the louder the voice goes: a talking,
+//              growling bass rather than a clean one
 //
 // Each goes through the same gate as the vocoder (RoomGate), so the band in
 // the microphone doesn't reach the PA through it, and a gain that meets the
@@ -25,7 +29,7 @@
 // Where each sits against the vocoder, by level, measured with
 // ./voicefx-levels over the kept number clips.
 static const double VFX_LEVEL[N_VFX] = {
-  [VFX_ROBOT] = 0.58, [VFX_BASS] = 1.41,
+  [VFX_ROBOT] = 0.58, [VFX_BASS] = 1.41, [VFX_SAW] = 1.02,
 };
 
 // The halfway gain: the voice's level goes as the square root of what comes
@@ -49,6 +53,8 @@ static const double VFX_LEVEL[N_VFX] = {
 #define VFX_BASS_GLIDE_S 0.008
 #define VFX_BASS_SUB 0.8
 #define VFX_BASS_VOICE 0.5
+#define VFX_SAW_DETUNE 1.006      // about 10 cents each way
+#define VFX_SAW_Q 3.0
 
 typedef struct {
   float buf[VFX_SHIFT_FRAMES];
@@ -77,6 +83,10 @@ static struct {
   double sub_hz, sub_phase;  // the sub, gliding after the voice
   double sub_level;          // and its level, following the voice's
   double glide;
+
+  // Saw Bass
+  double saw_phase[2];
+  double svf_ic1, svf_ic2;   // its lowpass
 } vfx;
 
 static void vfx_prepare(double rate) {
@@ -167,7 +177,10 @@ static double vfx_pitch(void) {
   double a = d[found - 1], b = d[found], c = d[found + 1];
   double denom = a - 2 * b + c;
   double tau = found + (denom != 0 ? 0.5 * (a - c) / denom : 0);
-  return rate / tau;
+  // The interpolation can throw it anywhere on a flat stretch -- to zero,
+  // or past it -- and a pitch outside the range is no pitch at all.
+  double hz = tau > 0 ? rate / tau : 0;
+  return hz >= VFX_TUNE_LOW_HZ && hz <= VFX_TUNE_HIGH_HZ ? hz : 0;
 }
 
 // A pitch shifter: two grains reading back through a delay line at `ratio`
@@ -195,34 +208,33 @@ static double vfx_shift(VfxShifter* s, float x, double ratio, double grain) {
   return out;
 }
 
-// Voice Bass: find the voice's pitch, and play a sub an octave under it --
-// a sine with a little of its octave, so it carries on a PA that can't do
-// the fundamental -- gliding after it and following its level, with the
-// voice itself shifted down the octave on top.  Where there's no pitch to go
-// by, a consonant or a breath, the sub holds a moment and then fades, and
-// the shifted voice carries on.
-static float vfx_bass(float x) {
+// Listen for the voice's pitch: into the 12kHz line, and every hop, YIN.
+// vfx.pitch_hz is what it found, held a moment through a gap, or 0.
+static void vfx_listen(float x) {
   vfx.dec_sum += x;
-  if (++vfx.dec_n >= vfx.decimate) {
-    vfx.line[vfx.head] = (float)(vfx.dec_sum / vfx.dec_n);
-    vfx.head = (vfx.head + 1) % VFX_TUNE_LINE;
-    if (vfx.filled < VFX_TUNE_LINE) vfx.filled++;
-    vfx.dec_sum = 0;
-    vfx.dec_n = 0;
-    if (++vfx.hop_n >= (int)(VFX_TUNE_RATE * VFX_TUNE_HOP_S)) {
-      vfx.hop_n = 0;
-      double hz = vfx_pitch();
-      if (hz > 0) {
-        vfx.pitch_hz = hz;
-        vfx.unpitched = 0;
-      } else if (++vfx.unpitched > (int)(VFX_TUNE_HOLD_S / VFX_TUNE_HOP_S)) {
-        vfx.pitch_hz = 0;
-      }
-    }
+  if (++vfx.dec_n < vfx.decimate) return;
+  vfx.line[vfx.head] = (float)(vfx.dec_sum / vfx.dec_n);
+  vfx.head = (vfx.head + 1) % VFX_TUNE_LINE;
+  if (vfx.filled < VFX_TUNE_LINE) vfx.filled++;
+  vfx.dec_sum = 0;
+  vfx.dec_n = 0;
+  if (++vfx.hop_n < (int)(VFX_TUNE_RATE * VFX_TUNE_HOP_S)) return;
+  vfx.hop_n = 0;
+  double hz = vfx_pitch();
+  if (hz > 0) {
+    vfx.pitch_hz = hz;
+    vfx.unpitched = 0;
+  } else if (++vfx.unpitched > (int)(VFX_TUNE_HOLD_S / VFX_TUNE_HOP_S)) {
+    vfx.pitch_hz = 0;
   }
+}
 
-  // The sub.  A new note after a gap starts on its pitch, not a glide up
-  // from wherever the last one ended.
+// The two basses' pitch, an octave under the voice, gliding after it, and
+// their level, following the voice's while it has a pitch.  A new note after
+// a gap starts on its pitch, not a glide up from wherever the last one ended.
+// Once a sample, however many of them are on.
+static void vfx_follow_voice(float x) {
+  vfx_listen(x);
   double target_hz = vfx.pitch_hz / 2;
   if (target_hz > 0) {
     if (vfx.sub_level < 1e-4) vfx.sub_hz = target_hz;
@@ -230,6 +242,14 @@ static float vfx_bass(float x) {
   }
   double target_level = vfx.pitch_hz > 0 ? fabs(x) : 0;
   vfx.sub_level += (target_level - vfx.sub_level) * vfx.glide * 0.25;
+}
+
+// Voice Bass: a sub an octave under the voice -- a sine with a little of its
+// octave, so it carries on a PA that can't do the fundamental -- with the
+// voice itself shifted down the octave on top.  Where there's no pitch to go
+// by, a consonant or a breath, the sub fades and the shifted voice carries
+// on.
+static float vfx_bass(float x) {
   vfx.sub_phase += vfx.sub_hz / vfx.rate;
   if (vfx.sub_phase >= 1) vfx.sub_phase -= 1;
   double sub = sin(2 * M_PI * vfx.sub_phase) +
@@ -246,19 +266,72 @@ static float vfx_bass(float x) {
                  VFX_BASS_VOICE * down);
 }
 
-// One sample of `fx` in, out, before the effect volume.
-static float vfx_process(int fx, float in, const VfxBlock* b) {
+// Saw Bass: two saws an octave under the voice, a little either side of it,
+// through a resonant lowpass from 120Hz, closed, up to about 2.5kHz as the
+// voice gets louder.  Nothing of the voice itself.
+static float vfx_saw(float x) {
+  // Nothing to play before the first pitch: and a saw at 0Hz would divide by
+  // its step, and the NaN would ring in the filter from then on.
+  if (vfx.sub_hz <= 0) return 0;
+  double saw = 0;
+  for (int i = 0; i < 2; i++) {
+    double hz = vfx.sub_hz * (i ? VFX_SAW_DETUNE : 1 / VFX_SAW_DETUNE);
+    double dt = hz / vfx.rate;
+    vfx.saw_phase[i] += dt;
+    if (vfx.saw_phase[i] >= 1) vfx.saw_phase[i] -= 1;
+    saw += 0.5 * (2 * vfx.saw_phase[i] - 1 - poly_blep(vfx.saw_phase[i], dt));
+  }
+  // How open: the voice's level against where the halfway gain puts a
+  // strong one.
+  double open = fmin(1, vfx.sub_level / 0.25);
+  double cutoff = 120 * pow(2500 / 120.0, open);
+  double g = tan(M_PI * cutoff / vfx.rate), k = 1 / VFX_SAW_Q;
+  double a1 = 1 / (1 + g * (g + k)), a2 = g * a1;
+  double v1 = a1 * vfx.svf_ic1 + a2 * (saw - vfx.svf_ic2);
+  double v2 = vfx.svf_ic2 + g * v1;
+  vfx.svf_ic1 = 2 * v1 - vfx.svf_ic1;
+  vfx.svf_ic2 = 2 * v2 - vfx.svf_ic2;
+  return (float)(1.57 * vfx.sub_level * v2 * 2);
+}
+
+// The input as the effects take it, worked out once a sample however many
+// are on: gated, with the halfway gain.  `listen` if either bass is on, to
+// follow the voice's pitch.
+typedef struct {
+  float x;
+} VfxInput;
+
+static VfxInput vfx_input(float in, bool listen) {
   double gate = room_gate_run(&vfx.room, in);
   double level = fabs(in);
   vfx.agc += (level - vfx.agc) *
              (level > vfx.agc ? vfx.agc_attack : vfx.agc_release);
-  float x = (float)(in * gate * VFX_AGC / sqrt(fmax(vfx.agc, VFX_AGC_FLOOR)));
+  VfxInput v;
+  v.x = (float)(in * gate * VFX_AGC / sqrt(fmax(vfx.agc, VFX_AGC_FLOOR)));
+  if (listen) vfx_follow_voice(v.x);
+  return v;
+}
+
+static bool vfx_listens(int fx) {
+  return fx == VFX_BASS || fx == VFX_SAW;
+}
+
+// One effect's sample, from the input vfx_input made, before the volume.
+static float vfx_effect(int fx, VfxInput v, const VfxBlock* b) {
   float y = 0;
   switch (fx) {
-  case VFX_ROBOT: y = vfx_robot(x, b); break;
-  case VFX_BASS:  y = vfx_bass(x); break;
+  case VFX_ROBOT: y = vfx_robot(v.x, b); break;
+  case VFX_BASS:  y = vfx_bass(v.x); break;
+  case VFX_SAW:   y = vfx_saw(v.x); break;
   }
   return (float)tanh(y * VFX_LEVEL[fx]);
+}
+
+// One sample of one effect on its own, for the tests and ./voicefx-levels;
+// jammer itself runs them side by side, through vfx_input and vfx_effect.
+__attribute__((unused))
+static float vfx_process(int fx, float in, const VfxBlock* b) {
+  return vfx_effect(fx, vfx_input(in, vfx_listens(fx)), b);
 }
 
 #endif

@@ -826,6 +826,44 @@ static void test_voice_fx() {
   CHECK(worst < 0.02, "Voice Bass clicks: a %.3f jump in one sample", worst);
   atomic_store(&audio_bass_note, 26);
 
+  // Saw Bass goes an octave under the voice too.
+  vfx_prepare(48000);
+  phase = 0;
+  for (int i = 0; i < 48000; i++) {
+    phase += 150.0 / 48000;
+    if (phase >= 1) phase -= 1;
+    double v = 0;
+    for (int h = 1; h <= 20; h++) v += sin(2 * M_PI * h * phase) / (h * h);
+    sung[i] = vfx_process(VFX_SAW, (float)(0.1 * v), &chord);
+  }
+  CHECK(fabs(vfx.sub_hz - 75) < 2, "Saw Bass is at %.1fHz, not 75",
+        vfx.sub_hz);
+  double saw_rms = 0;
+  for (int i = 24000; i < 48000; i++) saw_rms += (double)sung[i] * sung[i];
+  CHECK(sqrt(saw_rms / 24000) > 0.01, "Saw Bass is silent");
+
+  // Both basses at once share the one pitch, listened for once a sample, and
+  // both sound: the way whistle_mix runs them side by side.
+  vfx_prepare(48000);
+  phase = 0;
+  double both[2] = {0, 0};
+  for (int i = 0; i < 48000; i++) {
+    phase += 150.0 / 48000;
+    if (phase >= 1) phase -= 1;
+    double v = 0;
+    for (int h = 1; h <= 20; h++) v += sin(2 * M_PI * h * phase) / (h * h);
+    VfxInput in = vfx_input((float)(0.1 * v), true);
+    float a = vfx_effect(VFX_BASS, in, &chord);
+    float s2 = vfx_effect(VFX_SAW, in, &chord);
+    if (i >= 24000) {
+      both[0] += (double)a * a;
+      both[1] += (double)s2 * s2;
+    }
+  }
+  CHECK(fabs(vfx.sub_hz - 75) < 2 && fabs(vfx.pitch_hz - 150) < 3,
+        "both basses together are at %.1fHz, not 75", vfx.sub_hz);
+  CHECK(both[0] > 0 && both[1] > 0, "both basses together should sound");
+
   for (int fx = VFX_ROBOT; fx < N_VFX; fx++) {
     vfx_prepare(48000);
     VfxBlock b;
@@ -877,13 +915,13 @@ static void test_fx_gate() {
   }
   room_gate_threshold = pow(10, VFX_GATE_DEFAULT_DB / 20.0);
 
-  // The menu chooses an effect outright, rather than toggling it.
-  whistle_choose_fx(VFX_ROBOT);
-  whistle_choose_fx(VFX_ROBOT);
-  CHECK(atomic_load(&whistle_pub_fx) == VFX_ROBOT,
-        "choosing Robot twice should leave it on");
-  whistle_choose_fx(VFX_NONE);
-  CHECK(atomic_load(&whistle_pub_fx) == VFX_NONE, "None didn't switch it off");
+  // The menu's None switches them all off.
+  whistle_choose_fx(VFX_BIT(VFX_ROBOT) | VFX_BIT(VFX_BASS));
+  CHECK(atomic_load(&whistle_pub_fx) ==
+          (VFX_BIT(VFX_ROBOT) | VFX_BIT(VFX_BASS)),
+        "two effects didn't reach the audio");
+  whistle_choose_fx(0);
+  CHECK(atomic_load(&whistle_pub_fx) == 0, "None didn't switch them off");
   whistle_fx_gate_db = -30;
   whistle_publish();
   CHECK(atomic_load(&whistle_pub_fx_gate_db) == -30,
@@ -966,13 +1004,13 @@ static void test_whistle() {
   // J is the vocoder, which the engine doesn't know about: a layer over
   // the voice rather than a voice, so the voice keeps playing beside it.
   strike("J", false);
-  CHECK((atomic_load(&whistle_pub_fx) == VFX_VOCODER) && lit("J") && lit("D") &&
+  CHECK((atomic_load(&whistle_pub_fx) == VFX_BIT(VFX_VOCODER)) && lit("J") && lit("D") &&
         whistle_voice == 2, "J should layer the vocoder over Reese");
   CHECK(atomic_load(&whistle_pub_vocoder_gain) > 0 &&
         atomic_load(&whistle_pub_target_gain) > 0,
         "the vocoder and the voice should both be heard");
   strike("F", false);
-  CHECK((atomic_load(&whistle_pub_fx) == VFX_VOCODER) && lit("J") && lit("F"),
+  CHECK((atomic_load(&whistle_pub_fx) == VFX_BIT(VFX_VOCODER)) && lit("J") && lit("F"),
         "a voice key shouldn't stop the vocoder");
   // The lit voice again silences it, for the vocoder alone; any voice key
   // brings one back, and so does switching the vocoder off.
@@ -990,7 +1028,7 @@ static void test_whistle() {
   strike("D", false);
   strike("J", false);
   CHECK(atomic_load(&whistle_pub_target_gain) > 0 && lit("D") &&
-        !(atomic_load(&whistle_pub_fx) == VFX_VOCODER),
+        !(atomic_load(&whistle_pub_fx) == VFX_BIT(VFX_VOCODER)),
         "switching the vocoder off shouldn't leave the whistle silent");
   strike("D", false);
   CHECK(atomic_load(&whistle_pub_target_gain) > 0,
@@ -1004,7 +1042,7 @@ static void test_whistle() {
         atomic_load(&whistle_pub_breath) == WHISTLE_BREATH_WHISTLE,
         "Whistle Breath should breathe under the vocoder, silently");
   strike("J", false);
-  CHECK(!(atomic_load(&whistle_pub_fx) == VFX_VOCODER) && !lit("J") &&
+  CHECK(!(atomic_load(&whistle_pub_fx) == VFX_BIT(VFX_VOCODER)) && !lit("J") &&
         atomic_load(&whistle_pub_vocoder_gain) == 0, "J again didn't stop it");
   strike("D", false);
 
@@ -1089,23 +1127,27 @@ static void test_whistle() {
         "a modifier key reached an endpoint while the whistle was selected");
   CHECK(whistle_key_is_dead(key_for_cap("P")), "P should draw as dead");
 
-  // J K L are the vocoder and the effects beside it: one at a time, and the
-  // one that's on switches it off.
-  strike("L", false);
-  CHECK(atomic_load(&whistle_pub_fx) == VFX_BASS && lit("L") &&
-        !whistle_key_is_dead(key_for_cap("L")) &&
-        strcmp(key_current_label(key_for_cap("L")), "Voice\nBass") == 0,
-        "L should be Voice Bass");
-  strike("J", false);
-  CHECK(atomic_load(&whistle_pub_fx) == VFX_VOCODER && lit("J") && !lit("L"),
-        "J should replace Voice Bass with the vocoder");
+  // J K L ; are the vocoder and the effects beside it: each its key on and
+  // off, and any of them together.
+  const char* fx_keys[] = {"J", "K", "L", ";"};
+  const char* fx_labels[] = {"Vocoder", "Robot", "Voice\nBass", "Saw\nBass"};
+  unsigned all = 0;
+  for (int i = 0; i < 4; i++) {
+    int fx = VFX_VOCODER + i;
+    strike(fx_keys[i], false);
+    all |= VFX_BIT(fx);
+    CHECK(atomic_load(&whistle_pub_fx) == all && lit(fx_keys[i]) &&
+          !whistle_key_is_dead(key_for_cap(fx_keys[i])) &&
+          strcmp(key_current_label(key_for_cap(fx_keys[i])),
+                 fx_labels[i]) == 0,
+          "%s should add %s to the rest", fx_keys[i], fx_labels[i]);
+  }
   strike("K", false);
-  CHECK(atomic_load(&whistle_pub_fx) == VFX_ROBOT && !lit("J") && lit("K"),
-        "K should replace the vocoder with Robot");
-  strike("K", false);
-  CHECK(atomic_load(&whistle_pub_fx) == VFX_NONE && !lit("K"),
-        "K again should switch it off");
-  CHECK(whistle_key_is_dead(key_for_cap(",")), ", should be dead again");
+  CHECK(atomic_load(&whistle_pub_fx) == (all & ~VFX_BIT(VFX_ROBOT)) &&
+        !lit("K") && lit("J") && lit("L"),
+        "K again should switch Robot off and leave the rest");
+  whistle_choose_fx(0);
+  CHECK(whistle_key_is_dead(key_for_cap("'")), "' should be dead");
 
   // F2 moves the effects to the second input -- when there is one.
   atomic_store(&whistle_input_count, 1);

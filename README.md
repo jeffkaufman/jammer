@@ -487,17 +487,21 @@ voice, the vocoder sounds while the breath voice breathes.  The lit voice key
 again, while the vocoder's on, silences the voice and leaves the vocoder
 alone; any voice key brings one back, and so does switching the vocoder off.
 
-**Vocal effects** beside the Vocoder are on the row keys next to it, `J K L`,
-which the whistle has no other use for while it's selected.  Like the
-Vocoder they're layers over the whistle's voice, and only one of the three is
-on at once: its key again switches it off, and the lit voice key again leaves
-it on its own.  They're in `voicefx.h`.
+**Vocal effects** beside the Vocoder are on the row keys next to it,
+`J K L ;`, which the whistle has no other use for while it's selected.
+Like the Vocoder they're layers over the whistle's voice, and any of them can
+be on at once, side by side -- the Vocoder with Voice Bass under it, say:
+each key switches its own on and off, each
+fades in and out on its own, and the lit voice key again leaves them on their
+own.  The Vocal FX menu checks each one that's on, and None switches them all
+off.  They're in `voicefx.h`.
 
 | Key | Effect | |
 |---|---|---|
 | `J` | Vocoder | the chord, played by the voice (above) |
 | `K` | Robot | ring modulated with the chord: its root, with its third (once it's known) and fifth beside it, so it changes colour with the chord as well as pitch |
 | `L` | Voice Bass | a bass an octave under the voice, following its pitch and nothing else: a sub where the voice sings, with the voice itself shifted down the octave on top |
+| `;` | Saw Bass | the same pitch, an octave under, as two detuned saws through a resonant lowpass that opens from 120Hz to 2.5kHz as the voice gets louder: a growling, talking bass |
 
 Voice Bass finds the voice's pitch itself -- YIN, 70-700Hz, every 5ms, on the
 input taken down to 12kHz -- since the whistle's detector only covers a
@@ -551,8 +555,8 @@ doesn't know about it and neither does the Pi.
 * **While it's selected** the voice keys pick its ten voices -- Bass,
   Octaveless, Reese, 808, FM, Sub FM, Square, Drawbar, High Drawbar, Accordion
   on `A S D F G H` and `Z X C V`, or the breath voices on `N` and `M` (see
-  [Breathing into the microphone](#breathing-into-the-microphone)); `J K L`
-  layer the Vocoder, Robot or Voice Bass over whichever it is (see [Builds
+  [Breathing into the microphone](#breathing-into-the-microphone)); `J K L ;`
+  layer the Vocoder or one of the effects beside it over whichever it is (see [Builds
   and drops](#builds-and-drops)); and
   `]`/`\` and `-`/`=` move its octave
   and its volume.  The per-endpoint flags go dark, because the endpoint they'd
