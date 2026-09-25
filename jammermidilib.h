@@ -1121,11 +1121,34 @@ void clear_overlay() {
   select_voice(c, 18);
 }
 
+int last_duck_val;  // PULSE's swell, as the ducking last set it
+extern int breath;  // below: the breath controller's
+bool breath_heard;  // whether it's sent anything yet
+
+// An endpoint's expression, CC11, before the fade: PULSE's swell on one it's
+// on -- a little under on the jaw harp -- the breath on the jaw harp without
+// it, once there's been one, and full on the rest.
+int endpoint_level(int endpoint) {
+  if (c->ducked[endpoint]) {
+    return endpoint == ENDPOINT_JAWHARP ? last_duck_val * 0.8 : last_duck_val;
+  }
+  if (endpoint == ENDPOINT_JAWHARP && breath_heard) return normalize(breath);
+  return MIDI_MAX;
+}
+
+// An endpoint's expression: its level times the fade.  The fade, the breath
+// and PULSE all work through CC11, and each used to set it outright, so the
+// next breath or swell undid a fade -- a fade out never stayed out on the
+// jaw harp, or on anything pulsing.  Flex without PULSE is flex_val's, which
+// folds in its breath and the fade itself.
+void send_expression(int endpoint) {
+  if (endpoint == ENDPOINT_FLEX && !c->ducked[endpoint]) return;
+  psend_midi(MIDI_CC, CC_11, endpoint_level(endpoint) * fade_value / MAX_FADE,
+             endpoint);
+}
+
 void update_fade(int endpoint) {
-  // Flex's expression is its breath, sent from flex_val(), which has the fade
-  // folded in.  Setting it to the bare fade here would fight that.
-  if (endpoint == ENDPOINT_FLEX) return;
-  psend_midi(MIDI_CC, CC_11, fade_value, endpoint);
+  send_expression(endpoint);
 }
 
 void update_fades() {
@@ -2422,10 +2445,13 @@ void toggle_follows_air() {
 
 void toggle_ducked() {
   c->ducked[c->selected_endpoint] = !c->ducked[c->selected_endpoint];
-  psend_midi(MIDI_CC, CC_11,
-	     (c->ducked[c->selected_endpoint] ||
-	      c->selected_endpoint == ENDPOINT_JAWHARP) ? 0 : MIDI_MAX,
-	     c->selected_endpoint);
+  if (c->selected_endpoint == ENDPOINT_FLEX) {
+    psend_midi(MIDI_CC, CC_11,
+               c->ducked[c->selected_endpoint] ? 0 : MIDI_MAX,
+               c->selected_endpoint);
+  } else {
+    send_expression(c->selected_endpoint);
+  }
   reload_voice_setting(c);
   update_bass(/*force_refresh=*/true);
 }
@@ -2840,6 +2866,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
   //       (next_downbeat_ns - last_downbeat_ns));
   
   breath = val;
+  breath_heard = true;
   update_breath_fx();
   breath_gate_breath();
   breath_shakers();
@@ -2865,8 +2892,10 @@ void handle_cc(unsigned int cc, unsigned int val) {
       flex_breath = use_val;
       use_val = flex_val();
       last_flex_val = use_val;
+      psend_midi(MIDI_CC, CC_11, use_val, endpoint);
+    } else {
+      send_expression(endpoint);  // the jaw harp's breath, faded
     }
-    psend_midi(MIDI_CC, CC_11, use_val, endpoint);
   }
 }
 
@@ -3002,7 +3031,6 @@ void forward_air() {
   }
 }
 
-int last_duck_val = 0;
 void duck() {
   bool any_ducked = false;
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
@@ -3043,11 +3071,10 @@ void duck() {
   }
 
   if (last_duck_val != duck_val) {
+    last_duck_val = duck_val;
     for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
       if (c->ducked[endpoint]) {
-	psend_midi(MIDI_CC, CC_11,
-		   endpoint == ENDPOINT_JAWHARP ? duck_val * 0.8 : duck_val,
-		   endpoint);
+	send_expression(endpoint);
 	if (holds_bass_note(endpoint)) {
 	  if (duck_val < 3 && current_note[endpoint] != -1) {
 	    drone_endpoint_off(endpoint);

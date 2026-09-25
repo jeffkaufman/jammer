@@ -153,6 +153,35 @@ int main(void) {
   CHECK(cc11[CHANNEL_PITCHED_KICK] == MAX_FADE,
         "pitched-kick channel still silent after reset following a fade-out");
 
+  // So does the jaw harp's, whose expression is its breath too, or PULSE's
+  // swell: each used to set it outright, so the next breath, or the next
+  // swell, undid a fade.  Half way out, it's half.
+  handle_cc(CC_BREATH, 100);
+  int jaw_full = cc11[ENDPOINT_JAWHARP];
+  CHECK(jaw_full > 0, "breath should open up the jaw harp");
+  fade_target = MAX_FADE / 2;
+  for (int i = 0; i < MAX_FADE + 10; i++) progress_fades();
+  handle_cc(CC_BREATH, 100);
+  CHECK(abs(cc11[ENDPOINT_JAWHARP] - jaw_full / 2) <= 1,
+        "the jaw harp is at %d half way through a fade, with breath; want %d",
+        cc11[ENDPOINT_JAWHARP], jaw_full / 2);
+  c->selected_endpoint = ENDPOINT_JAWHARP;
+  toggle_ducked();  // PULSE, at the top of its swell
+  last_duck_val = MIDI_MAX;
+  send_expression(ENDPOINT_JAWHARP);
+  int want = (int)(MIDI_MAX * 0.8) * fade_value / MAX_FADE;
+  CHECK(abs(cc11[ENDPOINT_JAWHARP] - want) <= 1,
+        "PULSE's swell on the jaw harp is %d half way through a fade; want %d",
+        cc11[ENDPOINT_JAWHARP], want);
+  toggle_ducked();
+  fade_target = MAX_FADE;
+  for (int i = 0; i < MAX_FADE + 10; i++) progress_fades();
+  handle_cc(CC_BREATH, 100);
+  CHECK(cc11[ENDPOINT_JAWHARP] == jaw_full,
+        "the jaw harp should be back to %d after fading in, is %d", jaw_full,
+        cc11[ENDPOINT_JAWHARP]);
+  handle_cc(CC_BREATH, 0);
+
   // Changing a sounding drone's voice has to strike its note again: a program
   // change doesn't reach notes already sounding, and the old note has just
   // been silenced.  It used to be left off, because the drone still thought
