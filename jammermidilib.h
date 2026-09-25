@@ -306,10 +306,10 @@ static int drone_voice_for_note(int note) {
 //
 //   Snare Roll      the kit's snare on the beat's grid, faster the harder you
 //                   blow: quarters, 8ths, 16ths, 32nds (breath_roll_tick)
-//   Brushes         a jazz kit's brushes, on J: moving the breath stirs them
-//                   on the head, a swish as loud as it's moving (macapi.h),
-//                   and blowing up past medium slaps them softly, and past
-//                   hard a little harder (breath_shake)
+//   Brushes         a jazz kit's brushes, on J: blowing stirs them round
+//                   the head, faster and louder the harder you blow
+//                   (macapi.h), and blowing up past 90% slaps them, once,
+//                   not again until you've come back under 60% (breath_shake)
 //   Tamb Shake      the same with a tambourine, on K: a wiggle jangles it
 //   Noise Riser     noise through a filter the breath opens (macapi.h)
 //   Wobble          a saw bass on the bass note, its filter swinging on the
@@ -3196,45 +3196,50 @@ void breath_roll_tick(void) {
 //   jangle    any wiggle of the breath, a soft touch every 1/SHAKE_STEPS of
 //             its range it moves, quieter the less you're blowing -- a
 //             shimmer, or a swirl, not a hit
-//   hit       blowing up past SHAKE_HIT: one proper hit
-//   big hit   up past SHAKE_BIG: one as hard as it goes
+//   hit       blowing up past its hit_at: one proper hit
+//   big hit   up past SHAKE_BIG, for those that have one: one as hard as it
+//             goes
 //
-// Each hit is armed again once the breath's come back down a way below it,
-// so hovering at the edge doesn't hit again and again, and the jangle holds
+// Each hit is armed again once the breath's come back down its rearm below
+// it, so hovering at the edge doesn't hit again and again, and the jangle holds
 // off a moment after one so the hit reads clean.  Held steady, it's quiet.
 // Played from the breath as it comes, on MIDI, so it's the soundfont's own
 // samples, the Pi's too.
 #define SHAKE_STEPS 36
 #define SHAKE_GAP_NS (22 * 1000000LL)
-#define SHAKE_HIT 0.75              // of the breath's range: jangle below
 #define SHAKE_BIG 0.92
-#define SHAKE_REARM 0.12            // how far back down before it's armed again
 #define SHAKE_AFTER_HIT_NS (90 * 1000000LL)
 #define SHAKE_BACKLASH 0.012        // of the range: the controller's jitter
 
 // What a shaker plays: notes on a channel, how hard, and the velocity scale
-// that puts it level with the rest.  A jangle of -1 is none: the Brushes'
-// wiggle is their swish, which the Mac synthesizes (macapi.h).
+// that puts it level with the rest, and where it hits, of the breath's
+// range, and how far back down it has to come before it'll hit again.  A
+// jangle of -1 is none: the Brushes' stir, under their slap, is the Mac's own
+// (macapi.h).  A big of -1 is none too.
 typedef struct {
   unsigned layer;
   int channel;
   int jangle, hit, big, big_under;  // big_under: -1, or a note under the big
   int hit_vel, big_vel;
   double vel;
+  double hit_at, rearm;
 } ShakerSound;
 
 // The tambourine, off whichever kit the drum's on -- FluidR3's is the same in
-// every one -- and the brushes off the Brush kit: a slap to hit, and a tap
-// under the big one, both a good deal softer than the tambourine's -- a
-// brush slap is a light thing.  Their slap is about 3dB under the tambourine
-// at the same velocity, so their scale is 16% up to start from level.
+// every one -- and the brushes off the Brush kit: one slap, a good deal
+// softer than the tambourine's -- a brush slap is a light thing -- only
+// blowing hard, and not again until the breath's come well back down, so
+// it's a slap you mean over the stir rather than one you drift into.  Their
+// slap is about 3dB under the tambourine at the same velocity, so their
+// scale is 16% up to start from level.
 static const ShakerSound TAMB_SHAKE = {
   BREATH_LAYER_TAMB_SHAKE, CHANNEL_DRUM, MIDI_DRUM_OUT_TAMBOURINE,
   MIDI_DRUM_OUT_TAMBOURINE, MIDI_DRUM_OUT_TAMBOURINE, -1, 100, 127, TAMB_VEL,
+  SHAKE_HIT, 0.12,
 };
 static const ShakerSound BRUSHES = {
-  BREATH_LAYER_BRUSHES, CHANNEL_BRUSH, -1, MIDI_BRUSH_SLAP, MIDI_BRUSH_SLAP,
-  MIDI_BRUSH_TAP, 55, 80, TAMB_VEL * 1.16,
+  BREATH_LAYER_BRUSHES, CHANNEL_BRUSH, -1, MIDI_BRUSH_SLAP, -1, -1, 68, 0,
+  TAMB_VEL * 1.16, 0.9, 0.3,
 };
 
 typedef struct {
@@ -3262,26 +3267,26 @@ static void breath_shake(Shaker* s, const ShakerSound* sound) {
   if (s->stick < 0) {
     s->stick = blown;
     s->travel = 0;
-    s->hit_armed = blown < SHAKE_HIT;
+    s->hit_armed = blown < sound->hit_at;
     s->big_armed = blown < SHAKE_BIG;
     return;
   }
 
   // The hits, going up through them.  Past both at once is the big one.
-  if (s->big_armed && blown >= SHAKE_BIG) {
+  if (sound->big >= 0 && s->big_armed && blown >= SHAKE_BIG) {
     s->big_armed = s->hit_armed = false;
     if (sound->big_under >= 0) {
       shaker_play(sound, sound->big_under, sound->big_vel * 3 / 4);
     }
     shaker_play(sound, sound->big, sound->big_vel);
     s->last_ns = s->hit_ns = t;
-  } else if (s->hit_armed && blown >= SHAKE_HIT) {
+  } else if (s->hit_armed && blown >= sound->hit_at) {
     s->hit_armed = false;
     shaker_play(sound, sound->hit, sound->hit_vel);
     s->last_ns = s->hit_ns = t;
   }
-  if (blown < SHAKE_HIT - SHAKE_REARM) s->hit_armed = true;
-  if (blown < SHAKE_BIG - SHAKE_REARM) s->big_armed = true;
+  if (blown < sound->hit_at - sound->rearm) s->hit_armed = true;
+  if (blown < SHAKE_BIG - sound->rearm) s->big_armed = true;
 
   // The jangle: movement, through the slack.
   if (sound->jangle < 0) return;

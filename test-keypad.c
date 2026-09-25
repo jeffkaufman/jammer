@@ -2642,10 +2642,10 @@ static void test_tambourines() {
   const char* spoken[] = {"press", "brushes"};
   CHECK(strcmp(phrase(spoken, 2, true), "press J") == 0, "'press brushes'");
 
-  // J: brushes.  A wiggle stirs them, which is the Mac's own swish (see
-  // test_brush_swish) and no notes at all; past the hit a soft slap off the
-  // Brush kit, on a channel of its own, and past hard a harder one with a
-  // tap under it.
+  // J: brushes.  Blowing stirs them, which is the Mac's own sound (see
+  // test_brush_swish) and no notes at all; past 90% one slap off the Brush
+  // kit, on a channel of its own, and no more until the breath's come back
+  // under 60%.
   press("J");
   CHECK(lit("J") && (c->breath_layers & BREATH_LAYER_BRUSHES) &&
         (told_fx & BREATH_FX_BRUSH), "J should switch the Brushes on");
@@ -2655,18 +2655,22 @@ static void test_tambourines() {
     handle_cc(CC_BREATH, w % 2 ? 16 : 30);
     usleep(30000);
   }
+  handle_cc(CC_BREATH, 90);  // hard, but not enough
   CHECK(count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 0,
-        "a wiggle should stir the brushes, not play a note");
-  n_tapped = 0;
-  handle_cc(CC_BREATH, 90);
-  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 1 &&
-        count_tapped(MIDI_ON, MIDI_BRUSH_TAP, CHANNEL_BRUSH) == 0,
-        "past the hit should be one slap");
-  usleep(100000);
+        "blowing below the slap should stir the brushes, not play a note");
   handle_cc(CC_BREATH, 108);
-  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 2 &&
-        count_tapped(MIDI_ON, MIDI_BRUSH_TAP, CHANNEL_BRUSH) == 1,
-        "past hard should be a slap with a tap under it");
+  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 1 &&
+        count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 1,
+        "blowing hard should be one slap");
+  usleep(100000);
+  handle_cc(CC_BREATH, 75);
+  handle_cc(CC_BREATH, 127);
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 1,
+        "backing off a little shouldn't slap again");
+  handle_cc(CC_BREATH, 60);
+  handle_cc(CC_BREATH, 108);
+  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 2,
+        "backing well off should let it slap again");
   // Softer than the tambourine's.
   for (int i = 0; i < n_tapped; i++) {
     if (tapped[i].channel == CHANNEL_BRUSH) {
@@ -2733,50 +2737,64 @@ static void test_tambourines() {
   full_reset();
 }
 
-// The Brushes' swish, rendered: a still breath is silence, a moving one
-// stirs, faster louder, and it's gone soon after the breath stops moving.
-// The breath goes up and down between `from` and `to` one step every
-// `blocks_per_step` 64-frame blocks: 8 is about 90 steps a second, most of
-// a slow stir's range in a second; 2 is four times that.  Measured after
-// `settle` seconds, for `seconds`.
-static double swish_rms(int from, int to, int blocks_per_step, double settle,
-                        double seconds) {
+// The Brushes' stir, rendered: silence with the breath at rest, a soft stir
+// blowing gently, and a louder one blowing harder, lifting off once the
+// breath stops.  Held at `breath` for `settle` seconds, then measured for
+// `seconds`: the loudness, and how far it wavers from 50ms to 50ms, as a
+// fraction of it.
+static double brush_stir(int breath, double settle, double seconds,
+                         double* waver) {
   const double sr = 48000;
-  float l[64], r[64];
+  float l[2400], r[2400];
+  double windows[200];
+  int n = 0;
   double sum = 0;
-  long n = 0;
-  int skip = (int)(settle * sr / 64);
-  int blocks = skip + (int)(seconds * sr / 64);
-  for (int b = 0; b < blocks; b++) {
-    int span = to - from;
-    int steps = blocks_per_step ? b / blocks_per_step : 0;
-    int pos = span ? steps % (2 * span) : 0;
-    int value = from + (pos < span ? pos : 2 * span - pos);
-    atomic_store(&audio_breath, value);
-    atomic_store(&audio_breath_fx, BREATH_FX_BRUSH);
+  atomic_store(&audio_breath_fx, BREATH_FX_BRUSH);
+  atomic_store(&audio_breath, breath);
+  for (int b = 0; b < (int)(settle * 20); b++) {
     memset(l, 0, sizeof(l));
     memset(r, 0, sizeof(r));
-    play_breath_instruments(l, r, 64, sr);
-    if (b < skip) continue;
-    for (int i = 0; i < 64; i++) {
-      sum += (double)l[i] * l[i];
-      n++;
-    }
+    play_breath_instruments(l, r, 2400, sr);
   }
-  return sqrt(sum / n);
+  for (; n < (int)(seconds * 20) && n < 200; n++) {
+    memset(l, 0, sizeof(l));
+    memset(r, 0, sizeof(r));
+    play_breath_instruments(l, r, 2400, sr);
+    double w = 0;
+    for (int i = 0; i < 2400; i++) w += (double)l[i] * l[i] + r[i] * r[i];
+    windows[n] = sqrt(w / 4800);
+    sum += w;
+  }
+  double rms = sqrt(sum / (n * 4800.0));
+  if (waver) {
+    double most = 0;
+    for (int i = 0; i < n; i++) most = fmax(most, fabs(windows[i] - rms));
+    *waver = most / rms;
+  }
+  return rms;
 }
 
 static void test_brush_swish() {
-  double still = swish_rms(50, 50, 0, 1.0, 0.5);
-  double slow = swish_rms(40, 60, 16, 0.2, 1.0);
-  double fast = swish_rms(40, 60, 4, 0.2, 1.0);
-  double after = swish_rms(50, 50, 0, 0.5, 0.5);
-  CHECK(slow > 1e-4, "a slow stir should swish: %.5f", slow);
-  CHECK(still < slow * 0.05, "a still breath shouldn't stir: %.5f", still);
-  CHECK(fast > slow * 1.5, "stirring faster should swish louder: %.5f vs "
+  int at_rest = BREATH_FLOOR;
+  int gentle = BREATH_FLOOR + (int)(0.2 * (BREATH_FULL - BREATH_FLOOR));
+  int hard = BREATH_FLOOR + (int)(0.72 * (BREATH_FULL - BREATH_FLOOR));
+  double slow_waver, fast_waver;
+  double still = brush_stir(at_rest, 0.5, 0.5, NULL);
+  double slow = brush_stir(gentle, 0.5, 2.0, &slow_waver);
+  double fast = brush_stir(hard, 0.5, 2.0, &fast_waver);
+  double held = brush_stir(BREATH_FULL, 0.5, 1.0, NULL);
+  double after = brush_stir(at_rest, 0.5, 0.5, NULL);
+  CHECK(slow > 1e-4, "a gentle breath should stir: %.5f", slow);
+  CHECK(still < slow * 0.01, "a breath at rest shouldn't stir: %.5f", still);
+  CHECK(fast > slow * 1.5, "blowing harder should stir louder: %.5f vs "
         "%.5f", fast, slow);
-  CHECK(after < 0.02 * fast, "it should fade once the breath is still: %.5f",
-        after);
+  CHECK(slow_waver < 0.2 && fast_waver < 0.2,
+        "a steady breath should stir steadily, not swell: %.2f, %.2f",
+        slow_waver, fast_waver);
+  CHECK(held > fast * 0.9, "past the slap it should keep stirring: %.5f",
+        held);
+  CHECK(after < 0.01 * fast, "it should lift off once the breath stops: "
+        "%.5f", after);
   atomic_store(&audio_breath_fx, 0);
   atomic_store(&audio_breath, 0);
 }

@@ -157,14 +157,17 @@ the physical keyboard in the middle, and what it actually does underneath:
   it is, so holding it steady is silence, and the build-and-drop voices on
   `G` and `H` (see [Builds and drops](#builds-and-drops)).  `J` and `K`,
   DOWNBEAT and UPBEAT elsewhere but nothing to a drone, are shakers: the
-  Brushes on `J` and the Tamb Shake on `K`.  A moving breath stirs the
-  brushes on the head, the jazz drummer's stirring the soup, or jangles the
-  tambourine, and one blown up past medium, or past hard, slaps or hits them.
-  The tambourine is the soundfont's own, the same in every kit.  The
-  brushes' stir is the Mac's own sound, noise through the head's swish and
-  the bristles' hiss, as loud as the breath is moving; their slaps are the
-  soundfont's Brush kit, soft, on a channel of their own (on the Pi, the
-  drum's, playing what that kit has on their notes).
+  Brushes on `J` and the Tamb Shake on `K`.  Blowing stirs the brushes
+  round the head without letting up, the jazz drummer's stirring the soup,
+  faster and louder the harder you blow, and blowing really hard, past 90%,
+  slaps them once, not again until you've come back under 60%.  A moving
+  breath jangles the tambourine, and one blown up past medium, or past hard,
+  hits it.  The tambourine is the soundfont's own, the same in every kit.
+  The brushes' stir is the Mac's own sound, noise through the head's swish
+  and the bristles' hiss, steady for a steady breath, and brighter and
+  grittier the faster it goes; their slap is the soundfont's Brush kit, soft,
+  on a channel of its own (on the Pi, the drum's, playing what that kit has
+  on its note).
   Its own voices are layers:
   each key switches one on or off, and any of them can play together, over
   the pad or without one.  There's only ever one pad, since it's the one
@@ -501,7 +504,7 @@ on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
 | key | voice | |
 |---|---|---|
 | `A` | Snare Roll | the kit's snare on the beat's grid, faster and louder as you blow harder: quarters, 8ths, 16ths, 32nds.  The first hit comes with the breath. |
-| `J` | Brushes | a jazz kit's brushes: moving the breath stirs them on the head, a continuous swish as loud as it's moving, gone when it's still; past about three quarters of the breath a soft slap, and past about 92% a harder one with a tap under it |
+| `J` | Brushes | a jazz kit's brushes: blowing stirs them round the head without letting up, from a slow, soft stir just past the gate to a quick scrub at about three quarters of the breath, louder and brighter as it speeds up, and gone when you stop; past about 90% one slap, and not another until the breath's back under about 60% |
 | `K` | Tamb Shake | a tambourine the breath shakes: wiggling it jangles, soft touches a little louder the harder you're blowing, through the bottom three quarters of the breath; blowing up past that hits it, and past about 92% hits it as hard as it goes, each armed again once you've backed off.  A steady breath is silence |
 | `G` | Noise Riser | noise through a band that rises from 300Hz to 12kHz as you blow harder |
 | `H` | Wobble | a saw bass on the bass note, its filter swinging on the beat's grid once a beat, and 2, 3 and 4 times as you blow harder |

@@ -767,49 +767,77 @@ static void play_scraper(Scraper* s, BreathPlayer* p, const ScraperSound* sound,
   }
 }
 
-// The Brushes' swish: brushes stirring on a snare head -- the jazz
-// drummer's "stirring the soup" -- as loud as the breath is moving.  Noise
-// through two bands, the head's swish and the bristles' hiss, at a level
-// that follows how fast the breath moves: up over BRUSH_ATTACK_MS as it
-// starts to, and away over BRUSH_RELEASE_MS once it stops, so a steady
-// wiggle is a steady stir and a still breath is silence.  Its own, apart
-// from the scrapers, which click on ridges; this doesn't click at all.  The
-// slaps are the Brush kit's, on MIDI (jammermidilib.h's breath_shake).
-#define BRUSH_ATTACK_MS 25
-#define BRUSH_RELEASE_MS 150
-#define BRUSH_FULL_SPEED 1.5  // of the breath's range a second: full swish
+// The Brushes' stir: brushes circling on a snare head without letting up,
+// the jazz drummer's stirring the soup, as fast as you're blowing.  Just past
+// the gate it's a slow, soft stir; blown up to where the slap comes in,
+// SHAKE_HIT, a quick hard scrub, and it holds there under the slaps
+// (jammermidilib.h's breath_shake).  Noise through the head's swish and the
+// bristles' hiss, steady for a steady breath: the faster the stir, the
+// louder and brighter, and the grittier, the wires catching on the head's
+// coating more often.  It drifts a little from side to side as it circles,
+// BRUSH_SLOW_HZ to BRUSH_FAST_HZ times a second, and lifts off the head when
+// the breath shuts the gate, over BRUSH_LIFT_MS.
+#define BRUSH_SLOW_HZ 0.6
+#define BRUSH_FAST_HZ 3.0
+#define BRUSH_PACE_MS 40    // how quickly the stir speeds up and slows down
+#define BRUSH_TOUCH_MS 15   // how quickly it's on the head
+#define BRUSH_LIFT_MS 120   // and off it
+#define BRUSH_GRIT_HZ 2500  // wires catching, a second, at full speed
+#define BRUSH_GRIT_MS 0.12
+#define BRUSH_PAN 0.2
 // A moderate stir at about -52dB, by perceived loudness: level with the Tamb
 // Shake's jangle, and under the Brush kit's slaps, the soft one about -49dB
 // and the big one about -42dB.
 #define BRUSH_LEVEL 0.015
 
 typedef struct {
-  double swish;     // how hard it's stirring, 0-1, followed
-  Bandpass head, bristles;
-} BrushSwish;
+  bool down;        // on the head: the breath's past the gate
+  double touch;     // 0-1, followed
+  double pace;      // 0-1, how fast it's stirring, followed
+  double phase;     // 0-1: once round
+  double grit;      // a wire's catch, dying away
+  Bandpass head, bristles, wires;
+} BrushStir;
 
 static BreathPlayer brush_player;
-static BrushSwish brush;
+static BrushStir brush;
 
 static void play_brush(float* left, float* right, int len, bool playing,
                        double blown, double sample_rate) {
-  double k = 1 - exp(-1 / (sample_rate * BREATH_PLAY_SMOOTH_MS / 1000));
-  double up = 1 - exp(-1 / (sample_rate * BRUSH_ATTACK_MS / 1000));
-  double down = 1 - exp(-1 / (sample_rate * BRUSH_RELEASE_MS / 1000));
-  bandpass_set(&brush.head, 3000, 0.7, sample_rate);
-  bandpass_set(&brush.bristles, 6500, 1.2, sample_rate);
+  if (!playing || blown < BREATH_GATE_SHUT) {
+    brush.down = false;
+  } else if (blown > BREATH_GATE_OPEN) {
+    brush.down = true;
+  }
+  double pace = (blown - BREATH_GATE_SHUT) / (SHAKE_HIT - BREATH_GATE_SHUT);
+  pace = !brush.down ? brush.pace : pace < 0 ? 0 : pace > 1 ? 1 : pace;
+  double touch = brush.down ? 1 : 0;
+  double k_pace = 1 - exp(-1 / (sample_rate * BRUSH_PACE_MS / 1000));
+  double k_touch = 1 - exp(-1 / (sample_rate *
+    (touch > brush.touch ? BRUSH_TOUCH_MS : BRUSH_LIFT_MS) / 1000));
+  double grit_decay = exp(-1 / (sample_rate * BRUSH_GRIT_MS / 1000));
+  // Brighter as it speeds up: the head's band and the bristles' rise.
+  bandpass_set(&brush.head, 2400 + 1200 * brush.pace, 0.7, sample_rate);
+  bandpass_set(&brush.bristles, 5500 + 2500 * brush.pace, 1.2, sample_rate);
+  bandpass_set(&brush.wires, 8500, 2.5, sample_rate);
   for (int i = 0; i < len; i++) {
-    double moved = breath_player_move(&brush_player, playing ? blown : 0, k);
-    double speed = playing ? fabs(moved) * sample_rate / BRUSH_FULL_SPEED : 0;
-    if (speed > 1) speed = 1;
-    brush.swish += (speed - brush.swish) * (speed > brush.swish ? up : down);
+    brush.pace += (pace - brush.pace) * k_pace;
+    brush.touch += (touch - brush.touch) * k_touch;
+    double hz = BRUSH_SLOW_HZ + (BRUSH_FAST_HZ - BRUSH_SLOW_HZ) * brush.pace;
+    brush.phase = fmod(brush.phase + hz / sample_rate, 1);
+    if ((breath_noise() + 1) / 2 < BRUSH_GRIT_HZ * brush.pace / sample_rate) {
+      brush.grit = 0.5 + 0.5 * fabs(breath_noise());
+    }
     double x = breath_noise();
     double y = 0.8 * bandpass_run(&brush.head, x) +
-               0.45 * bandpass_run(&brush.bristles, x);
-    // A soft start to the curve: a little stirring is a whisper, not half.
-    double level = BRUSH_LEVEL * pow(brush.swish, 1.3);
-    left[i] += (float)(y * level);
-    right[i] += (float)(y * level);
+               (0.2 + 0.5 * brush.pace) * bandpass_run(&brush.bristles, x) +
+               1.5 * bandpass_run(&brush.wires, x * brush.grit);
+    brush.grit *= grit_decay;
+    // A slow stir's a whisper, not silence; faster, louder, to full.
+    double level = BRUSH_LEVEL * brush.touch * (0.25 + 0.75 * brush.pace);
+    double pan = BRUSH_PAN * cos(2 * M_PI * brush.phase);
+    left[i] += (float)(y * level * (1 - pan));
+    right[i] += (float)(y * level * (1 + pan));
   }
 }
 

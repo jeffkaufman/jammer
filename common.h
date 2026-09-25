@@ -60,6 +60,10 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 #define BREATH_GATE_OPEN 0.12
 #define BREATH_GATE_SHUT 0.06
 
+// Where the Tamb Shake hits (jammermidilib.h's breath_shake), and the
+// Brushes' stir is at its fastest (macapi.h), of the breath's range.
+#define SHAKE_HIT 0.75
+
 // The breath as 0-1, from the controller at rest to as far as it goes.
 static inline double breath_blown(int breath) {
   double x = (double)(breath - BREATH_FLOOR) / (BREATH_FULL - BREATH_FLOOR);
@@ -83,8 +87,8 @@ enum {
   // jammermidilib.h, and has no bit.
   BREATH_FX_RISER = 1 << 6,
   BREATH_FX_WOBBLE = 1 << 7,
-  // The Brushes' swish: brushes stirring on a snare head, as fast as the
-  // breath moves.
+  // The Brushes' stir: brushes circling on a snare head, faster the harder
+  // you blow.
   BREATH_FX_BRUSH = 1 << 8,
 };
 
