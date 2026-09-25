@@ -15,7 +15,8 @@
 // already hands jammer a render callback (see jammer_audio_render in
 // macapi.h); the whistle is summed into those same buffers, so it comes out
 // of whatever the Audio Output menu picked, at whatever latency that device
-// is already running.
+// is already running -- on its left channel only, where fluidsynth's
+// endpoints are panned.
 //
 // The whistle is an instrument in the UI, but it is not an endpoint: endpoints
 // are fluidsynth MIDI channels (common.h), and this one makes its own sound
@@ -33,27 +34,36 @@
 #include <unistd.h>
 
 #include "engine.h"   // from whistle-synth
+#include "breathmic.h"
 
 // ---------------------------------------------------------------------------
 // The voices
 //
 // Ten of whistle-synth's presets, on the ten voice keys that the drum kits
-// don't use, and jammer's own vocoder on B.  Looked up by name at startup rather than by index: the presets
-// table has had entries come and go, and an index that silently shifted would
-// put a different instrument under every key.
+// don't use, and on N and M the breath voices, which play nothing and
+// breathe for the breath controller instead (see breathmic.h): Whistle
+// Breath, a voice of its own, and Blow Noise, which is a layer rather than a
+// voice -- M switches it on and off over whichever voice is playing, so a
+// whistled bass line can go on while you blow.  B is left free.  The vocoder, and the vocal effects beside it, are
+// layers over these rather than voices, on J K L: see WHISTLE_FX.
+//
+// Looked up by name at startup rather than by index: the presets table has
+// had entries come and go, and an index that silently shifted would put a
+// different instrument under every key.
 // ---------------------------------------------------------------------------
 
-#define N_WHISTLE_VOICES 11
+#define N_WHISTLE_VOICES 12
 
 typedef struct {
   int note;            // the voice key's pseudo-note, as KEYS[] sends it
-  const char* preset;  // what synth.c calls it, or NULL for the vocoder
+  const char* preset;  // what synth.c calls it, or NULL for jammer's own
   const char* label;   // what to draw on the key; "\n" splits lines
+  int own;             // for jammer's own: one of those below
 } WhistleVoice;
 
-// Not one of whistle-synth's: jammer's own vocoder, below, which plays the
-// chord with whatever the microphone hears.
-#define WHISTLE_VOCODER (-2)
+// Not whistle-synth's: jammer's own breath voices.
+#define WHISTLE_BREATH_WHISTLE (-3)
+#define WHISTLE_BREATH_BLOW (-4)
 
 static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'A', "bass",           "Bass"},
@@ -66,11 +76,80 @@ static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'X', "drawbar",        "Draw\nbar"},
   {'C', "drawbar-hi",     "High\nDrawbar"},
   {'V', "accordion",      "Accor\ndion"},
-  {'B', NULL,             "Vocoder"},
+  {'N', NULL,             "Whistle\nBreath", WHISTLE_BREATH_WHISTLE},
+  {'M', NULL,             "Blow\nNoise", WHISTLE_BREATH_BLOW},
 };
 
+// The vocal effect over the voice, if any: the vocoder, or one of the
+// effects beside it (voicefx.h), on J K L -- row keys the whistle has no
+// other use for -- or from the Vocal FX menu.  One at a time, and the key
+// that's on switches it off.
+enum {
+  VFX_NONE,
+  VFX_VOCODER,
+  VFX_ROBOT,
+  VFX_BASS,
+  N_VFX,
+};
+
+typedef struct {
+  int note;           // the key's pseudo-note, as KEYS[] sends it
+  const char* label;  // what to draw on the key; "\n" splits lines
+  const char* name;   // what the status row calls it
+} WhistleFx;
+
+static const WhistleFx WHISTLE_FX[N_VFX] = {
+  [VFX_VOCODER] = {'J', "Vocoder", "voc"},
+  [VFX_ROBOT] = {'K', "Robot", "robot"},
+  [VFX_BASS] = {'L', "Voice\nBass", "vbass"},
+};
+
+// The effect on a modifier key, or VFX_NONE.
+static int whistle_fx_for_note(int note) {
+  for (int fx = VFX_VOCODER; fx < N_VFX; fx++) {
+    if (WHISTLE_FX[fx].note == note) return fx;
+  }
+  return VFX_NONE;
+}
+
+static int whistle_fx;  // VFX_NONE, or the effect that's on
+
+// Which input the vocal effects hear: 0 for the first, the whistle's, or 1
+// for the second, so a vocal mic in input 2 can go through them while the
+// whistle mic stays on the bass.  F2 while the whistle's selected, and only
+// if the device has a second input: whistle_input_count, which
+// whistleinput.h sets when it opens one.
+static int whistle_fx_mic;
+static _Atomic int whistle_input_count;
+
+static bool whistle_has_second_mic(void) {
+  return atomic_load_explicit(&whistle_input_count, memory_order_relaxed) >= 2;
+}
+// The voice silenced under the vocoder, so it plays alone: the lit voice key
+// again while the vocoder's on.  Any voice key brings a voice back, and so
+// does switching the vocoder off, so the whistle is never left silent.
+static bool whistle_voice_muted;
+
+// Blow Noise, on and off over the voice: M.  Whistle Breath, if that's the
+// voice, has the breath controller instead, since there's only one.
+static bool whistle_blow_on;
+
+// What a voice's key says.
+static const char* whistle_voice_label(int index) {
+  return WHISTLE_VOICES[index].label;
+}
+
+// What the status row calls a voice.
+static const char* whistle_voice_name(int index) {
+  switch (WHISTLE_VOICES[index].own) {
+  case WHISTLE_BREATH_WHISTLE: return "whistle-breath";
+  case WHISTLE_BREATH_BLOW:    return "blow-noise";
+  }
+  return WHISTLE_VOICES[index].preset;
+}
+
 // What engine_set_voice() takes for each of the ten, filled in by
-// whistle_resolve_voices(), or WHISTLE_VOCODER.  Voice 0 in the engine is the
+// whistle_resolve_voices(), or one of jammer's own.  Voice 0 in the engine is the
 // raw input passed through, so presets start at 1.
 static int whistle_engine_voice[N_WHISTLE_VOICES];
 
@@ -129,6 +208,23 @@ static double whistle_gate_margin(int step) {
 // a per-rig number either way -- set it just above what the status row shows
 // while you whistle hard.
 static int whistle_level_full = 2;
+// And the same for the Blows, which have their own: blowing straight into a
+// microphone runs far hotter than whistling at it.  Where to start is a guess
+// until it's been tried -- set it, like the other, just above what the status
+// row shows while you blow hard.
+static int whistle_blow_level_full = 3;
+// And where they start: see bm_blow_gate_for_step.  Low, so a soft breath
+// breathes; the room is what sets how low it can go.
+static int whistle_blow_gate = 3;
+
+// Whistle Breath's own gate and full-blow level, apart from the whistle
+// bass's.  The bass wants a strict gate, so the room never plays a note, and
+// a full level it reaches easily, so the voices sound full.  A breath wants
+// the opposite: to start on the quietest whistle, and to leave room above
+// it for whistling harder.  The engine only listens while Whistle Breath is
+// on, so it takes these then.
+static int whistle_breath_gate = 8;
+static int whistle_breath_level_full = 5;
 static int whistle_low_note;     // MIDI note: the lowest that counts as a note
 static int whistle_high_note;    // MIDI note: the highest
 
@@ -145,8 +241,9 @@ static bool whistle_passthrough;
 #define MAX_WHISTLE_GAIN 2.0
 static double whistle_gain = 1.0;
 
-// And the vocoder's, beside it: it's a different kind of sound from the
-// whistle's voices, and sits against the rig at a level of its own.
+// And the vocal effects', the vocoder's and the rest, in the Vocal FX menu:
+// they're a different kind of sound from the whistle's voices, and sit
+// against the rig at a level of their own.
 static double vocoder_gain = 1.0;
 
 // Where the volume knob sits when nothing has moved it, so that VOL-/VOL+ can
@@ -184,6 +281,8 @@ static _Atomic int whistle_pub_high_note = 0;
 // switching the instrument off is a fade rather than a click, and dragging the
 // slider doesn't zipper.  Scaled by 1000 to keep it an int.
 static _Atomic int whistle_pub_target_gain = 0;
+// And the vocoder's, the same way, since it sounds beside the whistle.
+static _Atomic int whistle_pub_vocoder_gain = 0;
 
 // Counters and meters, written by the audio thread and read by the UI.
 static _Atomic int whistle_dropouts;
@@ -217,21 +316,65 @@ static int whistle_default_high_note(void) {
   return (int)floor(69.0 + 12.0 * log2(ENGINE_MAX_HZ / 440.0));
 }
 
-static _Atomic int whistle_pub_vocoder;
+static _Atomic int whistle_pub_fx;
+static _Atomic int whistle_pub_fx_mic;
+// The vocal effects' own gate, in dBFS peak: see RoomGate.
+#define VFX_GATE_DEFAULT_DB -54   // 0.002, where the gate was fixed before
+#define VFX_GATE_MIN_DB -70
+#define VFX_GATE_MAX_DB -10
+static int whistle_fx_gate_db = VFX_GATE_DEFAULT_DB;
+static _Atomic int whistle_pub_fx_gate_db = VFX_GATE_DEFAULT_DB;
+// The loudest the effects' input has been since the UI last looked, x10000,
+// for setting the gate against.
+static _Atomic int whistle_meter_fx_level;
+// WHISTLE_BREATH_WHISTLE, _BLOW or _VOLUME while one of them is on and
+// breathing, or 0.
+static _Atomic int whistle_pub_breath;
+// The full-blow step for whichever breath voice is on.
+static _Atomic int whistle_pub_breath_level_full = 3;
+static _Atomic int whistle_pub_blow_gate = 3;
+// What the breath voices would have the breath controller say, 0-127, or -1
+// while neither is breathing.  Written by the audio thread once a block;
+// whistle_breath_tick() passes it on.
+static _Atomic int whistle_breath_cc = -1;
 
-// The level the whistle's master slider sets for the voice it's on: the
-// vocoder's own, or the whistle's.  Caller must hold the lock.
+// Whether the voice itself makes a sound: the breath voices don't.
+static bool whistle_voice_sounds(int index) {
+  if (whistle_voice_muted) return false;
+  int own = WHISTLE_VOICES[index].own;
+  return own != WHISTLE_BREATH_WHISTLE;
+}
+
+// The level the status row shows for what's sounding: the whistle's, or the
+// vocoder's when it's all there is.  Caller must hold the lock.
 static double whistle_current_gain(void) {
-  return whistle_engine_voice[whistle_voice] == WHISTLE_VOCODER &&
-    !whistle_passthrough ? vocoder_gain : whistle_gain;
+  return whistle_fx && !whistle_passthrough &&
+    !whistle_voice_sounds(whistle_voice) ? vocoder_gain : whistle_gain;
 }
 
 static void whistle_publish(void) {
-  // The vocoder isn't the engine's, so the engine keeps whatever voice it had
-  // and goes on listening underneath, for the meters.
-  bool vocoder = !whistle_passthrough &&
-    whistle_engine_voice[whistle_voice] == WHISTLE_VOCODER;
-  atomic_store_explicit(&whistle_pub_vocoder, vocoder, memory_order_relaxed);
+  // The effects aren't the engine's: they're summed in beside whatever the
+  // engine's playing, and apart from the whistle's own level.
+  int fx = whistle_passthrough ? VFX_NONE : whistle_fx;
+  bool vocoder = fx != VFX_NONE;
+  atomic_store_explicit(&whistle_pub_fx, fx, memory_order_relaxed);
+  atomic_store_explicit(&whistle_pub_fx_gate_db, whistle_fx_gate_db,
+                        memory_order_relaxed);
+  atomic_store_explicit(&whistle_pub_fx_mic,
+                        whistle_fx_mic && whistle_has_second_mic(),
+                        memory_order_relaxed);
+  int own = whistle_engine_voice[whistle_voice] == WHISTLE_BREATH_WHISTLE
+    ? WHISTLE_BREATH_WHISTLE
+    : whistle_blow_on ? WHISTLE_BREATH_BLOW : 0;
+  bool breath = whistle_on && !whistle_passthrough && own;
+  atomic_store_explicit(&whistle_pub_breath, breath ? own : 0,
+                        memory_order_relaxed);
+  atomic_store_explicit(&whistle_pub_breath_level_full,
+                        own == WHISTLE_BREATH_WHISTLE
+                          ? whistle_breath_level_full : whistle_blow_level_full,
+                        memory_order_relaxed);
+  atomic_store_explicit(&whistle_pub_blow_gate, whistle_blow_gate,
+                        memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_voice,
                         whistle_passthrough
                           ? 0 : whistle_engine_voice[whistle_voice],
@@ -240,17 +383,24 @@ static void whistle_publish(void) {
                         memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_octave, whistle_octave,
                         memory_order_relaxed);
-  atomic_store_explicit(&whistle_pub_gate, whistle_gate, memory_order_relaxed);
+  atomic_store_explicit(&whistle_pub_gate,
+                        breath && own == WHISTLE_BREATH_WHISTLE
+                          ? whistle_breath_gate : whistle_gate,
+                        memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_level_full, whistle_level_full,
                         memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_low_note, whistle_low_note,
                         memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_high_note, whistle_high_note,
                         memory_order_relaxed);
+  bool sounds = whistle_passthrough || whistle_voice_sounds(whistle_voice);
   atomic_store_explicit(&whistle_pub_target_gain,
-                        !whistle_on ? 0 :
-                          (int)((vocoder ? vocoder_gain : whistle_gain) *
-                                1000 + 0.5),
+                        whistle_on && sounds
+                          ? (int)(whistle_gain * 1000 + 0.5) : 0,
+                        memory_order_relaxed);
+  atomic_store_explicit(&whistle_pub_vocoder_gain,
+                        whistle_on && vocoder
+                          ? (int)(vocoder_gain * 1000 + 0.5) : 0,
                         memory_order_relaxed);
 }
 
@@ -269,7 +419,11 @@ static void whistle_publish(void) {
 
 #define WHISTLE_RING_FRAMES 16384u   // power of two, for the mask
 
+// The first input, which the whistle, the breath voices and speech listen
+// to, and the second, if the device has one, which the vocal effects can
+// take instead (whistle_fx_mic).  One ring for both, so they stay in step.
 static float whistle_ring[WHISTLE_RING_FRAMES];
+static float whistle_ring_2[WHISTLE_RING_FRAMES];
 static _Atomic unsigned whistle_ring_write;
 static _Atomic unsigned whistle_ring_read;
 static _Atomic unsigned whistle_ring_target;   // frames to keep buffered
@@ -286,6 +440,7 @@ static void whistle_ring_reset(void) {
   atomic_store_explicit(&whistle_ring_write, 0, memory_order_relaxed);
   atomic_store_explicit(&whistle_ring_read, 0, memory_order_relaxed);
   memset(whistle_ring, 0, sizeof(whistle_ring));
+  memset(whistle_ring_2, 0, sizeof(whistle_ring_2));
 }
 
 // Anything else that wants to hear the microphone -- speech.h, for spoken
@@ -293,8 +448,10 @@ static void whistle_ring_reset(void) {
 // block, so it must be realtime safe: no locks, no allocation.
 static void (*whistle_input_tap)(const float* samples, int frames) = NULL;
 
-// Called on the input device's thread.
-static void whistle_push_input(const float* samples, int frames) {
+// Called on the input device's thread.  `second` is the device's second
+// input, or NULL if it has none.
+static void whistle_push_input(const float* samples, const float* second,
+                               int frames) {
   if (whistle_input_tap) whistle_input_tap(samples, frames);
   unsigned write = atomic_load_explicit(&whistle_ring_write,
                                         memory_order_relaxed);
@@ -308,14 +465,15 @@ static void whistle_push_input(const float* samples, int frames) {
     return;
   }
   for (int i = 0; i < frames; i++) {
-    whistle_ring[(write + (unsigned)i) & (WHISTLE_RING_FRAMES - 1)] =
-      samples[i];
+    unsigned at = (write + (unsigned)i) & (WHISTLE_RING_FRAMES - 1);
+    whistle_ring[at] = samples[i];
+    whistle_ring_2[at] = second ? second[i] : 0;
   }
   atomic_store_explicit(&whistle_ring_write, write + (unsigned)frames,
                         memory_order_release);
 }
 
-static void whistle_pop_input(float* samples, int frames) {
+static void whistle_pop_input(float* samples, float* second, int frames) {
   unsigned read = atomic_load_explicit(&whistle_ring_read,
                                        memory_order_relaxed);
   unsigned write = atomic_load_explicit(&whistle_ring_write,
@@ -334,9 +492,10 @@ static void whistle_pop_input(float* samples, int frames) {
   }
 
   for (int i = 0; i < frames; i++) {
-    samples[i] = (unsigned)i < available
-      ? whistle_ring[(read + (unsigned)i) & (WHISTLE_RING_FRAMES - 1)]
-      : 0;   // the input hasn't caught up yet
+    unsigned at = (read + (unsigned)i) & (WHISTLE_RING_FRAMES - 1);
+    bool there = (unsigned)i < available;  // or the input hasn't caught up
+    samples[i] = there ? whistle_ring[at] : 0;
+    second[i] = there ? whistle_ring_2[at] : 0;
   }
   if ((unsigned)frames > available) {
     atomic_fetch_add_explicit(&whistle_dropouts, 1, memory_order_relaxed);
@@ -366,6 +525,8 @@ static _Atomic int whistle_mix_busy;
 // and the wait is only ever one block long in practice.
 static void whistle_engine_silence(void) {
   atomic_store_explicit(&whistle_engine_live, 0, memory_order_release);
+  // Nothing's listening any more, so nothing's breathing.
+  atomic_store_explicit(&whistle_breath_cc, -1, memory_order_relaxed);
   for (int wait = 0; wait < 200; wait++) {
     if (!atomic_load_explicit(&whistle_mix_busy, memory_order_acquire)) return;
     usleep(1000);
@@ -381,9 +542,46 @@ static int whistle_applied_level_full = -1;
 static int whistle_applied_low = -1;
 static int whistle_applied_high = -1;
 
-static float whistle_live_gain;    // the audio thread's own, ramped
-static float whistle_gain_step;    // per-sample slew towards the target
-static float whistle_gain_target;  // where the slew is heading
+// The breath voices' detector, and which of them it was last listening for:
+// a change starts it afresh, so neither inherits the other's breath.
+static BreathMic whistle_breath_mic;
+static int whistle_applied_breath;
+
+// A gain the audio thread ramps towards what the UI last asked for.
+typedef struct {
+  float live;    // the audio thread's own
+  float step;    // per-sample slew towards the target
+  float target;  // where the slew is heading
+} WhistleRamp;
+
+static WhistleRamp whistle_ramp, fx_ramp;
+// The effect the audio thread is running, which trails whistle_pub_fx: a
+// change fades the old one out before the new one starts.
+static int whistle_applied_fx;
+
+static void whistle_ramp_to(WhistleRamp* r, float target, float frames) {
+  r->target = target;
+  if (fabsf(target - r->live) < 1e-6f) {
+    r->live = target;
+    r->step = 0;
+  } else {
+    r->step = (target - r->live) / frames;
+  }
+}
+
+static float whistle_ramp_next(WhistleRamp* r) {
+  if (r->step != 0) {
+    r->live += r->step;
+    // Stop on the target rather than overshooting it, whichever way the
+    // ramp is going.
+    if ((r->step > 0 && r->live >= r->target) ||
+        (r->step < 0 && r->live <= r->target)) {
+      r->live = r->target;
+      r->step = 0;
+    }
+  }
+  return r->live;
+}
 
 // A MIDI note in Hz, moved by `semitones` first.  The move is what makes the
 // ends inclusive: half a semitone either way, so the note you named triggers
@@ -437,16 +635,17 @@ static void whistle_apply_controls(int frames, double sample_rate) {
 
   // Reach a new gain in about 10ms however big the block is, so switching the
   // instrument off fades rather than clicks and the slider doesn't zipper.
-  whistle_gain_target = 0.001f * (float)atomic_load_explicit(
-      &whistle_pub_target_gain, memory_order_relaxed);
   float ramp_frames = (float)(sample_rate * 0.010);
   if (ramp_frames < 1) ramp_frames = 1;
-  if (fabsf(whistle_gain_target - whistle_live_gain) < 1e-6f) {
-    whistle_live_gain = whistle_gain_target;
-    whistle_gain_step = 0;
-  } else {
-    whistle_gain_step = (whistle_gain_target - whistle_live_gain) / ramp_frames;
-  }
+  whistle_ramp_to(&whistle_ramp, 0.001f * (float)atomic_load_explicit(
+                    &whistle_pub_target_gain, memory_order_relaxed),
+                  ramp_frames);
+  int fx = atomic_load_explicit(&whistle_pub_fx, memory_order_relaxed);
+  whistle_ramp_to(&fx_ramp,
+                  fx != whistle_applied_fx ? 0 :
+                    0.001f * (float)atomic_load_explicit(
+                      &whistle_pub_vocoder_gain, memory_order_relaxed),
+                  ramp_frames);
   (void)frames;
 }
 
@@ -461,8 +660,11 @@ static void whistle_engine_prepare(double sample_rate) {
   whistle_applied_level_full = -1;
   whistle_applied_low = -1;
   whistle_applied_high = -1;
-  whistle_live_gain = 0;
-  whistle_gain_step = 0;
+  memset(&whistle_ramp, 0, sizeof(whistle_ramp));
+  memset(&fx_ramp, 0, sizeof(fx_ramp));
+  whistle_applied_fx = VFX_NONE;
+  bm_init(&whistle_breath_mic, sample_rate);
+  whistle_applied_breath = 0;
   whistle_ring_reset();
 }
 
@@ -495,6 +697,70 @@ static void whistle_engine_prepare(double sample_rate) {
 #define VOCODER_CENTER_HZ 180   // where the bell over pitch peaks
 #define VOCODER_WIDTH 1.1       // and its width, in octaves
 
+// The gate in front of the vocoder and the other vocal effects, which keeps
+// the band in the microphone from playing them: the input's level against
+// the room, which is the quietest it's been in the last ROOM_FLOOR_BLOCKS
+// seconds.  Any pause between notes shows the room, a note held for less than
+// that is never taken for it, and a room that gets louder is caught up with
+// once the quieter seconds have passed.  A floor that crept up towards the
+// input instead took a note held for four or five seconds for the room and
+// cut it off.
+//
+// On top of that, a gate of the player's own (the Vocal FX menu): nothing
+// quieter than room_gate_threshold opens it, however quiet the room.  That's
+// what keeps the band out when it never stops playing, so the room never
+// shows.
+#define ROOM_FLOOR_BLOCKS 20
+
+// The audio thread's copy, a linear peak level, from whistle_pub_fx_gate.
+static double room_gate_threshold = 0.002;
+
+typedef struct {
+  double rate;
+  double level, floor, gate;
+  double attack, release;
+  double block_min[ROOM_FLOOR_BLOCKS];  // each second's quietest
+  double older_min;                     // the quietest of those
+  double current_min;                   // and this second's, so far
+  int block, block_frames;
+} RoomGate;
+
+static void room_gate_init(RoomGate* g, double rate) {
+  memset(g, 0, sizeof(*g));
+  g->rate = rate;
+  g->floor = 0.01;
+  // Nothing heard yet, so nothing to hold the floor down but what comes in.
+  for (int i = 0; i < ROOM_FLOOR_BLOCKS; i++) g->block_min[i] = 1;
+  g->older_min = 1;
+  g->current_min = 1;
+  g->attack = 1 - exp(-1 / (rate * 0.002));
+  g->release = 1 - exp(-1 / (rate * 0.025));
+}
+
+// One sample in, how open the gate is out, 0-1.  g->level is the input's
+// level, followed quickly, for anything that wants to go by it.
+static double room_gate_run(RoomGate* g, float in) {
+  double level = fabs(in);
+  g->level += (level - g->level) *
+              (level > g->level ? g->attack : g->release);
+  if (g->level < g->current_min) g->current_min = g->level;
+  if (++g->block_frames >= (int)g->rate) {
+    g->block_min[g->block] = g->current_min;
+    g->block = (g->block + 1) % ROOM_FLOOR_BLOCKS;
+    g->current_min = g->level;
+    g->block_frames = 0;
+    g->older_min = 1;
+    for (int i = 0; i < ROOM_FLOOR_BLOCKS; i++) {
+      if (g->block_min[i] < g->older_min) g->older_min = g->block_min[i];
+    }
+  }
+  g->floor = fmin(g->current_min, g->older_min);
+  bool open = g->level > 4 * g->floor && g->level > room_gate_threshold;
+  double step = open ? 1000 / (g->rate * 5) : 1000 / (g->rate * 60);
+  g->gate = open ? fmin(1, g->gate + step) : fmax(0, g->gate - step);
+  return g->gate;
+}
+
 static struct {
   double rate;
   Bandpass analysis[VOCODER_BANDS], synthesis[VOCODER_BANDS];
@@ -502,7 +768,7 @@ static struct {
   double noise_mix[VOCODER_BANDS];
   double attack, release;
   double saw[VOCODER_VOICES];
-  double level, floor, gate;
+  RoomGate room;
   uint32_t noise;
 } vocoder;
 
@@ -510,7 +776,7 @@ static void vocoder_prepare(double sample_rate) {
   memset(&vocoder, 0, sizeof(vocoder));
   vocoder.rate = sample_rate;
   vocoder.noise = 987654321;
-  vocoder.floor = 0.01;
+  room_gate_init(&vocoder.room, sample_rate);
   for (int b = 0; b < VOCODER_BANDS; b++) {
     double hz = VOCODER_LOW_HZ *
       pow((double)VOCODER_HIGH_HZ / VOCODER_LOW_HZ,
@@ -528,22 +794,7 @@ static float vocoder_process(float in, const double* carrier_hz,
                              float volume) {
   double rate = vocoder.rate;
 
-  // The gate: the input's level against a floor that drops to meet it
-  // quickly and rises to meet it only slowly, so it settles on the room --
-  // and more slowly still while the gate's open, so a held note isn't taken
-  // for the room.  A room that gets louder is still caught up with in a few
-  // tens of seconds.
-  double level = fabs(in);
-  vocoder.level += (level - vocoder.level) *
-                   (level > vocoder.level ? vocoder.attack : vocoder.release);
-  double rise_s = vocoder.gate > 0 ? 20.0 : 3.0;
-  double to_floor = vocoder.level < vocoder.floor
-    ? 1 - exp(-1 / (rate * 0.05)) : 1 - exp(-1 / (rate * rise_s));
-  vocoder.floor += (vocoder.level - vocoder.floor) * to_floor;
-  bool open = vocoder.level > 4 * vocoder.floor && vocoder.level > 0.002;
-  double gate_step = open ? 1000 / (rate * 5) : 1000 / (rate * 60);
-  vocoder.gate = open ? fmin(1, vocoder.gate + gate_step)
-                      : fmax(0, vocoder.gate - gate_step);
+  double gate = room_gate_run(&vocoder.room, in);
 
   // The chord, the weights summing to one.
   double carrier = 0;
@@ -574,7 +825,7 @@ static float vocoder_process(float in, const double* carrier_hz,
   // Half way to an even level: out goes as the square root of what comes in,
   // so a quiet microphone still reaches the mix and a loud one doesn't bury
   // it.
-  out *= VOCODER_MAKEUP / sqrt(fmax(vocoder.level, 0.01)) * vocoder.gate;
+  out *= VOCODER_MAKEUP / sqrt(fmax(vocoder.room.level, 0.01)) * gate;
   return (float)(tanh(out) * volume);
 }
 
@@ -606,9 +857,12 @@ static int vocoder_chord(double* hz, double* weight) {
   return n;
 }
 
+#include "voicefx.h"
+
 // Scratch for one block of input, sized when the stream starts.  Only the
 // audio thread touches it while one is running.
 static float* whistle_input_block;
+static float* whistle_input_block_2;  // the second input's
 static int whistle_input_block_frames;
 
 // Sum the whistle into fluidsynth's output buffers.  Runs on the audio
@@ -628,40 +882,90 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
   }
 
   whistle_apply_controls(len, sample_rate);
-  whistle_pop_input(whistle_input_block, len);
+  whistle_pop_input(whistle_input_block, whistle_input_block_2, len);
+  // What the vocal effects hear: the first input, or the second.
+  const float* fx_in =
+    atomic_load_explicit(&whistle_pub_fx_mic, memory_order_relaxed)
+      ? whistle_input_block_2 : whistle_input_block;
 
-  float gain = whistle_live_gain;
-  float step = whistle_gain_step;
-  float target = whistle_gain_target;
-  bool vocoding = atomic_load_explicit(&whistle_pub_vocoder,
-                                       memory_order_relaxed);
+  // Once the old effect has faded out, the new one starts afresh.
+  int want_fx = atomic_load_explicit(&whistle_pub_fx, memory_order_relaxed);
+  if (want_fx != whistle_applied_fx && fx_ramp.live == 0) {
+    whistle_applied_fx = want_fx;
+    if (want_fx > VFX_VOCODER) vfx_prepare(sample_rate);
+  }
+  int fx = whistle_applied_fx;
+  room_gate_threshold = pow(10, atomic_load_explicit(
+    &whistle_pub_fx_gate_db, memory_order_relaxed) / 20.0);
+  float fx_peak = 0;
+  VfxBlock fx_block;
+  if (fx > VFX_VOCODER) vfx_block(&fx_block);
   double chord_hz[VOCODER_VOICES], chord_weight[VOCODER_VOICES];
   int chord_notes = vocoder_chord(chord_hz, chord_weight);
   if (vocoder.rate != sample_rate) vocoder_prepare(sample_rate);
   float vocoder_volume = (float)(whistle_applied_volume + 1) / 10;
+  int breathing = atomic_load_explicit(&whistle_pub_breath,
+                                       memory_order_relaxed);
+  if (breathing != whistle_applied_breath) {
+    whistle_applied_breath = breathing;
+    bm_init(&whistle_breath_mic, sample_rate);
+  }
+  bool blowing = breathing == WHISTLE_BREATH_BLOW;
+  double breath_full = engine_level_full_for_step(
+    atomic_load_explicit(&whistle_pub_breath_level_full,
+                         memory_order_relaxed));
+  double blow_gate = bm_blow_gate_for_step(
+    atomic_load_explicit(&whistle_pub_blow_gate, memory_order_relaxed));
+  double breath = 0, blow_level = 0;
   for (int i = 0; i < len; i++) {
     float left, right;
     engine_process_stereo(&whistle_engine, whistle_input_block[i],
                           &left, &right);
-    if (vocoding) {
-      left = right = vocoder_process(whistle_input_block[i], chord_hz,
-                                     chord_weight, chord_notes,
-                                     vocoder_volume);
-    }
-    if (step != 0) {
-      gain += step;
-      // Stop on the target rather than overshooting it, whichever way the
-      // ramp is going.
-      if ((step > 0 && gain >= target) || (step < 0 && gain <= target)) {
-        gain = target;
-        step = 0;
+    if (breathing) {
+      const struct PitchHint* h = &whistle_engine.detector.hint;
+      float in = whistle_input_block[i];
+      breath = breathing == WHISTLE_BREATH_WHISTLE
+        ? bm_whistle(&whistle_breath_mic, h->voiced, h->level, breath_full)
+        : bm_blow_noise(&whistle_breath_mic, in, blow_gate, breath_full);
+      if (whistle_breath_mic.level > blow_level) {
+        blow_level = whistle_breath_mic.level;
       }
+      // Whistle Breath plays nothing: the whistle is for the breath
+      // controller, not the audience.  Blow Noise goes on over a voice that
+      // does play, so that plays on.
+      if (breathing == WHISTLE_BREATH_WHISTLE) left = right = 0;
     }
-    out[0][i] += left * gain;
-    if (nout > 1) out[1][i] += right * gain;
+    float gain = whistle_ramp_next(&whistle_ramp);
+    left *= gain;
+    right *= gain;
+    // The effect runs whenever it might be heard, including while it fades
+    // out, and is summed in beside the voice.
+    float fx_gain = whistle_ramp_next(&fx_ramp);
+    if (fabsf(fx_in[i]) > fx_peak) fx_peak = fabsf(fx_in[i]);
+    if (fx == VFX_VOCODER) {
+      float v = vocoder_process(fx_in[i], chord_hz,
+                                chord_weight, chord_notes, vocoder_volume);
+      left += v * fx_gain;
+      right += v * fx_gain;
+    } else if (fx != VFX_NONE) {
+      float v = vfx_process(fx, fx_in[i], &fx_block) * vocoder_volume;
+      left += v * fx_gain;
+      right += v * fx_gain;
+    }
+    // All of it on the left, folded to mono, the way fluidsynth's endpoints
+    // are panned unless CHANNEL SWAP moves them.
+    out[0][i] += 0.5f * (left + right);
   }
-  whistle_live_gain = gain;
-  whistle_gain_step = step;
+  if (fx != VFX_NONE) {
+    int scaled = (int)(fx_peak * 10000);
+    if (scaled > atomic_load_explicit(&whistle_meter_fx_level,
+                                      memory_order_relaxed)) {
+      atomic_store_explicit(&whistle_meter_fx_level, scaled,
+                            memory_order_relaxed);
+    }
+  }
+  atomic_store_explicit(&whistle_breath_cc,
+                        breathing ? bm_cc(breath) : -1, memory_order_relaxed);
 
   // Meters.  The playing level is an RMS over the analysis window while a
   // note was sounding, which is the number level_full is compared against --
@@ -671,7 +975,10 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
   // time it is called, so storing it outright would publish whichever ~10ms
   // block the UI happened to read last.  The UI drains this instead, so what
   // it shows is the peak since it last looked.
+  // The Blows' is the microphone's own level, since that's what their
+  // full-blow knob is against.
   float peak = engine_take_peak_level(&whistle_engine);
+  if (blowing) peak = (float)blow_level;
   if (peak > 0) {
     int scaled = (int)(peak * 10000);
     int seen = atomic_load_explicit(&whistle_meter_level, memory_order_relaxed);
@@ -703,8 +1010,8 @@ static bool whistle_resolve_voices(void) {
   int count = synth_preset_count();
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     whistle_engine_voice[i] = -1;
-    if (!WHISTLE_VOICES[i].preset) {
-      whistle_engine_voice[i] = WHISTLE_VOCODER;
+    if (WHISTLE_VOICES[i].own) {
+      whistle_engine_voice[i] = WHISTLE_VOICES[i].own;
       continue;
     }
     for (int preset = 0; preset < count; preset++) {
@@ -737,8 +1044,53 @@ static void whistle_select(void) {
   whistle_selected = true;
 }
 
+// That effect over the voice, or none.  None leaves a voice sounding, so the
+// whistle is never left silent.
+static void whistle_choose_fx(int fx) {
+  whistle_fx = fx;
+  if (!whistle_fx) whistle_voice_muted = false;
+  whistle_publish();
+}
+
+// An effect's key: that effect, or off if it was already on.
+static void whistle_set_fx(int fx) {
+  whistle_choose_fx(whistle_fx == fx ? VFX_NONE : fx);
+}
+
+// What F2 says while the whistle's selected.
+static const char* whistle_fx_mic_label(void) {
+  return whistle_fx_mic ? "FX MIC\n2" : "FX MIC\n1";
+}
+
+// The vocal effects onto input `mic`, 0 or 1, if there is one.
+static void whistle_choose_fx_mic(int mic) {
+  if (mic && !whistle_has_second_mic()) return;
+  whistle_fx_mic = mic;
+  whistle_publish();
+}
+
+// F2: the vocal effects over to the other input.
+static void whistle_swap_fx_mic(void) {
+  whistle_choose_fx_mic(!whistle_fx_mic);
+}
+
 static void whistle_set_voice(int index) {
   if (index < 0 || index >= N_WHISTLE_VOICES) return;
+  // M is Blow Noise's layer, on and off over the voice, not a voice.
+  if (WHISTLE_VOICES[index].own == WHISTLE_BREATH_BLOW) {
+    whistle_blow_on = !whistle_blow_on;
+    whistle_publish();
+    return;
+  }
+  // The lit voice again, under the vocoder, silences it.  Not the breath
+  // voices, which are silent already and have M's own second press.
+  if (index == whistle_voice && whistle_fx && !whistle_voice_muted &&
+      whistle_voice_sounds(index)) {
+    whistle_voice_muted = true;
+    whistle_publish();
+    return;
+  }
+  whistle_voice_muted = false;
   whistle_voice = index;
   whistle_publish();
 }
@@ -767,13 +1119,33 @@ static void whistle_reset(void) {
   whistle_on = false;
   whistle_selected = false;
   whistle_voice = 0;
+  whistle_fx = VFX_NONE;
+  whistle_voice_muted = false;
+  whistle_blow_on = false;
   whistle_octave = 0;
   whistle_volume = WHISTLE_VOLUME_DEFAULT;
   whistle_publish();
 }
 
+// Pass what the breath voices hear on to everything the breath controller
+// drives, as if it had come from one: on the tick thread, a change at a time,
+// and a last 0 when they stop so that nothing is left breathing.  A real
+// breath controller plugged in alongside still works; the two just take
+// turns.  Caller must hold the lock.
+static int whistle_breath_sent = -1;
+static void whistle_breath_tick(void) {
+  int cc = atomic_load_explicit(&whistle_breath_cc, memory_order_relaxed);
+  if (cc == whistle_breath_sent) return;
+  if (cc < 0 && whistle_breath_sent > 0) handle_cc(CC_BREATH, 0);
+  if (cc >= 0) handle_cc(CC_BREATH, (unsigned)cc);
+  whistle_breath_sent = cc;
+}
+
 static void whistle_init_state(void) {
   whistle_voice = 0;
+  whistle_fx = VFX_NONE;
+  whistle_voice_muted = false;
+  whistle_blow_on = false;
   whistle_volume = WHISTLE_VOLUME_DEFAULT;
   whistle_octave = 0;
   whistle_on = false;

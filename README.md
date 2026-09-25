@@ -469,18 +469,67 @@ sit within about 3dB of the foot bass, A-weighted, at a strong breath.
 **Trance gate and voice leading** are on the drones: see [The drones'
 pads](#the-drones-pads).
 
-**The Vocoder**, the whistle's voice on `B`, plays the drones' chord with
+**The Vocoder**, on the whistle's `J`, plays the drones' chord with
 whatever goes into the whistle's microphone: saws on the root, third (once
 the feet or a voice have picked the chord, so it's known) and fifth, with
 noise in the top bands for consonants, through 16 bands.  Each note is
 played in six octaves at once under a fixed bell over pitch centred on
 180Hz, like a Shepard tone: a higher chord leans on its lower octaves, so
 changing chord changes the notes but not the register.  A gate that settles
-on the room's noise floor keeps the band in the microphone from droning the
-chord.  The level goes as the square root of the input, so it sits against
+on the room's noise floor -- the quietest the microphone has been in the
+last 20 seconds -- keeps the band in the microphone from droning the chord,
+without taking a long held note for the room.  The level goes as the square root of the input, so it sits against
 the foot bass at about +2 to +12dB across a 10x range of input, and it has its
-own Vocoder volume slider in the Whistle menu, apart from the whistle's.
-The whistle engine keeps listening underneath, for the meters.
+own volume slider in the Vocal FX menu, apart from the whistle's.
+It's a layer rather than a voice: `J` switches it on and off over whichever
+whistle voice is playing, and the two sound together -- or, over a breath
+voice, the vocoder sounds while the breath voice breathes.  The lit voice key
+again, while the vocoder's on, silences the voice and leaves the vocoder
+alone; any voice key brings one back, and so does switching the vocoder off.
+
+**Vocal effects** beside the Vocoder are on the row keys next to it, `J K L`,
+which the whistle has no other use for while it's selected.  Like the
+Vocoder they're layers over the whistle's voice, and only one of the three is
+on at once: its key again switches it off, and the lit voice key again leaves
+it on its own.  They're in `voicefx.h`.
+
+| Key | Effect | |
+|---|---|---|
+| `J` | Vocoder | the chord, played by the voice (above) |
+| `K` | Robot | ring modulated with the chord: its root, with its third (once it's known) and fifth beside it, so it changes colour with the chord as well as pitch |
+| `L` | Voice Bass | a bass an octave under the voice, following its pitch and nothing else: a sub where the voice sings, with the voice itself shifted down the octave on top |
+
+Voice Bass finds the voice's pitch itself -- YIN, 70-700Hz, every 5ms, on the
+input taken down to 12kHz -- since the whistle's detector only covers a
+whistle's range.  The sub is a sine with a little of its octave, so it still
+carries on a PA that can't reproduce the fundamental, gliding after the voice
+over 8ms and following its level.  The voice goes down the octave through a
+two-grain shifter whose grains are three of its periods long.  Where there's
+no pitch, a consonant or a breath, the sub holds the last for 60ms and then
+fades, while the shifted voice carries on.
+
+They share the Vocoder's gate, so the band in the microphone doesn't reach the
+PA through them, its volume slider and the whistle's volume keys, and a gain
+that meets the microphone halfway, as it does.  Like the whistle, they all
+come out of the **left output only**, where fluidsynth's endpoints are unless
+CHANNEL SWAP moves them.  `make voicefx-levels && ./voicefx-levels` plays the
+kept number clips through each and says how loud each came out against the
+Vocoder, A-weighted; they're levelled to within 1dB of it.
+
+**`F2`**, while the whistle's selected, picks which input the Vocoder and the
+effects hear: `FX MIC 1`, the whistle's own, or `FX MIC 2`, the audio
+device's second input, so a vocal mic there can go through them while the
+whistle mic stays on the bass.  The whistle, the breath voices and speech
+recognition always listen to input 1.  It's dead on a device with one input.
+
+**The Vocal FX menu** has all of this apart from the whistle: which effect is
+on (or None), which input it hears, the effects' volume, and a **gate** of
+their own, from -70 to -10dBFS peak, which nothing quieter opens.  That's on
+top of the gate that settles on the room: with a band that never stops, the
+room is the band, and the room gate never shuts it out.  The whistle row
+shows the effects' input as `fx -NNdB` while one is on; set the gate a little
+above what it reads between phrases.  It starts at -54dB, where the gate was
+fixed before, and is remembered.
 
 ### The whistle bass
 
@@ -501,8 +550,11 @@ doesn't know about it and neither does the Pi.
   an endpoint's key selects that endpoint.
 * **While it's selected** the voice keys pick its ten voices -- Bass,
   Octaveless, Reese, 808, FM, Sub FM, Square, Drawbar, High Drawbar, Accordion
-  on `A S D F G H` and `Z X C V` -- or the Vocoder on `B` (see [Builds and
-  drops](#builds-and-drops)), and `]`/`\` and `-`/`=` move its octave
+  on `A S D F G H` and `Z X C V`, or the breath voices on `N` and `M` (see
+  [Breathing into the microphone](#breathing-into-the-microphone)); `J K L`
+  layer the Vocoder, Robot or Voice Bass over whichever it is (see [Builds
+  and drops](#builds-and-drops)); and
+  `]`/`\` and `-`/`=` move its octave
   and its volume.  The per-endpoint flags go dark, because the endpoint they'd
   act on isn't what's on screen.  Shift over any endpoint's key hands the keys
   back.
@@ -514,6 +566,50 @@ The status row under the audio row shows whether it's running, what it's
 listening to, the level the detector is hearing while you play, and the note
 it's currently finding.  A dot fills while the gate is open, so you can see it
 trigger without listening for it.
+
+### Breathing into the microphone
+
+The whistle's `N` and `M` turn the microphone into a **breath
+controller**, so everything the breath drives --
+Flex, the jawharp, the sweeps on `4 6 7`, the Breath Gate and its builds --
+follows what the microphone hears.  Nothing reaches the audience but what the
+breath shapes.  The whistle has to be on (`1`) for them to breathe; switching
+it off, or to another voice, lets the breath come to rest.  A real breath
+controller plugged in alongside still works, the two taking turns.
+
+* **Whistle Breath** (`N`) is how loud you're whistling, counted only while the
+  whistle's pitch detector hears a whistle -- a note inside the whistle's range,
+  above its gate.  Talking is far below that range, so calling chord numbers
+  doesn't breathe.  It has its own **Whistle Breath gate** and **full level**
+  in the Whistle menu, apart from the bass's: a breath wants to start on the
+  quietest whistle and leave room above it to whistle harder, where the bass
+  wants a strict gate and a full level it reaches easily.  They start at 8
+  (6x the room) and 5 (0.220).
+* **Blow Noise** (`M`) is a layer rather than a voice: `M` switches it on and
+  off over whichever whistle voice is playing, so a whistled bass line goes on
+  while you blow, and the status row adds `+blow`.  (Over Whistle Breath,
+  which is silent, Whistle Breath has the breath controller, there being only
+  one.)  It's how hard you're blowing into the microphone, counted
+  as far as what comes in is broad noise: its energy spread evenly across six
+  octaves from 250Hz to 8kHz.  A whistle or a vowel doesn't count, but an "f",
+  "th" or "s", or the breath before a word, does: they're short blows.
+
+Blow Noise answers at once, with nothing waiting to be sure it's a breath,
+and has its own **Blow gate** and **Blow full level** in the Whistle menu: the
+level where breath starts, 0.0028 to begin with, and the level where it's
+full, 0.110.  The status row's level is the microphone's own while it's on:
+set the gate a little above what it shows while you're quiet, and the full
+level a bit above what it shows when you blow hard.  Breath goes evenly in dB
+between the two, and the status row shows the breath being sent.
+
+So calling a chord breathes a little.  `make breathmic-eval &&
+./breathmic-eval` runs both over synthetic noise and over the spoken number
+clips the speech recognizer has kept, and says how much breath each found.  On
+the 151 single numbers so far, at the default knobs: Whistle Breath never
+opened the Breath Gate; Blow Noise opened it on nearly all of them, for about
+460ms, peaking at 67 of 127 on average.  A higher Blow gate trades sensitivity
+for less of that.  Pass it `.wav` or whistle-synth's `.f32`
+recordings to try others.  The detectors are in `breathmic.h`.
 
 ### The Whistle menu
 

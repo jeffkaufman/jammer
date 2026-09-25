@@ -723,6 +723,192 @@ static void test_extra_footbasses() {
 // The whistle is an instrument on this keyboard but not an endpoint, so the
 // thing to check is that the selection actually redirects the shared keys --
 // and, just as much, that it puts them back.
+// A note held into the vocoder keeps sounding: the gate that keeps the room
+// out mustn't take a long note for the room.  It used to, after about five
+// seconds.  And once the note stops, the room alone doesn't drone the chord,
+// even a room that's got louder -- once it's been that loud long enough.
+static double vocoder_rms(double hz, double level, double seconds) {
+  double chord_hz[VOCODER_VOICES], chord_weight[VOCODER_VOICES];
+  int n = vocoder_chord(chord_hz, chord_weight);
+  static double phase;
+  static uint32_t r = 7;
+  double sum = 0;
+  int frames = (int)(48000 * seconds), tail = 4800;
+  for (int i = 0; i < frames; i++) {
+    phase += hz / 48000;
+    if (phase >= 1) phase -= 1;
+    r ^= r << 13;
+    r ^= r >> 17;
+    r ^= r << 5;
+    double room = 0.001 * ((double)r / 2147483648.0 - 1);
+    float in = (float)(level * sin(2 * M_PI * phase) + room);
+    float out = vocoder_process(in, chord_hz, chord_weight, n, 1);
+    if (i >= frames - tail) sum += (double)out * out;
+  }
+  return sqrt(sum / tail);
+}
+
+// Each vocal effect makes a sound of the voice, and none of the room: the
+// gate in front of them keeps the band in the microphone out of the PA.
+static void test_voice_fx() {
+  // Robot rings with the whole chord, the third once it's known.
+  VfxBlock chord;
+  atomic_store(&audio_chord_root, 26);  // D
+  atomic_store(&audio_chord_third, 3);  // minor
+  atomic_store(&audio_chord_fifth, 7);
+  vfx_block(&chord);
+  CHECK(fabs(chord.carrier_hz[0] - midi_hz(50)) < 1e-6 &&
+        fabs(chord.carrier_hz[1] - midi_hz(53)) < 1e-6 &&
+        chord.carrier_weight[1] > 0 &&
+        fabs(chord.carrier_hz[2] - midi_hz(57)) < 1e-6,
+        "Robot should ring D, F and A for D minor");
+  atomic_store(&audio_chord_third, 0);
+  vfx_block(&chord);
+  CHECK(chord.carrier_weight[1] == 0, "and no third before it's known");
+
+  // Voice Bass goes an octave under the voice, whatever the rig is playing:
+  // a voice at 150Hz comes out at 75Hz, over a G bass or any other.
+  atomic_store(&audio_bass_note, 31);   // G, which it should pay no mind
+  vfx_prepare(48000);
+  vfx_block(&chord);
+  static float sung[48000];
+  double phase = 0;
+  for (int i = 0; i < 48000; i++) {
+    phase += 150.0 / 48000;
+    if (phase >= 1) phase -= 1;
+    double v = 0;
+    for (int h = 1; h <= 20; h++) v += sin(2 * M_PI * h * phase) / (h * h);
+    if (i == 24000) atomic_store(&audio_bass_note, 28);  // E, midway
+    sung[i] = vfx_process(VFX_BASS, (float)(0.1 * v), &chord);
+  }
+  CHECK(fabs(vfx.pitch_hz - 150) < 3,
+        "Voice Bass heard %.1fHz for a voice at 150Hz", vfx.pitch_hz);
+  CHECK(fabs(vfx.sub_hz - 75) < 2, "Voice Bass's sub is at %.1fHz, not 75",
+        vfx.sub_hz);
+  // And what comes out is at 75Hz: the lag its last half second best
+  // matches itself at, over a bass's range.
+  int best_lag = 0;
+  double best = -1;
+  for (int lag = 48000 / 200; lag <= 48000 / 50; lag++) {
+    double xy = 0, xx = 0, yy = 0;
+    for (int i = 24000; i < 48000 - lag; i++) {
+      xy += (double)sung[i] * sung[i + lag];
+      xx += (double)sung[i] * sung[i];
+      yy += (double)sung[i + lag] * sung[i + lag];
+    }
+    double r = xy / sqrt(xx * yy + 1e-20);
+    if (r > best) {
+      best = r;
+      best_lag = lag;
+    }
+  }
+  CHECK(fabs(48000.0 / best_lag - 75) < 2,
+        "Voice Bass came out at %.0fHz, not 75", 48000.0 / best_lag);
+  // Without clicks, as the voice's pitch moves and it stops and starts: no
+  // sample jumps further from the last than a smooth signal at that level
+  // could.  Grains that changed length partway through jumped ten times that.
+  vfx_prepare(48000);
+  vfx_block(&chord);
+  double worst = 0, prev = 0;
+  phase = 0;
+  for (int i = 0; i < 48000 * 6; i++) {
+    double t = i / 48000.0, ft = fmod(t, 1.0);
+    double on = fmin(1, fmin(ft / 0.01, fmax(0, (0.8 - ft) / 0.01)));
+    phase += (165 + 35 * sin(2 * M_PI * t / 3)) / 48000;
+    if (phase >= 1) phase -= 1;
+    double v = 0;
+    for (int h = 1; h <= 20; h++) v += sin(2 * M_PI * h * phase) / (h * h);
+    float y = vfx_process(VFX_BASS, (float)(on * 0.1 * v + 0.0005 * sin(i)),
+                          &chord);
+    if (i > 48000 && fabs(y - prev) > worst) worst = fabs(y - prev);
+    prev = y;
+  }
+  CHECK(worst < 0.02, "Voice Bass clicks: a %.3f jump in one sample", worst);
+  atomic_store(&audio_bass_note, 26);
+
+  for (int fx = VFX_ROBOT; fx < N_VFX; fx++) {
+    vfx_prepare(48000);
+    VfxBlock b;
+    vfx_block(&b);
+    static uint32_t r = 3;
+    double voice = 0, room = 0, phase = 0;
+    for (int i = 0; i < 48000 * 4; i++) {
+      r ^= r << 13;
+      r ^= r >> 17;
+      r ^= r << 5;
+      double hiss = 0.001 * ((double)r / 2147483648.0 - 1);
+      // Two seconds of room, then a second of a voice at 150Hz, then the
+      // room again, for as long as a tail might ring.
+      bool talking = i >= 48000 * 2 && i < 48000 * 3;
+      phase += 150.0 / 48000;
+      if (phase >= 1) phase -= 1;
+      double v = 0;
+      for (int h = 1; h <= 20; h++) v += sin(2 * M_PI * h * phase) / (h * h);
+      float in = (float)(hiss + (talking ? 0.1 * v : 0));
+      float out = vfx_process(fx, in, &b);
+      double e = (double)out * out;
+      if (talking) voice += e;
+      else if (i < 48000 * 2) room += e;
+    }
+    voice = sqrt(voice / 48000);
+    room = sqrt(room / (48000 * 2));
+    CHECK(voice > 0.005, "%s is %.4f for a voice", WHISTLE_FX[fx].name, voice);
+    CHECK(room < voice * 0.01, "%s lets the room through: %.4f",
+          WHISTLE_FX[fx].name, room);
+  }
+}
+
+// The effects' own gate: a voice under it doesn't open them, however quiet
+// the room, and one over it does.
+static void test_fx_gate() {
+  for (int db = -20; db >= -40; db -= 20) {
+    room_gate_threshold = pow(10, db / 20.0);
+    RoomGate g;
+    room_gate_init(&g, 48000);
+    double phase = 0, open = 0;
+    for (int i = 0; i < 48000; i++) {
+      phase += 300.0 / 48000;
+      if (phase >= 1) phase -= 1;
+      float in = (float)(i < 24000 ? 0 : 0.03 * sin(2 * M_PI * phase));
+      open = room_gate_run(&g, in);
+    }
+    CHECK(db == -20 ? open == 0 : open == 1,
+          "a -30dB voice against a %ddB gate left it %.2f open", db, open);
+  }
+  room_gate_threshold = pow(10, VFX_GATE_DEFAULT_DB / 20.0);
+
+  // The menu chooses an effect outright, rather than toggling it.
+  whistle_choose_fx(VFX_ROBOT);
+  whistle_choose_fx(VFX_ROBOT);
+  CHECK(atomic_load(&whistle_pub_fx) == VFX_ROBOT,
+        "choosing Robot twice should leave it on");
+  whistle_choose_fx(VFX_NONE);
+  CHECK(atomic_load(&whistle_pub_fx) == VFX_NONE, "None didn't switch it off");
+  whistle_fx_gate_db = -30;
+  whistle_publish();
+  CHECK(atomic_load(&whistle_pub_fx_gate_db) == -30,
+        "the gate didn't reach the audio");
+  whistle_fx_gate_db = VFX_GATE_DEFAULT_DB;
+  whistle_publish();
+}
+
+static void test_vocoder_holds() {
+  vocoder_prepare(48000);
+  vocoder_rms(0, 0, 3);
+  double early = vocoder_rms(1000, 0.05, 1);
+  CHECK(early > 0.01, "the vocoder should sound for a note (%.4f)", early);
+  double late = vocoder_rms(1000, 0.05, 14);
+  CHECK(late > early * 0.5,
+        "a note held 15s into the vocoder faded from %.4f to %.4f", early,
+        late);
+  double room = vocoder_rms(0, 0, 5);
+  CHECK(room < early * 0.05, "the room alone droned the vocoder (%.4f)", room);
+  vocoder_rms(1000, 0.01, 25);
+  double louder = vocoder_rms(1000, 0.01, 1);
+  CHECK(louder < early * 0.05,
+        "a room that got louder still droned it after 25s (%.4f)", louder);
+}
+
 static void test_whistle() {
   full_reset();
   whistle_reset();
@@ -735,7 +921,7 @@ static void test_whistle() {
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     CHECK(whistle_engine_voice[i] > 0 ||
           (!WHISTLE_VOICES[i].preset &&
-           whistle_engine_voice[i] == WHISTLE_VOCODER),
+           whistle_engine_voice[i] == WHISTLE_VOICES[i].own),
           "no preset for whistle voice %s", WHISTLE_VOICES[i].label);
     const Key* key = key_for_cap_note(WHISTLE_VOICES[i].note);
     CHECK(key != NULL, "no key sends %d for %s", WHISTLE_VOICES[i].note,
@@ -769,24 +955,100 @@ static void test_whistle() {
   CHECK(!key_is_selected_endpoint(key_for_cap("R")),
         "no endpoint is selected while the whistle is");
 
-  // The two voice keys the whistle doesn't use do nothing, and say so.
-  strike("N", false);
-  CHECK(whistle_voice == 2, "N should have done nothing");
-  CHECK(c->voices[ENDPOINT_FLEX] == flex_voice, "N reached the endpoint");
-  CHECK(whistle_key_is_dead(key_for_cap("N")), "N should draw as dead");
+  // Every voice key but B is one of the whistle's.
+  CHECK(!whistle_key_is_dead(key_for_cap("N")), "N shouldn't draw as dead");
   CHECK(!whistle_key_is_dead(key_for_cap("D")), "D shouldn't");
-
-  // B is the vocoder, which the engine doesn't know about: it keeps playing
-  // its last voice underneath, for the meters, and the audio is told to
-  // vocode instead.
+  CHECK(whistle_key_is_dead(key_for_cap("B")), "B should");
   strike("B", false);
-  CHECK(strcmp(WHISTLE_VOICES[whistle_voice].label, "Vocoder") == 0 &&
-        lit("B"), "B didn't pick the vocoder");
-  CHECK(atomic_load(&whistle_pub_vocoder) &&
-        atomic_load(&whistle_pub_voice) == WHISTLE_VOCODER,
-        "the audio wasn't told to vocode");
+  CHECK(whistle_voice == 2 && c->voices[ENDPOINT_FLEX] == flex_voice,
+        "B should do nothing");
+
+  // J is the vocoder, which the engine doesn't know about: a layer over
+  // the voice rather than a voice, so the voice keeps playing beside it.
+  strike("J", false);
+  CHECK((atomic_load(&whistle_pub_fx) == VFX_VOCODER) && lit("J") && lit("D") &&
+        whistle_voice == 2, "J should layer the vocoder over Reese");
+  CHECK(atomic_load(&whistle_pub_vocoder_gain) > 0 &&
+        atomic_load(&whistle_pub_target_gain) > 0,
+        "the vocoder and the voice should both be heard");
+  strike("F", false);
+  CHECK((atomic_load(&whistle_pub_fx) == VFX_VOCODER) && lit("J") && lit("F"),
+        "a voice key shouldn't stop the vocoder");
+  // The lit voice again silences it, for the vocoder alone; any voice key
+  // brings one back, and so does switching the vocoder off.
+  strike("F", false);
+  CHECK(atomic_load(&whistle_pub_target_gain) == 0 && !lit("F") &&
+        atomic_load(&whistle_pub_vocoder_gain) > 0,
+        "F again should leave the vocoder on its own");
+  strike("F", false);
+  CHECK(atomic_load(&whistle_pub_target_gain) > 0 && lit("F"),
+        "F a third time should bring the voice back");
+  strike("F", false);
   strike("D", false);
-  CHECK(!atomic_load(&whistle_pub_vocoder), "D didn't stop the vocoder");
+  CHECK(atomic_load(&whistle_pub_target_gain) > 0 && lit("D") &&
+        whistle_voice == 2, "another voice key should bring a voice back");
+  strike("D", false);
+  strike("J", false);
+  CHECK(atomic_load(&whistle_pub_target_gain) > 0 && lit("D") &&
+        !(atomic_load(&whistle_pub_fx) == VFX_VOCODER),
+        "switching the vocoder off shouldn't leave the whistle silent");
+  strike("D", false);
+  CHECK(atomic_load(&whistle_pub_target_gain) > 0,
+        "with no vocoder, the lit voice again shouldn't silence it");
+  strike("J", false);
+  strike("F", false);
+  // Over a breath voice, the vocoder's all there is to hear.
+  strike("N", false);
+  CHECK(atomic_load(&whistle_pub_vocoder_gain) > 0 &&
+        atomic_load(&whistle_pub_target_gain) == 0 &&
+        atomic_load(&whistle_pub_breath) == WHISTLE_BREATH_WHISTLE,
+        "Whistle Breath should breathe under the vocoder, silently");
+  strike("J", false);
+  CHECK(!(atomic_load(&whistle_pub_fx) == VFX_VOCODER) && !lit("J") &&
+        atomic_load(&whistle_pub_vocoder_gain) == 0, "J again didn't stop it");
+  strike("D", false);
+
+  // N and M are the breath voices: the audio's told which to listen for,
+  // and only while the whistle's on.
+  strike("N", false);
+  CHECK(atomic_load(&whistle_pub_breath) == WHISTLE_BREATH_WHISTLE && lit("N"),
+        "N didn't pick Whistle Breath");
+  // Which listens with its own gate and full level, not the bass's.
+  CHECK(atomic_load(&whistle_pub_gate) == whistle_breath_gate &&
+        atomic_load(&whistle_pub_breath_level_full) ==
+          whistle_breath_level_full,
+        "Whistle Breath should use its own gate and full level");
+  CHECK(c->voices[ENDPOINT_FLEX] == flex_voice, "N reached the endpoint");
+  // M is Blow Noise, a layer over the voice: it breathes while the bass
+  // plays, and M again switches it off.
+  strike("D", false);
+  strike("M", false);
+  CHECK(atomic_load(&whistle_pub_breath) == WHISTLE_BREATH_BLOW && lit("M") &&
+        lit("D") && whistle_voice == 2 &&
+        atomic_load(&whistle_pub_target_gain) > 0 &&
+        strcmp(key_current_label(key_for_cap("M")), "Blow\nNoise") == 0,
+        "M should breathe over Reese, with Reese still sounding");
+  strike("M", false);
+  CHECK(atomic_load(&whistle_pub_breath) == 0 && !lit("M") && lit("D"),
+        "M again should switch Blow Noise off");
+  strike("M", false);
+  // Whistle Breath has the breath controller while it's the voice.
+  strike("N", false);
+  CHECK(atomic_load(&whistle_pub_breath) == WHISTLE_BREATH_WHISTLE &&
+        lit("M"), "Whistle Breath should have the breath under Blow Noise");
+  strike("D", false);
+  CHECK(atomic_load(&whistle_pub_breath) == WHISTLE_BREATH_BLOW,
+        "and give it back to Blow Noise after");
+  strike("1", false);
+  CHECK(!whistle_on && atomic_load(&whistle_pub_breath) == 0,
+        "switching the whistle off should stop it breathing");
+  strike("1", false);
+  CHECK(atomic_load(&whistle_pub_breath) == WHISTLE_BREATH_BLOW,
+        "and switching it back on should start it again");
+  strike("M", false);
+  CHECK(atomic_load(&whistle_pub_breath) == 0, "M didn't stop the breathing");
+  CHECK(atomic_load(&whistle_pub_gate) == whistle_gate,
+        "the bass should be back on its own gate");
 
   // Octave and volume act on the whistle, within the engine's limits.
   int flex_octave = c->octave_deltas[ENDPOINT_FLEX];
@@ -821,11 +1083,58 @@ static void test_whistle() {
 
   // Per-endpoint flags are swallowed rather than applied to whoever was
   // selected last.
-  bool flex_chord = c->chord[ENDPOINT_FLEX];
-  strike(",", false);
-  CHECK(c->chord[ENDPOINT_FLEX] == flex_chord,
+  bool flex_doubled = c->doubled[ENDPOINT_FLEX];
+  strike("P", false);
+  CHECK(c->doubled[ENDPOINT_FLEX] == flex_doubled,
         "a modifier key reached an endpoint while the whistle was selected");
-  CHECK(whistle_key_is_dead(key_for_cap(",")), ", should draw as dead");
+  CHECK(whistle_key_is_dead(key_for_cap("P")), "P should draw as dead");
+
+  // J K L are the vocoder and the effects beside it: one at a time, and the
+  // one that's on switches it off.
+  strike("L", false);
+  CHECK(atomic_load(&whistle_pub_fx) == VFX_BASS && lit("L") &&
+        !whistle_key_is_dead(key_for_cap("L")) &&
+        strcmp(key_current_label(key_for_cap("L")), "Voice\nBass") == 0,
+        "L should be Voice Bass");
+  strike("J", false);
+  CHECK(atomic_load(&whistle_pub_fx) == VFX_VOCODER && lit("J") && !lit("L"),
+        "J should replace Voice Bass with the vocoder");
+  strike("K", false);
+  CHECK(atomic_load(&whistle_pub_fx) == VFX_ROBOT && !lit("J") && lit("K"),
+        "K should replace the vocoder with Robot");
+  strike("K", false);
+  CHECK(atomic_load(&whistle_pub_fx) == VFX_NONE && !lit("K"),
+        "K again should switch it off");
+  CHECK(whistle_key_is_dead(key_for_cap(",")), ", should be dead again");
+
+  // F2 moves the effects to the second input -- when there is one.
+  atomic_store(&whistle_input_count, 1);
+  CHECK(whistle_key_is_dead(key_for_cap("F2")),
+        "F2 should be dead with only one input");
+  strike("F2", false);
+  CHECK(!whistle_fx_mic, "F2 shouldn't pick an input that isn't there");
+  atomic_store(&whistle_input_count, 2);
+  CHECK(!whistle_key_is_dead(key_for_cap("F2")) &&
+        strcmp(key_current_label(key_for_cap("F2")), "FX MIC\n1") == 0,
+        "F2 should offer the effects' input with two");
+  strike("F2", false);
+  CHECK(whistle_fx_mic && atomic_load(&whistle_pub_fx_mic) && lit("F2") &&
+        strcmp(key_current_label(key_for_cap("F2")), "FX MIC\n2") == 0,
+        "F2 didn't move the effects to the second input");
+  strike("F2", false);
+  CHECK(!whistle_fx_mic && !atomic_load(&whistle_pub_fx_mic),
+        "F2 again didn't move them back");
+  atomic_store(&whistle_input_count, 0);
+
+  // Both inputs come through the ring together, in step.
+  whistle_ring_reset();
+  float first[4] = {1, 2, 3, 4}, second[4] = {5, 6, 7, 8}, a[4], b[4];
+  whistle_push_input(first, second, 4);
+  whistle_pop_input(a, b, 4);
+  CHECK(a[2] == 3 && b[2] == 7, "the second input didn't come through");
+  whistle_push_input(first, NULL, 4);
+  whistle_pop_input(a, b, 4);
+  CHECK(a[3] == 4 && b[3] == 0, "no second input should read as silence");
 
   // Toggles still toggle, and toggling or shift-selecting an endpoint hands
   // the keys back to it.
@@ -1865,6 +2174,81 @@ static void test_trance_gate() {
   full_reset();
 }
 
+// The breath voices breathe for the breath controller: what the audio hears
+// reaches everything the breath drives, a change at a time, and stopping
+// leaves nothing breathing.
+static void test_whistle_breath_tick() {
+  full_reset();
+  breath = 0;
+  whistle_breath_sent = -1;
+  atomic_store(&whistle_breath_cc, 70);
+  whistle_breath_tick();
+  CHECK(breath == 70, "the breath is %d, not the breath voice's 70", breath);
+  CHECK(flex_breath > 0, "the breath voice didn't reach Flex");
+  atomic_store(&whistle_breath_cc, 30);
+  whistle_breath_tick();
+  CHECK(breath == 30, "the breath didn't follow the breath voice down");
+  // A real breath controller in between isn't fought over tick after tick.
+  handle_cc(CC_BREATH, 90);
+  whistle_breath_tick();
+  CHECK(breath == 90, "an unchanged breath voice overrode the controller");
+  atomic_store(&whistle_breath_cc, -1);
+  whistle_breath_tick();
+  CHECK(breath == 0, "the breath should come to rest when it stops");
+  whistle_breath_tick();
+  CHECK(breath == 0, "and stay there");
+}
+
+// The detectors behind them, which answer at once.  Blow Noise breathes
+// for noise and not for a tone -- a whistle, or a held vowel.  Whistle Breath
+// follows the pitch detector's say-so.
+static double blow_for(BreathMic* m, int kind, double level,
+                       double seconds) {
+  static uint32_t r = 1;
+  double out = 0, phase = 0;
+  for (int i = 0; i < (int)(48000 * seconds); i++) {
+    r ^= r << 13;
+    r ^= r >> 17;
+    r ^= r << 5;
+    double noise = (double)r / 2147483648.0 - 1;
+    // A vowel at 150Hz: its first twenty harmonics, falling off 12dB an
+    // octave the way a voice's do.
+    phase += 150.0 / 48000;
+    if (phase >= 1) phase -= 1;
+    double vowel = 0;
+    for (int h = 1; h <= 20; h++) {
+      vowel += sin(2 * M_PI * h * phase) / (h * h);
+    }
+    double x = kind == 0 ? 0 : kind == 1 ? noise * 1.7 : vowel;
+    float in = (float)(x * level);
+    out = bm_blow_noise(m, in, 0.003, 0.3);
+  }
+  return out;
+}
+
+static void test_breath_mic() {
+  BreathMic m;
+  bm_init(&m, 48000);
+  blow_for(&m, 0, 0, 0.5);
+  int soon = bm_cc(blow_for(&m, 1, 0.1, 0.02));
+  CHECK(soon > 40, "Blow Noise only reached %d 20ms into blowing", soon);
+  int blown = bm_cc(blow_for(&m, 1, 0.1, 0.5));
+  CHECK(bm_cc(blow_for(&m, 1, 0.3, 0.3)) > blown,
+        "blowing harder should breathe harder");
+  CHECK(bm_cc(blow_for(&m, 0, 0, 1.0)) == 0,
+        "stopping should stop the breath");
+  int vowel = bm_cc(blow_for(&m, 2, 0.3, 1.0));
+  CHECK(vowel == 0, "Blow Noise breathes %d for a held vowel", vowel);
+
+  bm_init(&m, 48000);
+  double whistled = 0;
+  for (int i = 0; i < 4800; i++) whistled = bm_whistle(&m, true, 0.08, 0.1);
+  CHECK(bm_cc(whistled) > 90, "a strong whistle only reached %d",
+        bm_cc(whistled));
+  for (int i = 0; i < 48000; i++) whistled = bm_whistle(&m, false, 0.08, 0.1);
+  CHECK(bm_cc(whistled) == 0, "no whistle, no breath");
+}
+
 // The Snare Roll: starts with the breath, speeds up with it, stops with it.
 static void test_snare_roll() {
   full_reset();
@@ -2014,6 +2398,8 @@ int main() {
   test_globals();
   test_kick_duck();
   test_breath_fx();
+  test_whistle_breath_tick();
+  test_breath_mic();
   test_breath_gate();
   test_voice_lead();
   test_voice_lead_first_number();
@@ -2026,6 +2412,9 @@ int main() {
   test_extra_footbasses();
   test_drones();
   test_whistle();
+  test_vocoder_holds();
+  test_voice_fx();
+  test_fx_gate();
   test_speech_picks();
   test_speech_commands();
   test_nashville_numbers();

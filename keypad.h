@@ -72,8 +72,9 @@ static bool global_flag(int flag) {
 //
 // Which keys those are:
 //
-//   voice keys     the ten in WHISTLE_VOICES; the other three do nothing,
-//                  exactly as they do nothing while the drum is selected
+//   voice keys     the twelve in WHISTLE_VOICES; B does nothing
+//   J K L          the vocoder and the vocal effects beside it (voicefx.h)
+//   F2             which input the vocal effects hear, with a second one
 //   ] and \\        octave, within the engine's +/-3
 //   - and =        the engine's own volume knob, 0-9
 //
@@ -91,7 +92,9 @@ static bool whistle_key_is_dead(const Key* key) {
   }
   if (key->group == GROUP_MODIFIER) {
     return key->note != ']' && key->note != '\\' &&
-           key->note != '-' && key->note != '=';
+           key->note != '-' && key->note != '=' &&
+           !whistle_fx_for_note(key->note) &&
+           !(key->note == F2 && whistle_has_second_mic());
   }
   return false;
 }
@@ -134,6 +137,9 @@ static bool whistle_key(const Key* key, bool selecting) {
     case '-':  whistle_bump_volume(-1); return true;
     case '=':  whistle_bump_volume(1);  return true;
     }
+    int fx = whistle_fx_for_note(key->note);
+    if (fx) whistle_set_fx(fx);
+    if (key->note == F2) whistle_swap_fx_mic();
     return true;   // the rest are per-endpoint flags the whistle has no use for
   }
 
@@ -268,8 +274,13 @@ static const char* key_current_label(const Key* key) {
   // The whistle first: while it's selected the voice keys are its, whatever
   // endpoint was selected before it.
   if (whistle_selected && key->group == GROUP_VOICE) {
-    return WHISTLE_VOICES[whistle_voice_for_note(key->note)].label;
+    return whistle_voice_label(whistle_voice_for_note(key->note));
   }
+  if (whistle_selected && whistle_fx_for_note(key->note) &&
+      key->group == GROUP_MODIFIER) {
+    return WHISTLE_FX[whistle_fx_for_note(key->note)].label;
+  }
+  if (whistle_selected && key->note == F2) return whistle_fx_mic_label();
   int drone = drone_voice_on_key(key);
   if (drone >= 0) return DRONE_VOICES[drone].label;
   int breath_voice = breath_voice_on_key(key);
@@ -389,6 +400,9 @@ static int all_spoken_phrases(char (*out)[48], int max) {
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     n = add_spoken_phrases(WHISTLE_VOICES[i].label, out, n, max);
   }
+  for (int fx = VFX_VOCODER; fx < N_VFX; fx++) {
+    n = add_spoken_phrases(WHISTLE_FX[fx].label, out, n, max);
+  }
   return n;
 }
 
@@ -435,10 +449,20 @@ static bool key_is_lit(const Key* key) {
   if (whistle_selected) {
     switch (key->group) {
     case GROUP_VOICE:
-      return whistle_voice_for_note(key->note) == whistle_voice;
+    {
+      int v = whistle_voice_for_note(key->note);
+      if (v >= 0 && WHISTLE_VOICES[v].own == WHISTLE_BREATH_BLOW) {
+        return whistle_blow_on;
+      }
+      return v >= 0 && v == whistle_voice && !whistle_voice_muted;
+    }
     case GROUP_MODIFIER:
       // Only the two the whistle actually uses light; the per-endpoint flags
       // go dark, because what they would be reporting isn't on screen.
+      if (whistle_fx_for_note(key->note)) {
+        return whistle_fx == whistle_fx_for_note(key->note);
+      }
+      if (key->note == F2) return whistle_fx_mic;
       if (key->lit == LIT_OCTAVE) return whistle_octave * key->arg > 0;
       if (key->lit == LIT_VOLUME) {
         return (whistle_volume - WHISTLE_VOLUME_DEFAULT) * key->arg > 0;

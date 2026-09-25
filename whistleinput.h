@@ -474,16 +474,18 @@ static bool whistle_allocate_capture(UInt32 frames, int channels) {
                    sizeof(float));
   if (!whistle_input_block) {
     whistle_input_block = (float*)calloc(WHISTLE_MAX_BLOCK, sizeof(float));
+    whistle_input_block_2 = (float*)calloc(WHISTLE_MAX_BLOCK, sizeof(float));
     whistle_input_block_frames = WHISTLE_MAX_BLOCK;
   }
   if (!whistle_capture_list || !whistle_capture_scratch ||
-      !whistle_input_block) {
+      !whistle_input_block || !whistle_input_block_2) {
     whistle_free_capture();
     whistle_input_fail("out of memory", noErr);
     return false;
   }
   whistle_capture_frames = frames;
   whistle_capture_channels = channels;
+  atomic_store_explicit(&whistle_input_count, channels, memory_order_relaxed);
   return true;
 }
 
@@ -501,8 +503,9 @@ static void whistle_prepare_list(UInt32 frames) {
 }
 
 // Only channel 0 carries the whistle.  Everything else the device offers is
-// ignored rather than mixed in, so an interface with a guitar in input 2
-// doesn't confuse the detector.
+// kept out of it rather than mixed in, so an interface with a guitar in
+// input 2 doesn't confuse the detector -- but channel 1 goes along beside
+// it, for the vocal effects to take if they're asked to (whistle_fx_mic).
 static OSStatus whistle_capture(void* context,
                                 AudioUnitRenderActionFlags* flags,
                                 const AudioTimeStamp* timestamp,
@@ -517,8 +520,11 @@ static OSStatus whistle_capture(void* context,
                       whistle_capture_list) != noErr) {
     return noErr;
   }
-  whistle_push_input((const float*)whistle_capture_list->mBuffers[0].mData,
-                     (int)frames);
+  whistle_push_input(
+    (const float*)whistle_capture_list->mBuffers[0].mData,
+    whistle_capture_channels > 1
+      ? (const float*)whistle_capture_list->mBuffers[1].mData : NULL,
+    (int)frames);
   return noErr;
 }
 

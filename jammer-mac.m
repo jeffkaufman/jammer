@@ -109,12 +109,18 @@ typedef struct {
   int drone_voice[N_KEYS];  // DRONE_VOICES index each key picks, or -1
   int breath_voice[N_KEYS];  // BREATH_VOICES index, or -1
   int whistle_voice;
+  int whistle_fx;
+  bool whistle_blow_on;
+  const char* whistle_fx_mic_label;
+  float fx_level;  // the effects' input, peak, held like whistle_level
+  bool whistle_voice_muted;
   int whistle_octave;
   int whistle_volume;
   double whistle_gain;
   float whistle_level;
   float whistle_freq;
   bool whistle_voiced;
+  int whistle_breath;  // what the breath voices are sending, or -1
   int whistle_dropouts;
   double whistle_latency_ms;
   char whistle_device[WHISTLE_DEVICE_NAME_MAX];
@@ -158,6 +164,21 @@ static void take_snapshot(Snapshot* s) {
   s->whistle_on = whistle_on;
   s->whistle_selected = whistle_selected;
   s->whistle_voice = whistle_voice;
+  s->whistle_fx = whistle_fx;
+  s->whistle_blow_on = whistle_blow_on;
+  s->whistle_fx_mic_label = whistle_fx_mic_label();
+  float fx_level =
+    atomic_exchange_explicit(&whistle_meter_fx_level, 0, memory_order_relaxed)
+      / 10000.0f;
+  static float fx_hold;
+  static uint64_t fx_hold_ns;
+  uint64_t fx_now = now();
+  if (fx_level >= fx_hold || fx_now - fx_hold_ns > 1500000000ULL) {
+    fx_hold = fx_level;
+    fx_hold_ns = fx_now;
+  }
+  s->fx_level = fx_hold;
+  s->whistle_voice_muted = whistle_voice_muted;
   s->whistle_octave = whistle_octave;
   s->whistle_volume = whistle_volume;
   s->whistle_gain = whistle_current_gain();
@@ -183,6 +204,8 @@ static void take_snapshot(Snapshot* s) {
     atomic_load_explicit(&whistle_meter_voiced, memory_order_relaxed) != 0;
   s->whistle_dropouts =
     atomic_load_explicit(&whistle_dropouts, memory_order_relaxed);
+  s->whistle_breath =
+    atomic_load_explicit(&whistle_breath_cc, memory_order_relaxed);
   s->whistle_latency_ms = whistle_latency_ms;
   snprintf(s->whistle_device, sizeof(s->whistle_device), "%s",
            whistle_input_name);
@@ -493,9 +516,20 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   if (snapshot.whistle_selected && key->group == GROUP_VOICE) {
     whistle_voice_index = whistle_voice_for_note(key->note);
     if (whistle_voice_index >= 0) {
-      label = WHISTLE_VOICES[whistle_voice_index].label;
+      label = whistle_voice_label(whistle_voice_index);
       shortname = NULL;
     }
+  }
+  // F2 says which input the vocal effects hear.
+  if (snapshot.whistle_selected && key->note == F2) {
+    label = snapshot.whistle_fx_mic_label;
+    shortname = NULL;
+  }
+  // And its vocal effects take over the row keys it has no other use for.
+  if (snapshot.whistle_selected && key->group == GROUP_MODIFIER &&
+      whistle_fx_for_note(key->note)) {
+    label = WHISTLE_FX[whistle_fx_for_note(key->note)].label;
+    shortname = NULL;
   }
   NSString* text = @(label);  // embedded \n in the table splits lines
 
@@ -730,9 +764,20 @@ static CGFloat text_width(NSString* s, NSFont* font) {
 
   NSMutableString* text = [NSMutableString stringWithString:@"whistle "];
   [text appendFormat:@"%s", snapshot.whistle_on ? "on " : "off"];
-  // Wide enough for "eight-oh-eight".
-  [text appendFormat:@"  %-14s",
-        WHISTLE_VOICES[snapshot.whistle_voice].preset];
+  // Wide enough for "eight-oh-eight+voc".
+  char voice[40];
+  const char* fx = WHISTLE_FX[snapshot.whistle_fx].name;
+  if (snapshot.whistle_voice_muted) {
+    snprintf(voice, sizeof(voice), "%s", fx);
+  } else {
+    snprintf(voice, sizeof(voice), "%s%s%s",
+             whistle_voice_name(snapshot.whistle_voice), fx ? "+" : "",
+             fx ? fx : "");
+  }
+  if (snapshot.whistle_blow_on) {
+    strncat(voice, "+blow", sizeof(voice) - strlen(voice) - 1);
+  }
+  [text appendFormat:@"  %-18s", voice];
   char octave[16] = "";
   if (snapshot.whistle_octave != 0) {
     snprintf(octave, sizeof(octave), "%+doct", snapshot.whistle_octave);
@@ -741,6 +786,14 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   // The level the detector heard while a note was sounding, which is the
   // number the full-blow knob is set against.
   [text appendFormat:@"   lvl %5.3f", snapshot.whistle_level];
+  if (snapshot.whistle_breath >= 0) {
+    [text appendFormat:@"   breath %3d", snapshot.whistle_breath];
+  }
+  // The effects' input, in the units their gate is set in.
+  if (snapshot.whistle_fx) {
+    [text appendFormat:@"   fx %3.0fdB",
+          20 * log10(fmax(snapshot.fx_level, 1e-4))];
+  }
   char heard[16] = "";
   if (snapshot.whistle_voiced && snapshot.whistle_freq > 0) {
     int midi = whistle_hz_to_note(snapshot.whistle_freq);
@@ -1082,6 +1135,7 @@ static void* tick_thread(void* unused) {
   while (true) {
     LOCK();
     jml_tick();
+    whistle_breath_tick();
     UNLOCK();
 
     next += TICK_MS * 1000000LL;
@@ -1184,7 +1238,7 @@ static void flash_from_speech(int key) {
   });
 }
 
-@interface JammerAppDelegate : NSObject <NSApplicationDelegate>
+@interface JammerAppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
 @property(strong) NSWindow* window;
 @property(strong) JammerView* view;
 @property(strong) NSMenu* audioMenu;
@@ -1199,6 +1253,8 @@ static void flash_from_speech(int key) {
 @property(strong) NSSlider* whistleVolumeSlider;
 @property(strong) NSMenuItem* vocoderVolumeItem;
 @property(strong) NSSlider* vocoderVolumeSlider;
+@property(strong) NSMenu* fxMenu;
+@property(strong) NSTextField* fxGateCaption;
 - (void)rebuildAudioMenu;
 - (void)rebuildWhistleMenu;
 @end
@@ -1389,6 +1445,46 @@ static void flash_from_speech(int key) {
   [self rebuildWhistleMenu];
 }
 
+- (void)chooseWhistleBlowLevel:(NSMenuItem*)item {
+  LOCK();
+  whistle_blow_level_full = (int)item.tag;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:whistle_blow_level_full
+                                           forKey:@"whistleBlowLevel"];
+  [self rebuildWhistleMenu];
+}
+
+- (void)chooseWhistleBreathGate:(NSMenuItem*)item {
+  LOCK();
+  whistle_breath_gate = (int)item.tag;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:whistle_breath_gate
+                                           forKey:@"whistleBreathGate"];
+  [self rebuildWhistleMenu];
+}
+
+- (void)chooseWhistleBreathLevel:(NSMenuItem*)item {
+  LOCK();
+  whistle_breath_level_full = (int)item.tag;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:whistle_breath_level_full
+                                           forKey:@"whistleBreathLevel"];
+  [self rebuildWhistleMenu];
+}
+
+- (void)chooseWhistleBlowGate:(NSMenuItem*)item {
+  LOCK();
+  whistle_blow_gate = (int)item.tag;
+  whistle_publish();
+  UNLOCK();
+  [NSUserDefaults.standardUserDefaults setInteger:whistle_blow_gate
+                                           forKey:@"whistleBlowGate"];
+  [self rebuildWhistleMenu];
+}
+
 - (void)chooseWhistleLowNote:(NSMenuItem*)item {
   LOCK();
   whistle_low_note = (int)item.tag;
@@ -1488,7 +1584,7 @@ static void flash_from_speech(int key) {
   if (self.vocoderVolumeItem) return self.vocoderVolumeItem;
   NSSlider* slider = nil;
   self.vocoderVolumeItem =
-    [self sliderMenuItem:@"Vocoder volume"
+    [self sliderMenuItem:@"Vocal FX volume"
                    value:vocoder_gain
                      max:MAX_WHISTLE_GAIN
                   action:@selector(vocoderVolumeChanged:)
@@ -1692,6 +1788,39 @@ static void flash_from_speech(int key) {
             engine_level_full_for_step(step)];
   }]];
 
+  // Whistle Breath's, apart from the bass's: see whistle_breath_gate.
+  [menu addItem:[self knobMenu:@"Whistle Breath gate"
+                       current:whistle_breath_gate
+                        action:@selector(chooseWhistleBreathGate:)
+                        detail:^NSString*(int step) {
+    return [NSString stringWithFormat:@"%d — %.1f× the room", step,
+            whistle_gate_margin(step)];
+  }]];
+  [menu addItem:[self knobMenu:@"Whistle Breath full level"
+                       current:whistle_breath_level_full
+                        action:@selector(chooseWhistleBreathLevel:)
+                        detail:^NSString*(int step) {
+    return [NSString stringWithFormat:@"%d — %.3f", step,
+            engine_level_full_for_step(step)];
+  }]];
+
+  // The Blows', apart: see whistle_blow_level_full.  The status row's level
+  // is the microphone's own while one is on, for setting this against.
+  [menu addItem:[self knobMenu:@"Blow gate"
+                       current:whistle_blow_gate
+                        action:@selector(chooseWhistleBlowGate:)
+                        detail:^NSString*(int step) {
+    return [NSString stringWithFormat:@"%d — %.4f", step,
+            bm_blow_gate_for_step(step)];
+  }]];
+  [menu addItem:[self knobMenu:@"Blow full level"
+                       current:whistle_blow_level_full
+                        action:@selector(chooseWhistleBlowLevel:)
+                        detail:^NSString*(int step) {
+    return [NSString stringWithFormat:@"%d — %.3f", step,
+            engine_level_full_for_step(step)];
+  }]];
+
   [menu addItem:[self noteMenu:@"Lowest note"
                        current:whistle_low_note
                         action:@selector(chooseWhistleLowNote:)]];
@@ -1712,6 +1841,114 @@ static void flash_from_speech(int key) {
   [menu addItem:[NSMenuItem separatorItem]];
   self.whistleVolumeSlider.doubleValue = whistle_gain;
   [menu addItem:[self whistleVolumeMenuItem]];
+}
+
+// ---------------------------------------------------------------------------
+// The Vocal FX menu: the vocoder and its alternatives, apart from the
+// whistle they sit over.  The keys choose them too, while the whistle's
+// selected, so this is rebuilt each time it opens rather than kept in step.
+// ---------------------------------------------------------------------------
+
+- (void)menuNeedsUpdate:(NSMenu*)menu {
+  if (menu == self.fxMenu) [self rebuildFxMenu];
+}
+
+- (void)chooseFx:(NSMenuItem*)item {
+  LOCK();
+  whistle_choose_fx((int)item.tag);
+  UNLOCK();
+  [self.view setNeedsDisplay:YES];
+}
+
+- (void)chooseFxMic:(NSMenuItem*)item {
+  LOCK();
+  whistle_choose_fx_mic((int)item.tag);
+  UNLOCK();
+  [self.view setNeedsDisplay:YES];
+}
+
+- (void)fxGateChanged:(NSSlider*)slider {
+  int db = (int)lround(slider.doubleValue);
+  LOCK();
+  whistle_fx_gate_db = db;
+  whistle_publish();
+  UNLOCK();
+  self.fxGateCaption.stringValue =
+    [NSString stringWithFormat:@"Gate: %d dB", db];
+  [NSUserDefaults.standardUserDefaults setInteger:db forKey:@"fxGate"];
+  [self.view setNeedsDisplay:YES];
+}
+
+- (void)rebuildFxMenu {
+  NSMenu* menu = self.fxMenu;
+  [menu removeAllItems];
+  LOCK();
+  int fx = whistle_fx;
+  int mic = whistle_fx_mic;
+  bool two_mics = whistle_has_second_mic();
+  int gate_db = whistle_fx_gate_db;
+  UNLOCK();
+
+  for (int i = VFX_NONE; i < N_VFX; i++) {
+    NSString* title = @"None";
+    if (i != VFX_NONE) {
+      NSString* label = [[@(WHISTLE_FX[i].label)
+        stringByReplacingOccurrencesOfString:@"-\n" withString:@"-"]
+        stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+      // Its key, while the whistle's selected.
+      title = [NSString stringWithFormat:@"%@   (%c)", label,
+               (char)WHISTLE_FX[i].note];
+    }
+    NSMenuItem* item = [menu addItemWithTitle:title
+                                       action:@selector(chooseFx:)
+                                keyEquivalent:@""];
+    item.target = self;
+    item.tag = i;
+    item.state = i == fx ? NSControlStateValueOn : NSControlStateValueOff;
+  }
+
+  [menu addItem:[NSMenuItem separatorItem]];
+  // Which input they hear: F2, while the whistle's selected.
+  for (int i = 0; i < 2; i++) {
+    NSMenuItem* item =
+      [menu addItemWithTitle:i ? @"Input 2" : @"Input 1 (the whistle's)"
+                      action:@selector(chooseFxMic:)
+               keyEquivalent:@""];
+    item.target = self;
+    item.tag = i;
+    item.enabled = i == 0 || two_mics;
+    item.state = i == mic && (i == 0 || two_mics) ? NSControlStateValueOn
+                                                  : NSControlStateValueOff;
+  }
+  menu.autoenablesItems = NO;
+
+  [menu addItem:[NSMenuItem separatorItem]];
+  NSView* holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 54)];
+  self.fxGateCaption = [NSTextField labelWithString:
+    [NSString stringWithFormat:@"Gate: %d dB", gate_db]];
+  self.fxGateCaption.font = [NSFont menuFontOfSize:0];
+  self.fxGateCaption.textColor = NSColor.labelColor;
+  self.fxGateCaption.frame = NSMakeRect(20, 30, 200, 18);
+  [holder addSubview:self.fxGateCaption];
+  NSSlider* slider = [NSSlider sliderWithValue:gate_db
+                                      minValue:VFX_GATE_MIN_DB
+                                      maxValue:VFX_GATE_MAX_DB
+                                        target:self
+                                        action:@selector(fxGateChanged:)];
+  slider.frame = NSMakeRect(20, 6, 220, 20);
+  slider.continuous = YES;
+  [holder addSubview:slider];
+  NSMenuItem* gate = [[NSMenuItem alloc] init];
+  gate.view = holder;
+  [menu addItem:gate];
+  NSMenuItem* note = [[NSMenuItem alloc]
+    initWithTitle:@"Set it above the fx level the whistle row shows "
+                   "between phrases"
+           action:nil keyEquivalent:@""];
+  note.enabled = NO;
+  [menu addItem:note];
+
+  [menu addItem:[NSMenuItem separatorItem]];
   self.vocoderVolumeSlider.doubleValue = vocoder_gain;
   [menu addItem:[self vocoderVolumeMenuItem]];
 }
@@ -1766,6 +2003,12 @@ static void setup_menu(JammerAppDelegate* delegate) {
   [menubar addItem:whistle_item];
   delegate.whistleMenu = [[NSMenu alloc] initWithTitle:@"Whistle"];
   whistle_item.submenu = delegate.whistleMenu;
+
+  NSMenuItem* fx_item = [NSMenuItem new];
+  [menubar addItem:fx_item];
+  delegate.fxMenu = [[NSMenu alloc] initWithTitle:@"Vocal FX"];
+  delegate.fxMenu.delegate = delegate;
+  fx_item.submenu = delegate.fxMenu;
 
   NSMenuItem* speech_item = [NSMenuItem new];
   [menubar addItem:speech_item];
@@ -1829,6 +2072,23 @@ int main(int argc, const char** argv) {
     }
     if ([defaults objectForKey:@"whistleLevel"]) {
       whistle_level_full = (int)[defaults integerForKey:@"whistleLevel"];
+    }
+    if ([defaults objectForKey:@"fxGate"]) {
+      whistle_fx_gate_db = (int)[defaults integerForKey:@"fxGate"];
+    }
+    if ([defaults objectForKey:@"whistleBreathGate"]) {
+      whistle_breath_gate = (int)[defaults integerForKey:@"whistleBreathGate"];
+    }
+    if ([defaults objectForKey:@"whistleBreathLevel"]) {
+      whistle_breath_level_full =
+        (int)[defaults integerForKey:@"whistleBreathLevel"];
+    }
+    if ([defaults objectForKey:@"whistleBlowGate"]) {
+      whistle_blow_gate = (int)[defaults integerForKey:@"whistleBlowGate"];
+    }
+    if ([defaults objectForKey:@"whistleBlowLevel"]) {
+      whistle_blow_level_full =
+        (int)[defaults integerForKey:@"whistleBlowLevel"];
     }
     if ([defaults objectForKey:@"whistleLowNote"]) {
       whistle_low_note = (int)[defaults integerForKey:@"whistleLowNote"];

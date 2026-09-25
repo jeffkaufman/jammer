@@ -13,3 +13,5 @@ speechphrases
 speechmodel
 speech-model.bin
 numrec-eval
+breathmic-eval
+voicefx-levels

@@ -53,6 +53,7 @@ SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h \
             jammermidilib.h voices.h common.h whistle.h whistleinput.h \
+            breathmic.h voicefx.h \
             speech.h speechwords.h numrec.h numtrain.h numheard.h Info.plist
 
 jammer-mac: $(MAC_SRCS) $(WHISTLE_OBJS)
@@ -101,7 +102,8 @@ app: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
 
 clean-mac:
 	rm -rf jammer-mac $(APP) audition pads speechphrases speechmodel \
-	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval
+	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval \
+	  breathmic-eval voicefx-levels
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
 audition: audition.c macapi.h common.h
@@ -151,6 +153,22 @@ kitlevels: kitlevels.c aweight.h jammermidilib.h voices.h common.h macapi.h
 	clang kitlevels.c -o kitlevels \
 	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
 	  -std=gnu11 -Wall -O2
+
+# Do the whistle's breath voices breathe for blowing and whistling, and not
+# for the spoken chord numbers?  See the top of breathmic-eval.c.
+breathmic-eval: breathmic-eval.c breathmic.h common.h $(WHISTLE_OBJS)
+	clang breathmic-eval.c $(WHISTLE_OBJS) -o breathmic-eval \
+	  -I$(WHISTLE_DIR) -std=gnu11 -Wall -O2
+
+# Do the whistle's vocal effects sit where the vocoder does?  See the top of
+# voicefx-levels.c.
+voicefx-levels: voicefx-levels.c voicefx.h aweight.h $(MAC_SRCS) \
+                $(WHISTLE_OBJS)
+	clang voicefx-levels.c $(WHISTLE_OBJS) -o voicefx-levels \
+	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
+	  -I$(WHISTLE_DIR) \
+	  -framework Carbon -framework IOKit \
+	  -framework AudioToolbox -framework CoreAudio -std=gnu11 -Wall -O2 -w
 
 # Is the whistle at the same perceived volume as the endpoints it plays
 # beside?  See the top of whistlelevels.c.
