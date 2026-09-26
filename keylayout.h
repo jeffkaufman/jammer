@@ -30,6 +30,7 @@ typedef enum {
   LIT_OCTAVE,       // octave_deltas[selected] is nonzero, sign matches arg
   LIT_VOLUME,       // volume_deltas[selected] is nonzero, sign matches arg
   LIT_WHISTLE_ON,   // the whistle bass is switched on
+  LIT_MANDO_ON,     // the mandolin is switched on
 } LitKind;
 
 // Per-endpoint flags in struct Configuration.
@@ -54,7 +55,8 @@ typedef enum {
   GROUP_VOICE,     // pick the instrument for the selected endpoint
   GROUP_MODIFIER,  // per-endpoint behaviour flags
   GROUP_GLOBAL,    // whole-rig settings
-  GROUP_WHISTLE,   // the whistle bass, which is its own synthesis engine
+  GROUP_WHISTLE,   // the whistle bass and the mandolin, which aren't
+                   // fluidsynth's
 } KeyGroup;
 
 typedef struct {
@@ -254,7 +256,11 @@ static const Key KEYS[] = {
   // ---- bottom row: unused modifiers, then the arrows pick the mode --------
   {-1, 0, 0, "fn", FILLER, 5, 0, 1},
   {-1, 0, 0, "ctrl", FILLER, 5, 1, 1},
-  {-1, 0, 0, "opt", FILLER, 5, 2, 1},
+  // The mandolin, on the second input (mandolin.h).  Like the whistle it
+  // sends nothing to handle_keypad, and shift selects it.  Left option only:
+  // the window tells the two apart.
+  {kVK_Option, 0, 0, "opt", "M", "Mando\nlin", GROUP_WHISTLE, LIT_MANDO_ON, 0,
+   NOLABEL, 5, 2, 1},
   {-1, 0, 0, "cmd", FILLER, 5, 3, 1.25},
   {-1, 0, 0, "space", FILLER, 5, 4.25, 5},
   {-1, 0, 0, "cmd", FILLER, 5, 9.25, 1.25},

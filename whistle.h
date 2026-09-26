@@ -44,15 +44,17 @@
 // breathe for the breath controller instead (see breathmic.h): Whistle
 // Breath, a voice of its own, and Blow Noise, which is a layer rather than a
 // voice -- M switches it on and off over whichever voice is playing, so a
-// whistled bass line can go on while you blow.  B is left free.  The vocoder, and the vocal effects beside it, are
-// layers over these rather than voices, on J K L: see WHISTLE_FX.
+// whistled bass line can go on while you blow.  B is Pass Through: the
+// microphone itself, 6dB down, so it's less likely to feed back.  The
+// vocoder, and the vocal effects beside it, are layers over these rather
+// than voices, on J K L: see WHISTLE_FX.
 //
 // Looked up by name at startup rather than by index: the presets table has
 // had entries come and go, and an index that silently shifted would put a
 // different instrument under every key.
 // ---------------------------------------------------------------------------
 
-#define N_WHISTLE_VOICES 12
+#define N_WHISTLE_VOICES 13
 
 typedef struct {
   int note;            // the voice key's pseudo-note, as KEYS[] sends it
@@ -64,6 +66,10 @@ typedef struct {
 // Not whistle-synth's: jammer's own breath voices.
 #define WHISTLE_BREATH_WHISTLE (-3)
 #define WHISTLE_BREATH_BLOW (-4)
+// And the microphone as it comes, the engine's voice 0.
+#define WHISTLE_PASS_THROUGH (-5)
+// How far down, against the voices.
+#define WHISTLE_PASS_THROUGH_GAIN 0.5
 
 static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'A', "bass",           "Bass"},
@@ -78,6 +84,7 @@ static const WhistleVoice WHISTLE_VOICES[N_WHISTLE_VOICES] = {
   {'V', "accordion",      "Accor\ndion"},
   {'N', NULL,             "Whistle\nBreath", WHISTLE_BREATH_WHISTLE},
   {'M', NULL,             "Blow\nNoise", WHISTLE_BREATH_BLOW},
+  {'B', NULL,             "Pass\nThrough", WHISTLE_PASS_THROUGH},
 };
 
 // The vocal effects over the voice: the vocoder and those beside it
@@ -152,6 +159,7 @@ static const char* whistle_voice_name(int index) {
   switch (WHISTLE_VOICES[index].own) {
   case WHISTLE_BREATH_WHISTLE: return "whistle-breath";
   case WHISTLE_BREATH_BLOW:    return "blow-noise";
+  case WHISTLE_PASS_THROUGH:   return "pass-through";
   }
   return WHISTLE_VOICES[index].preset;
 }
@@ -413,9 +421,13 @@ static void whistle_publish(void) {
   atomic_store_explicit(&whistle_pub_high_note, whistle_high_note,
                         memory_order_relaxed);
   bool sounds = whistle_passthrough || whistle_voice_sounds(whistle_voice);
+  double gain = whistle_gain;
+  if (!whistle_passthrough &&
+      WHISTLE_VOICES[whistle_voice].own == WHISTLE_PASS_THROUGH) {
+    gain *= WHISTLE_PASS_THROUGH_GAIN;
+  }
   atomic_store_explicit(&whistle_pub_target_gain,
-                        whistle_on && sounds
-                          ? (int)(whistle_gain * 1000 + 0.5) : 0,
+                        whistle_on && sounds ? (int)(gain * 1000 + 0.5) : 0,
                         memory_order_relaxed);
   atomic_store_explicit(&whistle_pub_vocoder_gain,
                         whistle_on && vocoder
@@ -720,6 +732,8 @@ static void whistle_apply_controls(int frames, double sample_rate) {
   (void)frames;
 }
 
+static void mando_prepare(double rate);  // mandolin.h
+
 // Build the engine for a stream about to start.  Called with no audio
 // running, from the thread that drives the whistle's lifecycle.
 static void whistle_engine_prepare(double sample_rate) {
@@ -737,6 +751,7 @@ static void whistle_engine_prepare(double sample_rate) {
   bm_init(&whistle_breath_mic, sample_rate);
   whistle_applied_breath = 0;
   whistle_ring_reset();
+  mando_prepare(sample_rate);
 }
 
 // ---------------------------------------------------------------------------
@@ -783,12 +798,15 @@ static void whistle_engine_prepare(double sample_rate) {
 // shows.
 #define ROOM_FLOOR_BLOCKS 20
 
-// The audio thread's copy, a linear peak level, from whistle_pub_fx_gate.
+// The audio thread's copy, a linear peak level, from whistle_pub_fx_gate:
+// where each RoomGate starts.  The whistle's effects follow it; the
+// mandolin's have a gate of their own (mandolin.h).
 static double room_gate_threshold = 0.002;
 
 typedef struct {
   double rate;
   double level, floor, gate;
+  double threshold;  // the player's gate, a linear peak level
   double attack, release;
   double block_min[ROOM_FLOOR_BLOCKS];  // each second's quietest
   double older_min;                     // the quietest of those
@@ -799,6 +817,7 @@ typedef struct {
 static void room_gate_init(RoomGate* g, double rate) {
   memset(g, 0, sizeof(*g));
   g->rate = rate;
+  g->threshold = room_gate_threshold;
   g->floor = 0.01;
   // Nothing heard yet, so nothing to hold the floor down but what comes in.
   for (int i = 0; i < ROOM_FLOOR_BLOCKS; i++) g->block_min[i] = 1;
@@ -826,13 +845,13 @@ static double room_gate_run(RoomGate* g, float in) {
     }
   }
   g->floor = fmin(g->current_min, g->older_min);
-  bool open = g->level > 4 * g->floor && g->level > room_gate_threshold;
+  bool open = g->level > 4 * g->floor && g->level > g->threshold;
   double step = open ? 1000 / (g->rate * 5) : 1000 / (g->rate * 60);
   g->gate = open ? fmin(1, g->gate + step) : fmax(0, g->gate - step);
   return g->gate;
 }
 
-static struct {
+typedef struct {
   double rate;
   Bandpass analysis[VOCODER_BANDS], synthesis[VOCODER_BANDS];
   double env[VOCODER_BANDS];
@@ -841,62 +860,64 @@ static struct {
   double saw[VOCODER_VOICES];
   RoomGate room;
   uint32_t noise;
-} vocoder;
+} Vocoder;
 
-static void vocoder_prepare(double sample_rate) {
-  memset(&vocoder, 0, sizeof(vocoder));
-  vocoder.rate = sample_rate;
-  vocoder.noise = 987654321;
-  room_gate_init(&vocoder.room, sample_rate);
+// The whistle's.  The mandolin has one of its own (mandolin.h).
+static Vocoder vocoder;
+
+static void vocoder_prepare(Vocoder* v, double sample_rate) {
+  memset(v, 0, sizeof(*v));
+  v->rate = sample_rate;
+  v->noise = 987654321;
+  room_gate_init(&v->room, sample_rate);
   for (int b = 0; b < VOCODER_BANDS; b++) {
     double hz = VOCODER_LOW_HZ *
       pow((double)VOCODER_HIGH_HZ / VOCODER_LOW_HZ,
           (double)b / (VOCODER_BANDS - 1));
-    bandpass_set(&vocoder.analysis[b], hz, VOCODER_Q, sample_rate);
-    bandpass_set(&vocoder.synthesis[b], hz, VOCODER_Q, sample_rate);
-    vocoder.noise_mix[b] = hz < VOCODER_NOISE_FROM_HZ ? 0.05 : 0.6;
+    bandpass_set(&v->analysis[b], hz, VOCODER_Q, sample_rate);
+    bandpass_set(&v->synthesis[b], hz, VOCODER_Q, sample_rate);
+    v->noise_mix[b] = hz < VOCODER_NOISE_FROM_HZ ? 0.05 : 0.6;
   }
-  vocoder.attack = 1 - exp(-1 / (sample_rate * 0.002));
-  vocoder.release = 1 - exp(-1 / (sample_rate * 0.025));
+  v->attack = 1 - exp(-1 / (sample_rate * 0.002));
+  v->release = 1 - exp(-1 / (sample_rate * 0.025));
 }
 
-static float vocoder_process(float in, const double* carrier_hz,
+static float vocoder_process(Vocoder* v, float in, const double* carrier_hz,
                              const double* carrier_weight, int n,
                              float volume) {
-  double rate = vocoder.rate;
+  double rate = v->rate;
 
-  double gate = room_gate_run(&vocoder.room, in);
+  double gate = room_gate_run(&v->room, in);
 
   // The chord, the weights summing to one.
   double carrier = 0;
-  for (int v = 0; v < n; v++) {
-    double dt = carrier_hz[v] / rate;
-    vocoder.saw[v] += dt;
-    if (vocoder.saw[v] >= 1) vocoder.saw[v] -= 1;
-    carrier += carrier_weight[v] *
-      (2 * vocoder.saw[v] - 1 - poly_blep(vocoder.saw[v], dt));
+  for (int i = 0; i < n; i++) {
+    double dt = carrier_hz[i] / rate;
+    v->saw[i] += dt;
+    if (v->saw[i] >= 1) v->saw[i] -= 1;
+    carrier += carrier_weight[i] *
+      (2 * v->saw[i] - 1 - poly_blep(v->saw[i], dt));
   }
-  uint32_t x = vocoder.noise;
+  uint32_t x = v->noise;
   x ^= x << 13;
   x ^= x >> 17;
   x ^= x << 5;
-  vocoder.noise = x;
+  v->noise = x;
   double noise = (double)x / 2147483648.0 - 1;
 
   double out = 0;
   for (int b = 0; b < VOCODER_BANDS; b++) {
-    double a = fabs(bandpass_run(&vocoder.analysis[b], in));
-    vocoder.env[b] += (a - vocoder.env[b]) *
-                      (a > vocoder.env[b] ? vocoder.attack : vocoder.release);
-    double m = vocoder.noise_mix[b];
-    double c = bandpass_run(&vocoder.synthesis[b],
+    double a = fabs(bandpass_run(&v->analysis[b], in));
+    v->env[b] += (a - v->env[b]) * (a > v->env[b] ? v->attack : v->release);
+    double m = v->noise_mix[b];
+    double c = bandpass_run(&v->synthesis[b],
                             (1 - m) * carrier + m * noise);
-    out += c * vocoder.env[b];
+    out += c * v->env[b];
   }
   // Half way to an even level: out goes as the square root of what comes in,
   // so a quiet microphone still reaches the mix and a loud one doesn't bury
   // it.
-  out *= VOCODER_MAKEUP / sqrt(fmax(vocoder.room.level, 0.01)) * gate;
+  out *= VOCODER_MAKEUP / sqrt(fmax(v->room.level, 0.01)) * gate;
   return (float)(tanh(out) * volume);
 }
 
@@ -929,6 +950,7 @@ static int vocoder_chord(double* hz, double* weight) {
 }
 
 #include "voicefx.h"
+#include "mandolin.h"
 
 // Scratch for one block of input, sized when the stream starts.  Only the
 // audio thread touches it while one is running.
@@ -954,6 +976,8 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
 
   whistle_apply_controls(len, sample_rate);
   whistle_pop_input(whistle_input_block, whistle_input_block_2, len);
+  // The mandolin, on the second input, for mando_add to put on the right.
+  mando_process(whistle_input_block_2, len, sample_rate);
   // What the vocal effects hear: the first input, or the second.  On the
   // first, the whistle's, the guard keeps its whistled notes out of them.
   bool fx_on_second =
@@ -975,12 +999,14 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
   if (vfx.rate != sample_rate) vfx_prepare(sample_rate);
   room_gate_threshold = pow(10, atomic_load_explicit(
     &whistle_pub_fx_gate_db, memory_order_relaxed) / 20.0);
+  vocoder.room.threshold = room_gate_threshold;
+  vfx.room.threshold = room_gate_threshold;
   float fx_peak = 0;
   VfxBlock fx_block;
   if (fx & ~VFX_BIT(VFX_VOCODER)) vfx_block(&fx_block);
   double chord_hz[VOCODER_VOICES], chord_weight[VOCODER_VOICES];
   int chord_notes = vocoder_chord(chord_hz, chord_weight);
-  if (vocoder.rate != sample_rate) vocoder_prepare(sample_rate);
+  if (vocoder.rate != sample_rate) vocoder_prepare(&vocoder, sample_rate);
   float vocoder_volume = (float)(whistle_applied_volume + 1) / 10;
   int breathing = atomic_load_explicit(&whistle_pub_breath,
                                        memory_order_relaxed);
@@ -1028,7 +1054,7 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
       float sum = 0;
       if (fx & VFX_BIT(VFX_VOCODER)) {
         sum += whistle_ramp_next(&fx_ramp[VFX_VOCODER]) *
-          vocoder_process(in, chord_hz, chord_weight, chord_notes,
+          vocoder_process(&vocoder, in, chord_hz, chord_weight, chord_notes,
                           vocoder_volume);
       }
       if (fx & ~VFX_BIT(VFX_VOCODER)) {
@@ -1100,6 +1126,10 @@ static bool whistle_resolve_voices(void) {
   int count = synth_preset_count();
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     whistle_engine_voice[i] = -1;
+    if (WHISTLE_VOICES[i].own == WHISTLE_PASS_THROUGH) {
+      whistle_engine_voice[i] = 0;  // the engine's raw input
+      continue;
+    }
     if (WHISTLE_VOICES[i].own) {
       whistle_engine_voice[i] = WHISTLE_VOICES[i].own;
       continue;
@@ -1114,6 +1144,13 @@ static bool whistle_resolve_voices(void) {
       printf("whistle: no preset named \"%s\"; the %s key will be silent\n",
              WHISTLE_VOICES[i].preset, WHISTLE_VOICES[i].label);
       all_found = false;
+    }
+  }
+  // The mandolin plays the whistle's Bass.
+  for (int i = 0; i < N_WHISTLE_VOICES; i++) {
+    if (WHISTLE_VOICES[i].preset && whistle_engine_voice[i] > 0 &&
+        strcmp(WHISTLE_VOICES[i].preset, "bass") == 0) {
+      mando_bass_engine_voice = whistle_engine_voice[i];
     }
   }
   return all_found;

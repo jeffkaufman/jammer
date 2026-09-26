@@ -127,6 +127,17 @@ typedef struct {
   char whistle_device[WHISTLE_DEVICE_NAME_MAX];
   char whistle_error[256];
 
+  // The mandolin, likewise.
+  bool mando_on;
+  bool mando_selected;
+  bool mando_has_input;
+  unsigned mando_voices;
+  int mando_voice[N_KEYS];  // MANDO_VOICES index each key has, or -1
+  const char* mando_fx_side_label;
+  float mando_level;        // the input, peak, held like fx_level
+  float mando_hz;           // what the tuner last heard, or 0
+  uint64_t mando_heard_ns;  // and when
+
   // Speech recognition (F8).
   char speech_state[160];
   char speech_heard[200];
@@ -145,6 +156,7 @@ static void take_snapshot(Snapshot* s) {
     s->drone_voice[i] = drone_voice_on_key(&KEYS[i]);
     s->breath_voice[i] = breath_voice_on_key(&KEYS[i]);
     s->jawharp_voice[i] = jawharp_voice_on_key(&KEYS[i]);
+    s->mando_voice[i] = mando_voice_on_key(&KEYS[i]);
   }
   int sel = c->selected_endpoint;
   s->selected_endpoint = sel;
@@ -213,6 +225,32 @@ static void take_snapshot(Snapshot* s) {
            whistle_input_name);
   snprintf(s->whistle_error, sizeof(s->whistle_error), "%s",
            whistle_input_error);
+
+  s->mando_on = mando_on;
+  s->mando_selected = mando_selected;
+  s->mando_has_input = whistle_available && mando_has_input();
+  s->mando_voices = mando_voices;
+  s->mando_fx_side_label = mando_fx_side_label();
+  float mando_level =
+    atomic_exchange_explicit(&mando_meter_level, 0, memory_order_relaxed)
+      / 10000.0f;
+  static float mando_hold;
+  static uint64_t mando_hold_ns;
+  if (mando_level >= mando_hold || now_ns - mando_hold_ns > 1500000000ULL) {
+    mando_hold = mando_level;
+    mando_hold_ns = now_ns;
+  }
+  s->mando_level = mando_hold;
+  // The last note the tuner heard stays up a moment after it stops, so a
+  // plucked string can be read as it rings away.
+  float mando_hz =
+    atomic_load_explicit(&mando_meter_hz, memory_order_relaxed) / 100.0f;
+  if (mando_hz > 0) {
+    s->mando_hz = mando_hz;
+    s->mando_heard_ns = now_ns;
+  } else if (now_ns - s->mando_heard_ns > 1500000000ULL) {
+    s->mando_hz = 0;
+  }
 
   snprintf(s->speech_state, sizeof(s->speech_state), "%s", speech_state);
   snprintf(s->speech_heard, sizeof(s->speech_heard), "%s", speech_heard_text);
@@ -432,6 +470,7 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   // whichever endpoint was selected before it.
   bool blank_on_drum = snapshot.selected_endpoint == ENDPOINT_DRUM &&
                        !snapshot.whistle_selected &&
+                       !snapshot.mando_selected &&
                        key->drum_label && key->drum_label[0] == '\0';
   bool unbound = (key->label == NULL) || blank_on_drum || snapshot.dead[i];
   bool selected = snapshot.selected[i];
@@ -537,6 +576,15 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     label = WHISTLE_FX[whistle_fx_for_note(key->note)].label;
     shortname = NULL;
   }
+  // And the mandolin's.
+  if (snapshot.mando_voice[i] >= 0) {
+    label = MANDO_VOICES[snapshot.mando_voice[i]].label;
+    shortname = NULL;
+  }
+  if (snapshot.mando_selected && key->note == F2) {
+    label = snapshot.mando_fx_side_label;
+    shortname = NULL;
+  }
   NSString* text = @(label);  // embedded \n in the table splits lines
 
   // Keys that carry a running value show it instead of a static label -- the
@@ -636,17 +684,19 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   // Line 2: which endpoints are making sound right now, each in a place of
   // its own.
   NSMutableString* playing = [NSMutableString stringWithString:@"on: "];
-  bool any = snapshot.whistle_on;
+  bool any = snapshot.whistle_on || snapshot.mando_on;
   for (int i = 0; i < N_ENDPOINTS; i++) any = any || snapshot.on[i];
-  for (int i = 0; i <= N_ENDPOINTS; i++) {
-    const char* name = i < N_ENDPOINTS ? ENDPOINT_NAMES[i] : "Whistle";
-    bool on = i < N_ENDPOINTS ? snapshot.on[i] : snapshot.whistle_on;
+  for (int i = 0; i <= N_ENDPOINTS + 1; i++) {
+    const char* name = i < N_ENDPOINTS ? ENDPOINT_NAMES[i]
+                     : i == N_ENDPOINTS ? "Whistle" : "Mandolin";
+    bool on = i < N_ENDPOINTS ? snapshot.on[i]
+            : i == N_ENDPOINTS ? snapshot.whistle_on : snapshot.mando_on;
     if (!any && i == 0) {
       [playing appendFormat:@"%-*s", (int)strlen(name), "-"];
     } else {
       [playing appendFormat:@"%-*s", (int)strlen(name), on ? name : ""];
     }
-    if (i < N_ENDPOINTS) [playing appendString:@"  "];
+    if (i < N_ENDPOINTS + 1) [playing appendString:@"  "];
   }
 
   [self drawString:playing
@@ -731,6 +781,155 @@ static CGFloat text_width(NSString* s, NSFont* font) {
              color:[NSColor colorWithSRGBRed:1.00 green:0.63
                                         blue:0.20 alpha:1]
           centered:NO];
+
+  // The mandolin, after it: on or off, and its voices.
+  CGFloat x = VIEW_PAD + text_width(audio, font) + 40;
+  NSMutableString* mando = [NSMutableString stringWithFormat:@"mandolin %s",
+                            snapshot.mando_on ? "on " : "off"];
+  if (!snapshot.mando_has_input) {
+    [mando appendString:@"  no input 2"];
+  } else {
+    char voices[96] = "";
+    for (int v = 0; v < N_MANDO_VOICES; v++) {
+      if (!(snapshot.mando_voices & MANDO_BIT(v))) continue;
+      if (voices[0]) strncat(voices, "+", sizeof(voices) - strlen(voices) - 1);
+      strncat(voices, MANDO_VOICES[v].name,
+              sizeof(voices) - strlen(voices) - 1);
+    }
+    [mando appendFormat:@"  %-24s", voices];
+    // The input, in the units its gate is set in, and where the voices go.
+    [mando appendFormat:@"  in %3.0fdB",
+          20 * log10(fmax(snapshot.mando_level, 1e-4))];
+    if (snapshot.mando_voices & ~(MANDO_BIT(MANDO_TUNER) |
+                                  MANDO_BIT(MANDO_BOOST) |
+                                  MANDO_BIT(MANDO_BREATH))) {
+      [mando appendString:strstr(snapshot.mando_fx_side_label, "LEFT")
+                            ? @"  fx left" : @"  fx right"];
+    }
+  }
+  NSColor* color = group_color(GROUP_WHISTLE);
+  [self drawString:mando
+            inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
+              font:font
+             color:!snapshot.mando_has_input
+                     ? [NSColor colorWithSRGBRed:0.80 green:0.45
+                                            blue:0.45 alpha:1]
+                     : [color colorWithAlphaComponent:
+                          snapshot.mando_on ? 1.0 : 0.6]
+          centered:NO];
+}
+
+// The Tuner's guide, over the top of the keyboard while it's on: the note
+// the mandolin's playing, how far off it is on a needle, and which string
+// that is if it's one of them.
+- (void)drawTuner {
+  NSRect kb = [self keyboardRect];
+  double unit = kb.size.width / N_LAYOUT_COLS;
+  NSRect panel = NSInsetRect(NSMakeRect(kb.origin.x, kb.origin.y,
+                                        kb.size.width, 3 * unit), unit, 4);
+  NSBezierPath* back = [NSBezierPath bezierPathWithRoundedRect:panel
+                                                       xRadius:14
+                                                       yRadius:14];
+  [[NSColor colorWithSRGBRed:0.07 green:0.075 blue:0.09 alpha:0.96] setFill];
+  [back fill];
+  NSColor* pink = group_color(GROUP_WHISTLE);
+  [pink setStroke];
+  back.lineWidth = 2;
+  [back stroke];
+
+  NSColor* dim = [NSColor colorWithWhite:0.45 alpha:1];
+  NSColor* bright = [NSColor colorWithWhite:0.97 alpha:1];
+  double hz = snapshot.mando_hz;
+  double exact = hz > 0 ? 69 + 12 * log2(hz / 440) : 0;
+  int note = (int)lround(exact);
+  double cents = 100 * (exact - note);
+  bool fresh = hz > 0 && snapshot.now_ns - snapshot.mando_heard_ns <
+                           200000000ULL;
+  NSColor* needle_color =
+    fabs(cents) <= 3 ? [NSColor colorWithSRGBRed:0.30 green:0.90
+                                            blue:0.45 alpha:1]
+    : fabs(cents) <= 15 ? [NSColor colorWithSRGBRed:1.00 green:0.85
+                                               blue:0.30 alpha:1]
+    : [NSColor colorWithSRGBRed:1.00 green:0.40 blue:0.35 alpha:1];
+  if (!fresh) needle_color = [needle_color colorWithAlphaComponent:0.45];
+
+  // The note, big, on the left, and the Hz and cents under it.
+  CGFloat h = panel.size.height;
+  NSRect note_rect = NSMakeRect(panel.origin.x + 20, panel.origin.y + 8,
+                                h * 1.1, h * 0.62);
+  [self drawCentered:hz > 0 ? [NSString stringWithFormat:@"%@%d",
+                               note_name(note), note / 12 - 1] : @"–"
+              inRect:note_rect
+                font:ui_font(h * 0.42, NSFontWeightHeavy)
+               color:hz > 0 ? (fresh ? bright : dim) : dim];
+  NSString* detail = hz > 0
+    ? [NSString stringWithFormat:@"%+.0f¢  %.1fHz", cents, hz]
+    : @"play a string";
+  [self drawCentered:detail
+              inRect:NSMakeRect(note_rect.origin.x, NSMaxY(note_rect),
+                                note_rect.size.width, h * 0.2)
+                font:mono_font(h * 0.1, NSFontWeightMedium)
+               color:dim];
+
+  // The needle, -50 to +50 cents.
+  CGFloat left = NSMaxX(note_rect) + 30;
+  CGFloat right = NSMaxX(panel) - 30;
+  CGFloat mid_y = panel.origin.y + h * 0.42;
+  CGFloat span = right - left;
+  for (int c = -50; c <= 50; c += 10) {
+    CGFloat x = left + span * (c + 50) / 100.0;
+    CGFloat tall = c == 0 ? h * 0.26 : (c % 50 == 0 ? h * 0.16 : h * 0.10);
+    [(c == 0 ? bright : dim) setFill];
+    NSRectFill(NSMakeRect(x - (c == 0 ? 1.5 : 1), mid_y - tall / 2,
+                          c == 0 ? 3 : 2, tall));
+  }
+  [[NSColor colorWithWhite:0.25 alpha:1] setFill];
+  NSRectFill(NSMakeRect(left, mid_y - 1, span, 2));
+  if (hz > 0) {
+    CGFloat x = left + span * (fmax(-50, fmin(50, cents)) + 50) / 100.0;
+    [needle_color setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x - 5,
+                                                        mid_y - h * 0.18,
+                                                        10, h * 0.36)
+                                     xRadius:4 yRadius:4] fill];
+  }
+  [self drawString:@"♭"
+            inRect:NSMakeRect(left - 26, mid_y - h * 0.12, 24, h * 0.24)
+              font:ui_font(h * 0.14, NSFontWeightBold)
+             color:dim
+          centered:YES];
+  [self drawString:@"♯"
+            inRect:NSMakeRect(right + 2, mid_y - h * 0.12, 24, h * 0.24)
+              font:ui_font(h * 0.14, NSFontWeightBold)
+             color:dim
+          centered:YES];
+
+  // The four strings, the one it's playing lit.
+  CGFloat string_w = span / 4;
+  for (int i = 0; i < 4; i++) {
+    int open = MANDO_STRINGS[i];
+    bool this_one = hz > 0 && note == open;
+    NSRect r = NSMakeRect(left + i * string_w + string_w * 0.15,
+                          panel.origin.y + h * 0.68,
+                          string_w * 0.7, h * 0.26);
+    NSBezierPath* pill = [NSBezierPath bezierPathWithRoundedRect:r
+                                                         xRadius:8
+                                                         yRadius:8];
+    if (this_one) {
+      [needle_color setFill];
+      [pill fill];
+    } else {
+      [[NSColor colorWithWhite:0.3 alpha:1] setStroke];
+      pill.lineWidth = 1.5;
+      [pill stroke];
+    }
+    [self drawCentered:[NSString stringWithFormat:@"%@%d", note_name(open),
+                        open / 12 - 1]
+                inRect:r
+                  font:ui_font(h * 0.13, NSFontWeightBold)
+                 color:this_one ? [NSColor colorWithWhite:0.06 alpha:1]
+                                : dim];
+  }
 }
 
 // The whistle bass: whether it can run at all, what it's listening to, and
@@ -924,6 +1123,7 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   for (int i = 0; i < N_KEYS; i++) {
     [self drawKey:&KEYS[i] index:i];
   }
+  if (snapshot.mando_voices & MANDO_BIT(MANDO_TUNER)) [self drawTuner];
 }
 
 // ---------------------------------------------------------------------------
@@ -1257,6 +1457,8 @@ static void flash_from_speech(int key) {
 @property(strong) NSSlider* volumeSlider;
 @property(strong) NSMenuItem* altVolumeItem;
 @property(strong) NSSlider* altVolumeSlider;
+@property(strong) NSMenuItem* mandoVolumeItem;
+@property(strong) NSSlider* mandoVolumeSlider;
 @property(strong) NSMenu* whistleMenu;
 @property(strong) NSMenu* speechMenu;
 @property(strong) NSTextField* speechGateCaption;
@@ -1268,6 +1470,7 @@ static void flash_from_speech(int key) {
 @property(strong) NSSlider* vocoderVolumeSlider;
 @property(strong) NSMenu* fxMenu;
 @property(strong) NSTextField* fxGateCaption;
+@property(strong) NSTextField* mandoGateCaption;
 - (void)rebuildAudioMenu;
 - (void)rebuildWhistleMenu;
 @end
@@ -1313,6 +1516,29 @@ static void flash_from_speech(int key) {
     BOOL selecting = (event.modifierFlags & NSEventModifierFlagShift) != 0;
     [self.view strikeKeyAtIndex:index selecting:selecting];
     return nil;
+  }];
+
+  // Left option is the mandolin.  A modifier has no key down of its own,
+  // only a change in the modifier flags, so it's caught here, as it goes
+  // down.  NX_DEVICELALTKEYMASK (0x20) is left option in particular, so
+  // right option does nothing and letting go of either does nothing.
+  [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged
+                                        handler:^NSEvent*(NSEvent* event) {
+    if (event.keyCode != kVK_Option || !(event.modifierFlags & 0x20)) {
+      return event;
+    }
+    if (event.modifierFlags & (NSEventModifierFlagCommand |
+                               NSEventModifierFlagControl)) {
+      return event;
+    }
+    if (event.window && event.window == self.numberReview.window) {
+      return event;
+    }
+    int index = [self.view indexForVirtualKeyCode:kVK_Option];
+    if (index < 0) return event;
+    BOOL selecting = (event.modifierFlags & NSEventModifierFlagShift) != 0;
+    [self.view strikeKeyAtIndex:index selecting:selecting];
+    return event;
   }];
 
   [self rebuildAudioMenu];
@@ -1412,6 +1638,26 @@ static void flash_from_speech(int key) {
   return self.altVolumeItem;
 }
 
+// The mandolin's, all of it: see mando_gain.
+- (void)mandoVolumeChanged:(NSSlider*)slider {
+  set_mando_gain(slider.doubleValue);
+  [NSUserDefaults.standardUserDefaults setDouble:slider.doubleValue
+                                          forKey:@"mandoVolume"];
+}
+
+- (NSMenuItem*)mandoVolumeMenuItem {
+  if (self.mandoVolumeItem) return self.mandoVolumeItem;
+  NSSlider* slider = nil;
+  self.mandoVolumeItem =
+    [self sliderMenuItem:@"Mandolin volume"
+                   value:mando_volume
+                     max:MAX_MANDO_GAIN
+                  action:@selector(mandoVolumeChanged:)
+                  slider:&slider];
+  self.mandoVolumeSlider = slider;
+  return self.mandoVolumeItem;
+}
+
 - (void)rebuildAudioMenu {
   NSMenu* menu = self.audioMenu;
   [menu removeAllItems];
@@ -1433,6 +1679,7 @@ static void flash_from_speech(int key) {
   self.volumeSlider.doubleValue = synth_gain;  // in case it changed elsewhere
   [menu addItem:[self volumeMenuItem]];
   [menu addItem:[self altVolumeMenuItem]];
+  [menu addItem:[self mandoVolumeMenuItem]];
 }
 
 // ---------------------------------------------------------------------------
@@ -1920,6 +2167,42 @@ static void flash_from_speech(int key) {
   [self.view setNeedsDisplay:YES];
 }
 
+- (void)mandoGateChanged:(NSSlider*)slider {
+  int db = (int)lround(slider.doubleValue);
+  LOCK();
+  mando_set_gate(db);
+  UNLOCK();
+  self.mandoGateCaption.stringValue =
+    [NSString stringWithFormat:@"Mandolin gate: %d dB", db];
+  [NSUserDefaults.standardUserDefaults setInteger:db forKey:@"mandoGate"];
+  [self.view setNeedsDisplay:YES];
+}
+
+// A gate slider for the menu, with its caption.
+- (NSMenuItem*)gateItem:(NSString*)caption
+                  value:(int)db
+                 action:(SEL)action
+                 holder:(NSTextField* __strong*)out {
+  NSView* holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 54)];
+  NSTextField* label = [NSTextField labelWithString:caption];
+  label.font = [NSFont menuFontOfSize:0];
+  label.textColor = NSColor.labelColor;
+  label.frame = NSMakeRect(20, 30, 220, 18);
+  [holder addSubview:label];
+  NSSlider* slider = [NSSlider sliderWithValue:db
+                                      minValue:VFX_GATE_MIN_DB
+                                      maxValue:VFX_GATE_MAX_DB
+                                        target:self
+                                        action:action];
+  slider.frame = NSMakeRect(20, 6, 220, 20);
+  slider.continuous = YES;
+  [holder addSubview:slider];
+  NSMenuItem* item = [[NSMenuItem alloc] init];
+  item.view = holder;
+  *out = label;
+  return item;
+}
+
 - (void)rebuildFxMenu {
   NSMenu* menu = self.fxMenu;
   [menu removeAllItems];
@@ -1928,6 +2211,7 @@ static void flash_from_speech(int key) {
   int mic = whistle_fx_mic;
   bool two_mics = whistle_has_second_mic();
   int gate_db = whistle_fx_gate_db;
+  int mando_gate = mando_gate_db;
   UNLOCK();
 
   for (int i = VFX_NONE; i < N_VFX; i++) {
@@ -1965,30 +2249,34 @@ static void flash_from_speech(int key) {
   menu.autoenablesItems = NO;
 
   [menu addItem:[NSMenuItem separatorItem]];
-  NSView* holder = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 54)];
-  self.fxGateCaption = [NSTextField labelWithString:
-    [NSString stringWithFormat:@"Gate: %d dB", gate_db]];
-  self.fxGateCaption.font = [NSFont menuFontOfSize:0];
-  self.fxGateCaption.textColor = NSColor.labelColor;
-  self.fxGateCaption.frame = NSMakeRect(20, 30, 200, 18);
-  [holder addSubview:self.fxGateCaption];
-  NSSlider* slider = [NSSlider sliderWithValue:gate_db
-                                      minValue:VFX_GATE_MIN_DB
-                                      maxValue:VFX_GATE_MAX_DB
-                                        target:self
-                                        action:@selector(fxGateChanged:)];
-  slider.frame = NSMakeRect(20, 6, 220, 20);
-  slider.continuous = YES;
-  [holder addSubview:slider];
-  NSMenuItem* gate = [[NSMenuItem alloc] init];
-  gate.view = holder;
-  [menu addItem:gate];
+  NSTextField* caption;
+  [menu addItem:[self gateItem:[NSString stringWithFormat:@"Gate: %d dB",
+                                gate_db]
+                         value:gate_db
+                        action:@selector(fxGateChanged:)
+                        holder:&caption]];
+  self.fxGateCaption = caption;
   NSMenuItem* note = [[NSMenuItem alloc]
     initWithTitle:@"Set it above the fx level the whistle row shows "
                    "between phrases"
            action:nil keyEquivalent:@""];
   note.enabled = NO;
   [menu addItem:note];
+
+  // The mandolin's voices have their own, since its input is its own.
+  [menu addItem:[NSMenuItem separatorItem]];
+  [menu addItem:[self gateItem:[NSString stringWithFormat:
+                                @"Mandolin gate: %d dB", mando_gate]
+                         value:mando_gate
+                        action:@selector(mandoGateChanged:)
+                        holder:&caption]];
+  self.mandoGateCaption = caption;
+  NSMenuItem* mando_note = [[NSMenuItem alloc]
+    initWithTitle:@"Set it above the mandolin's in level the audio row "
+                   "shows between tunes"
+           action:nil keyEquivalent:@""];
+  mando_note.enabled = NO;
+  [menu addItem:mando_note];
 
   [menu addItem:[NSMenuItem separatorItem]];
   self.vocoderVolumeSlider.doubleValue = vocoder_gain;
@@ -2082,6 +2370,9 @@ int main(int argc, const char** argv) {
     NSNumber* saved_alt_gain =
       [NSUserDefaults.standardUserDefaults objectForKey:@"altChannelGain"];
     if (saved_alt_gain) set_alt_channel_gain(saved_alt_gain.doubleValue);
+    NSNumber* saved_mando_gain =
+      [NSUserDefaults.standardUserDefaults objectForKey:@"mandoVolume"];
+    if (saved_mando_gain) set_mando_gain(saved_mando_gain.doubleValue);
 
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.
@@ -2120,6 +2411,9 @@ int main(int argc, const char** argv) {
     }
     if ([defaults objectForKey:@"fxGate"]) {
       whistle_fx_gate_db = (int)[defaults integerForKey:@"fxGate"];
+    }
+    if ([defaults objectForKey:@"mandoGate"]) {
+      mando_set_gate((int)[defaults integerForKey:@"mandoGate"]);
     }
     if ([defaults objectForKey:@"whistleBreathGate"]) {
       whistle_breath_gate = (int)[defaults integerForKey:@"whistleBreathGate"];
@@ -2164,6 +2458,7 @@ int main(int argc, const char** argv) {
     // safe to install before there is an engine, since it checks.
     whistle_resolve_voices();
     audio_mix_hook = whistle_mix;
+    audio_after_alt_hook = mando_add;
     kick_hook = kick_duck_hit;
     breath_hook = breath_set;
     music_hook = music_set;

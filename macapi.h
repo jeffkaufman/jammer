@@ -111,6 +111,11 @@ static volatile uint64_t audio_frames_rendered = 0;
 static void (*audio_mix_hook)(float** out, int nout, int len,
                               double sample_rate) = NULL;
 
+// And one more, after the right channel's level (alt_channel_gain) has been
+// applied, for what that level is matched against rather than moved by: the
+// mandolin (mandolin.h).  Same rules.
+static void (*audio_after_alt_hook)(float** out, int nout, int len) = NULL;
+
 // What the synth is running at, which is also what any mixed-in engine has to
 // run at.  Set before start_synth to ask for something other than fluidsynth's
 // own default.
@@ -1270,6 +1275,7 @@ static int jammer_audio_render(void* data, int len, int nfx, float** fx,
   if (nout >= 2 && alt != 1.0f) {
     for (int i = 0; i < len; i++) out[1][i] *= alt;
   }
+  if (audio_after_alt_hook) audio_after_alt_hook(out, nout, len);
   return result;
 }
 

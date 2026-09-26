@@ -49,16 +49,12 @@ static void press(const char* cap) {
 }
 
 // The whole dispatch the window does, whistle included, so the tests exercise
-// the routing rather than just the half below it.  Mirrors
-// -[JammerView strikeKeyAtIndex:selecting:].
+// the routing rather than just the half below it: what
+// -[JammerView strikeKeyAtIndex:selecting:] calls.
 static void strike(const char* cap, bool selecting) {
   const Key* key = key_for_cap(cap);
   assert(key && "no such key in the layout");
-  int note = (selecting && key->select_note) ? key->select_note : key->note;
-  if (!whistle_key(key, selecting)) {
-    if (note == ESCAPE) whistle_reset();
-    keypad_key(note);
-  }
+  strike_key_locked(key, selecting);
 }
 
 // Shift + an endpoint's on/off key, which is how you pick which endpoint the
@@ -87,9 +83,10 @@ static void test_layout_is_sane() {
             "unbound key %s still has a note", k->cap);
       continue;
     }
-    // The whistle isn't a fluidsynth channel and doesn't go through
-    // handle_keypad, so its keys deliberately send nothing.
-    bool whistle_key_entry = (k->lit == LIT_WHISTLE_ON);
+    // The whistle and the mandolin aren't fluidsynth channels and don't go
+    // through handle_keypad, so their keys deliberately send nothing.
+    bool whistle_key_entry = (k->lit == LIT_WHISTLE_ON ||
+                              k->lit == LIT_MANDO_ON);
     CHECK(whistle_key_entry || k->note != 0,
           "bound key %s sends nothing", k->cap);
     CHECK(!whistle_key_entry || k->note == 0,
@@ -759,7 +756,7 @@ static double vocoder_rms(double hz, double level, double seconds) {
     r ^= r << 5;
     double room = 0.001 * ((double)r / 2147483648.0 - 1);
     float in = (float)(level * sin(2 * M_PI * phase) + room);
-    float out = vocoder_process(in, chord_hz, chord_weight, n, 1);
+    float out = vocoder_process(&vocoder, in, chord_hz, chord_weight, n, 1);
     if (i >= frames - tail) sum += (double)out * out;
   }
   return sqrt(sum / tail);
@@ -1030,7 +1027,7 @@ static void test_fx_gate() {
 }
 
 static void test_vocoder_holds() {
-  vocoder_prepare(48000);
+  vocoder_prepare(&vocoder, 48000);
   vocoder_rms(0, 0, 3);
   double early = vocoder_rms(1000, 0.05, 1);
   CHECK(early > 0.01, "the vocoder should sound for a note (%.4f)", early);
@@ -1046,6 +1043,545 @@ static void test_vocoder_holds() {
         "a room that got louder still droned it after 25s (%.4f)", louder);
 }
 
+// The mandolin: on from the start, left option on and off and shift-left
+// option to select it, its voices on the keys, and its sound through.
+static void test_mandolin() {
+  full_reset();
+  whistle_reset();
+  mando_reset();
+
+  const Key* opt = key_for_cap("opt");
+  CHECK(opt != NULL && opt->lit == LIT_MANDO_ON && opt->vk == kVK_Option,
+        "left option should be the mandolin");
+  CHECK(mando_on && lit("opt"), "the mandolin should start on");
+
+  strike("opt", false);
+  CHECK(!mando_on && !lit("opt"), "option didn't switch the mandolin off");
+  CHECK(mando_selected && key_is_selected_endpoint(opt),
+        "toggling should select, as it does the whistle");
+  strike("opt", false);
+  CHECK(mando_on, "option didn't switch it back on");
+
+  // Selecting the whistle or an endpoint takes the keys back, and selecting
+  // the mandolin takes them from the whistle.
+  strike("1", true);
+  CHECK(whistle_selected && !mando_selected,
+        "shift-1 should select the whistle instead");
+  strike("opt", true);
+  CHECK(mando_selected && !whistle_selected && mando_on,
+        "shift-option should select the mandolin without switching it");
+  CHECK(!key_is_selected_endpoint(key_for_cap("1")), "nor show the whistle");
+
+  // Its voices, each on and off, and nothing an endpoint's.
+  select_ep("R");
+  strike("opt", true);
+  int flex_voice = c->voices[ENDPOINT_FLEX];
+  for (int v = 0; v < N_MANDO_VOICES; v++) {
+    char cap[2] = {(char)MANDO_VOICES[v].note, 0};
+    const Key* key = key_for_cap_note(MANDO_VOICES[v].note);
+    CHECK(key != NULL && !key_is_dead(key), "%s should be live",
+          MANDO_VOICES[v].name);
+    CHECK(key && strcmp(key_current_label(key), MANDO_VOICES[v].label) == 0,
+          "%s's key should say so", MANDO_VOICES[v].name);
+    strike(key ? key->cap : cap, false);
+    CHECK(mando_voices == MANDO_BIT(v) && key && key_is_lit(key),
+          "%s's key didn't switch it on", MANDO_VOICES[v].name);
+    strike(key ? key->cap : cap, false);
+    CHECK(mando_voices == 0, "%s's key didn't switch it off",
+          MANDO_VOICES[v].name);
+  }
+  CHECK(c->voices[ENDPOINT_FLEX] == flex_voice,
+        "a mandolin voice key changed an endpoint's voice");
+  CHECK(key_is_dead(key_for_cap("G")) && key_is_dead(key_for_cap("K")) &&
+        key_is_dead(key_for_cap("]")), "keys it doesn't use should be dead");
+  bool flex_downbeat = c->downbeat[ENDPOINT_FLEX];
+  strike("J", false);
+  strike("J", false);
+  strike("K", false);
+  CHECK(c->downbeat[ENDPOINT_FLEX] == flex_downbeat,
+        "the row keys should be the mandolin's, not the endpoint's");
+  // F2 moves its voices to the left and back.
+  const Key* f2 = key_for_cap("F2");
+  CHECK(!key_is_dead(f2) && !key_is_lit(f2) &&
+        strcmp(key_current_label(f2), "FX TO\nRIGHT") == 0,
+        "F2 should say the voices are on the right");
+  bool flex_pan = c->pans[ENDPOINT_FLEX];
+  strike("F2", false);
+  CHECK(mando_fx_left && key_is_lit(f2) &&
+        strcmp(key_current_label(f2), "FX TO\nLEFT") == 0,
+        "F2 should move them to the left");
+  CHECK(c->pans[ENDPOINT_FLEX] == flex_pan, "and not swap an endpoint");
+  strike("F2", false);
+  CHECK(!mando_fx_left, "F2 again should bring them back");
+  select_ep("R");
+  strike("R", true);
+  CHECK(!mando_selected, "shift over an endpoint should take the keys back");
+
+  // esc: back to on, with nothing over it.
+  mando_on = false;
+  mando_voices = MANDO_BIT(MANDO_BOOST);
+  mando_fx_left = true;
+  strike("esc", false);
+  CHECK(mando_on && !mando_voices && !mando_selected && !mando_fx_left,
+        "esc should leave the mandolin on and plain");
+}
+
+// A block of the mandolin through, from `in`, `n` samples at 48kHz; the
+// last one's output.
+static float mando_left_peak;  // what mando_run's last block put on the left
+
+static float mando_run(double hz, double amp, int n, bool harmonics) {
+  static float in[480];
+  float last = 0;
+  static double phase;
+  for (int done = 0; done < n; done += 480) {
+    for (int i = 0; i < 480; i++) {
+      phase += hz / 48000;
+      double x = sin(2 * M_PI * phase);
+      if (harmonics) {
+        x += 0.5 * sin(4 * M_PI * phase) + 0.3 * sin(6 * M_PI * phase);
+      }
+      in[i] = (float)(amp * x);
+    }
+    mando_process(in, 480, 48000);
+    last = mando_block[479] + mando_voice_block[479];
+    float left[480] = {0}, right[480] = {0};
+    float* out[2] = {left, right};
+    mando_add(out, 2, 480);
+    mando_left_peak = 0;
+    for (int i = 0; i < 480; i++) {
+      mando_left_peak = fmaxf(mando_left_peak, fabsf(left[i]));
+    }
+    float gain = atomic_load(&mando_gain);  // mando_add's, which it scales by
+    if (!mando_fx_left) {
+      CHECK(mando_left_peak == 0 && fabsf(right[479] - gain * last) < 1e-6,
+            "the mandolin should be on the right alone");
+    } else {
+      CHECK(fabsf(right[479] - gain * mando_block[479]) < 1e-6 &&
+            fabsf(left[479] - gain * mando_voice_block[479]) < 1e-6,
+            "the mandolin on the right and its voices on the left");
+    }
+  }
+  return last;
+}
+
+static void test_mandolin_sound() {
+  mando_reset();
+  mando_prepare(48000);
+
+  // Straight through, then louder, then muted for the tuner, then off.
+  float in = 0;
+  mando_run(440, 0.1, 4800, false);
+  for (int i = 0; i < 480; i++) {
+    CHECK(fabsf(mando_block[i]) <= 0.1001f, "straight through went over");
+  }
+  double peak = 0;
+  for (int i = 0; i < 480; i++) peak = fmax(peak, fabs(mando_block[i]));
+  CHECK(fabs(peak - 0.1) < 0.002, "straight through peaks at %.4f", peak);
+  (void)in;
+
+  mando_voices = MANDO_BIT(MANDO_BOOST);
+  mando_publish();
+  mando_run(440, 0.1, 4800, false);
+  peak = 0;
+  for (int i = 0; i < 480; i++) peak = fmax(peak, fabs(mando_block[i]));
+  CHECK(fabs(20 * log10(peak / 0.1) - 6) < 0.3, "Boost is %+.1fdB, not +6",
+        20 * log10(peak / 0.1));
+
+  // The tuner, to a cent, on each open string and harmonics.
+  mando_voices = MANDO_BIT(MANDO_TUNER) | MANDO_BIT(MANDO_BOOST);
+  mando_publish();
+  for (int s = 0; s < 4; s++) {
+    double hz = 440 * pow(2, (MANDO_STRINGS[s] - 69) / 12.0);
+    mando_run(hz * pow(2, 7 / 1200.0), 0.05, 9600, s % 2);
+    double heard = atomic_load(&mando_meter_hz) / 100.0;
+    double cents = 1200 * log2(heard / hz);
+    CHECK(fabs(cents - 7) < 1.5, "the tuner heard string %d %+.1f cents off,"
+          " not +7", s + 1, cents);
+    peak = 0;
+    for (int i = 0; i < 480; i++) peak = fmax(peak, fabs(mando_block[i]));
+    CHECK(peak < 1e-6, "the tuner should mute the mandolin");
+  }
+  mando_run(440, 0.0001, 9600, false);
+  CHECK(atomic_load(&mando_meter_hz) == 0, "the tuner heard a note in hiss");
+
+  // Bass: the whistle's, reaching down to the mandolin's G.
+  mando_voices = MANDO_BIT(MANDO_BASS);
+  mando_publish();
+  mando_run(196, 0.2, 24000, true);
+  const struct PitchHint* h = &mando.engine.detector.hint;
+  CHECK(h->voiced && fabs(1200 * log2(h->freq / 196)) < 20,
+        "the Bass didn't find a mandolin's G (%s, %.1fHz)",
+        h->voiced ? "voiced" : "unvoiced", h->freq);
+
+  // And the rest make a sound over it: all but Breath FX, which is a
+  // setting.
+  for (int v = MANDO_VOCODER; v < N_MANDO_VOICES; v++) {
+    if (v == MANDO_BREATH || v >= MANDO_DRIVE) continue;
+    mando_prepare(48000);
+    mando_voices = MANDO_BIT(v);
+    mando_publish();
+    float dry[480];
+    mando_run(330, 0.2, 24000, true);
+    memcpy(dry, mando_voice_block, sizeof(dry));
+    // And on the left, with F2.
+    mando_fx_left = true;
+    mando_publish();
+    mando_run(330, 0.2, 4800, true);
+    CHECK(mando_left_peak > 0.05, "%s didn't move to the left",
+          MANDO_VOICES[v].name);
+    mando_fx_left = false;
+    mando_on = true;
+    mando_voices = 0;
+    mando_publish();
+    mando_run(330, 0.2, 4800, true);
+    double diff = 0;
+    for (int i = 0; i < 480; i++) diff = fmax(diff, fabs(dry[i]));
+    CHECK(diff > 0.05, "%s made nothing", MANDO_VOICES[v].name);
+  }
+
+  // Its own gate: a -30dB mandolin under a -20dB gate plays neither of the
+  // voices that make something out of nothing, and over a -40dB one plays
+  // them, whatever the whistle's gate says.  The others pass what comes in,
+  // gate or no gate.
+  int gated[] = {MANDO_VOCODER, MANDO_BASS, MANDO_SYNTH, MANDO_OCTAVE,
+                 MANDO_SHIMMER};
+  for (int g = 0; g < 5; g++) {
+    int v = gated[g];
+    bool gates = v == MANDO_VOCODER || v == MANDO_BASS || v == MANDO_SYNTH;
+    for (int db = -20; db >= -40; db -= 20) {
+      mando_prepare(48000);
+      whistle_fx_gate_db = -60 - db;
+      mando_voices = MANDO_BIT(v);
+      mando_set_gate(db);
+      mando_run(330, 0, 48000, true);
+      mando_run(330, 0.03 / 1.8, 24000, true);
+      peak = 0;
+      for (int i = 0; i < 480; i++) {
+        peak = fmax(peak, fabs(mando_voice_block[i]));
+      }
+      CHECK(db == -20 && gates ? peak < 1e-3 : peak > 1e-3,
+            "a -30dB mandolin against a %ddB gate gave %s %.4f", db,
+            MANDO_VOICES[v].name, peak);
+    }
+  }
+  whistle_fx_gate_db = VFX_GATE_DEFAULT_DB;
+  mando_set_gate(VFX_GATE_DEFAULT_DB);
+
+  // Its volume: all of it, the mandolin and its voices, wherever they go.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_VOCODER);
+  mando_fx_left = true;
+  mando_publish();
+  set_mando_gain(0.5);
+  mando_run(330, 0.2, 24000, true);  // checks both sides are halved
+  CHECK(mando_left_peak > 0.01, "halved, the voices should still be heard");
+  set_mando_gain(1);
+  CHECK(atomic_load(&mando_gain) == MANDO_GAIN_UNIT,
+        "the slider's middle should be where it was set by ear");
+  mando_fx_left = false;
+
+  mando_on = false;
+  mando_publish();
+  mando_run(440, 0.1, 4800, false);
+  peak = 0;
+  for (int i = 0; i < 480; i++) peak = fmax(peak, fabs(mando_block[i]));
+  CHECK(peak < 1e-6, "switched off, the mandolin should be silent");
+  mando_reset();
+}
+
+// A strummed mandolin chord, G3 D4 B4 G5, each string a plucked, decaying
+// saw-ish tone, struck every `period` samples: or, `scratch`, a muted chop,
+// a burst of noise dying in 15ms.  Sample `i`.
+static float mando_strum(long i, long period, bool scratch) {
+  static const double hz[4] = {196.0, 293.66, 493.88, 783.99};
+  long t = i % period;
+  double since = (double)t / 48000;
+  if (scratch) {
+    static uint32_t noise = 12345;
+    noise ^= noise << 13;
+    noise ^= noise >> 17;
+    noise ^= noise << 5;
+    return (float)(0.3 * exp(-since / 0.015) *
+                   ((double)noise / 2147483648.0 - 1));
+  }
+  double x = 0;
+  for (int s = 0; s < 4; s++) {
+    for (int h = 1; h <= 6; h++) {
+      x += sin(2 * M_PI * hz[s] * h * since) / (h * 1.5);
+    }
+  }
+  return (float)(0.06 * exp(-since / 0.4) * x);
+}
+
+// Run `seconds` of strums through, returning the RMS of the right (the
+// mandolin) and of the voices, over the last `measure_s` of it.
+static void mando_strums(double seconds, long period, bool scratch,
+                         double measure_s, double* dry_rms,
+                         double* voice_rms) {
+  long total = (long)(seconds * 48000), from = total -
+    (long)(measure_s * 48000);
+  static long i;
+  double dry = 0, voice = 0;
+  long n = 0;
+  for (long done = 0; done < total; done += 480) {
+    float in[480];
+    for (int k = 0; k < 480; k++) {
+      in[k] = seconds > 0 && period > 0
+        ? mando_strum(i++, period, scratch) : 0;
+    }
+    mando_process(in, 480, 48000);
+    if (done < from) continue;
+    for (int k = 0; k < 480; k++) {
+      dry += mando_block[k] * mando_block[k];
+      voice += mando_voice_block[k] * mando_voice_block[k];
+      n++;
+    }
+  }
+  if (dry_rms) *dry_rms = sqrt(dry / fmax(1, n));
+  if (voice_rms) *voice_rms = sqrt(voice / fmax(1, n));
+}
+
+// The signal's level at `hz`, by Goertzel, over the first `n` of `buf`,
+// Hann windowed so a tone a little off `hz` still counts.
+static double goertzel(const float* buf, int n, double hz) {
+  double k = 2 * cos(2 * M_PI * hz / 48000), a = 0, b = 0;
+  for (int i = 0; i < n; i++) {
+    double w = 0.5 - 0.5 * cos(2 * M_PI * i / n);
+    double c = w * buf[i] + k * a - b;
+    b = a;
+    a = c;
+  }
+  return sqrt(a * a + b * b - k * a * b) / n;
+}
+
+// A second of the mandolin's G through the Bass, and the RMS of the voices
+// over the last half of it.
+static double mando_bass_rms(void) {
+  mando_run(196, 0.2, 24000, true);
+  double sum = 0;
+  for (int b = 0; b < 50; b++) {
+    mando_run(196, 0.2, 480, true);
+    for (int i = 0; i < 480; i++) {
+      sum += mando_voice_block[i] * mando_voice_block[i];
+    }
+  }
+  return sqrt(sum / (50 * 480));
+}
+
+static void test_mandolin_effects() {
+  mando_reset();
+  mando_prepare(48000);
+  double plain, voice;
+  mando_strums(3, 24000, false, 2, &plain, NULL);
+
+  // Breath FX: the voices at 15% with the breath at rest, all of them at
+  // full, and the mandolin itself left alone.
+  double full, rest, dry_rest;
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_OCTAVE);
+  mando_publish();
+  mando_strums(2, 24000, false, 1, NULL, &full);
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_OCTAVE) | MANDO_BIT(MANDO_BREATH);
+  mando_publish();
+  atomic_store(&audio_breath, 0);
+  mando_strums(2, 24000, false, 1, &dry_rest, &rest);
+  CHECK(fabs(rest / full - MANDO_BREATH_LOW) < 0.01,
+        "at rest Breath FX left the voices at %.2f", rest / full);
+  CHECK(fabs(dry_rest / plain - 1) < 0.01, "and moved the mandolin");
+  mando_prepare(48000);
+  atomic_store(&audio_breath, BREATH_FULL);
+  mando_strums(2, 24000, false, 1, NULL, &rest);
+  CHECK(fabs(rest / full - MANDO_BREATH_HIGH) < 0.03,
+        "at full Breath FX left the voices at %.2f", rest / full);
+
+  // And the mandolin itself, through the chain.
+  double chain_full, chain_breath;
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_LESLIE);
+  mando_publish();
+  mando_strums(2, 24000, false, 1, &chain_full, NULL);
+  for (int b = 0; b < 2; b++) {
+    mando_prepare(48000);
+    mando_voices = MANDO_BIT(MANDO_LESLIE) | MANDO_BIT(MANDO_BREATH);
+    mando_publish();
+    atomic_store(&audio_breath, b ? BREATH_FULL : 0);
+    mando_strums(2, 24000, false, 1, &chain_breath, NULL);
+    double want = b ? MANDO_BREATH_HIGH : MANDO_BREATH_LOW;
+    CHECK(fabs(chain_breath / chain_full - want) < 0.03 * want,
+          "Breath FX left the mandolin through Leslie at %.2f, not %.2f",
+          chain_breath / chain_full, want);
+  }
+
+  // And the Bass, a switch: none with no breath, all of it with any.  On a
+  // G string, since its pitch tracker follows one note, not a chord.
+  double bass_full, bass_breath;
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_BASS);
+  mando_publish();
+  bass_full = mando_bass_rms();
+  int breaths[] = {0, BREATH_FLOOR + 2, BREATH_FULL};
+  for (int b = 0; b < 3; b++) {
+    mando_prepare(48000);
+    mando_voices = MANDO_BIT(MANDO_BASS) | MANDO_BIT(MANDO_BREATH);
+    mando_publish();
+    atomic_store(&audio_breath, breaths[b]);
+    bass_breath = mando_bass_rms();
+    double want = b ? 1 : 0;
+    CHECK(fabs(bass_breath / bass_full - want) < 0.02,
+          "with a breath of %d Breath FX left the Bass at %.2f",
+          breaths[b], bass_breath / bass_full);
+  }
+  atomic_store(&audio_breath, 0);
+
+  // Boost: on the voices too.
+  double boosted;
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_OCTAVE) | MANDO_BIT(MANDO_BOOST);
+  mando_publish();
+  mando_strums(2, 24000, false, 1, NULL, &boosted);
+  CHECK(fabs(boosted / full - MANDO_BOOST_GAIN) < 0.02,
+        "Boost took the voices %.2fx", boosted / full);
+
+  // The chain: Leslie at the mandolin's level, Drive 6dB over, and each
+  // doing what it says.
+  static float heard[48000];
+  int chain[] = {MANDO_DRIVE, MANDO_LESLIE};
+  for (int c = 0; c < 2; c++) {
+    mando_prepare(48000);
+    mando_voices = MANDO_BIT(chain[c]);
+    mando_publish();
+    double through;
+    mando_strums(3, 24000, false, 2, &through, &voice);
+    printf("mandolin: %s %+.1fdB against the mandolin\n",
+           MANDO_VOICES[chain[c]].name, 20 * log10(through / plain));
+    double want = chain[c] == MANDO_DRIVE ? 6 : 0;
+    CHECK(fabs(20 * log10(through / plain) - want) < 2 && voice == 0,
+          "%s is %+.1fdB against the mandolin", MANDO_VOICES[chain[c]].name,
+          20 * log10(through / plain));
+  }
+
+  // Drive: a sine comes out with harmonics.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_DRIVE);
+  mando_publish();
+  mando_run(330, 0.1, 9600, false);
+  for (int b = 0; b < 100; b++) {
+    mando_run(330, 0.1, 480, false);
+    memcpy(heard + 480 * b, mando_block, sizeof(float) * 480);
+  }
+  double fundamental = goertzel(heard, 48000, 330);
+  double harmonics = goertzel(heard, 48000, 660) +
+                     goertzel(heard, 48000, 990);
+  CHECK(harmonics > 0.1 * fundamental,
+        "Drive left a sine clean (%.3f of harmonics)",
+        harmonics / fundamental);
+
+  // Leslie: a steady note comes out swinging in level.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_LESLIE);
+  mando_publish();
+  mando_run(2000, 0.1, 9600, false);
+  double lo = 1, hi = 0;
+  for (int b = 0; b < 200; b++) {
+    mando_run(2000, 0.1, 480, false);
+    double rms = 0;
+    for (int i = 0; i < 480; i++) rms += mando_block[i] * mando_block[i];
+    rms = sqrt(rms / 480);
+    lo = fmin(lo, rms);
+    hi = fmax(hi, rms);
+  }
+  CHECK(hi > 1.5 * lo, "the Leslie didn't swing (%.3f to %.3f)", lo, hi);
+
+  // Synth: the chord, whatever the mandolin plays, near its level.
+  atomic_store(&audio_chord_root, 2);  // D major
+  atomic_store(&audio_chord_third, 4);
+  atomic_store(&audio_chord_fifth, 7);
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_SYNTH);
+  mando_publish();
+  mando_strums(3, 24000, false, 2, NULL, &voice);
+  printf("mandolin: synth %+.1fdB against the mandolin\n",
+         20 * log10(voice / plain));
+  CHECK(fabs(20 * log10(voice / plain)) < 6,
+        "the Synth is %+.1fdB against the mandolin",
+        20 * log10(voice / plain));
+  mando_run(440, 0.1, 9600, false);
+  for (int b = 0; b < 100; b++) {
+    mando_run(440, 0.1, 480, false);
+    memcpy(heard + 480 * b, mando_voice_block, sizeof(float) * 480);
+  }
+  double d3 = goertzel(heard, 48000, midi_hz(50));
+  double a_note = goertzel(heard, 48000, 440);
+  double c3 = goertzel(heard, 48000, midi_hz(48));
+  CHECK(d3 > 3 * c3 && d3 > a_note,
+        "the Synth should play D, not what the mandolin does (%.4f %.4f "
+        "%.4f)", d3, a_note, c3);
+  atomic_store(&audio_chord_root, 0);
+  atomic_store(&audio_chord_third, 0);
+  atomic_store(&audio_chord_fifth, 7);
+
+  // Oct Down: a note comes out an octave under.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_OCTAVE);
+  mando_publish();
+  mando_run(440, 0.1, 24000, false);
+  static float got[480 * 20];
+  for (int b = 0; b < 20; b++) {
+    mando_run(440, 0.1, 480, false);
+    memcpy(got + 480 * b, mando_voice_block, sizeof(float) * 480);
+  }
+  double under = goertzel(got, 9600, 220), same = goertzel(got, 9600, 440);
+  CHECK(under > 4 * same, "Oct Down gave %.4f at 220Hz and %.4f at 440",
+        under, same);
+  // And in tune: the loudest it is anywhere near is right on 220Hz.
+  double best = 0, at = 0;
+  for (double f = 200; f <= 240; f += 0.5) {
+    double g = goertzel(got, 9600, f);
+    if (g > best) {
+      best = g;
+      at = f;
+    }
+  }
+  CHECK(fabs(1200 * log2(at / 220)) < 10, "Oct Down played %.1fHz for 220",
+        at);
+  mando_prepare(48000);
+  mando_strums(3, 24000, false, 2, NULL, &voice);
+  printf("mandolin: oct down %+.1fdB against the mandolin\n",
+         20 * log10(voice / plain));
+  CHECK(fabs(20 * log10(voice / plain)) < 6,
+        "Oct Down is %+.1fdB against the mandolin", 20 * log10(voice / plain));
+
+  // Shimmer: rings after pitched strums, hardly at all after scratches of
+  // as much level, and rings on after it's switched off, until it dies.
+  double scratch_dry, pitched_dry, scratched, pitched;
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_SHIMMER);
+  mando_publish();
+  mando_strums(3, 12000, true, 2, &scratch_dry, &scratched);
+  mando_prepare(48000);
+  mando_strums(3, 12000, false, 2, &pitched_dry, &pitched);
+  printf("mandolin: shimmer %+.1fdB against the mandolin, scratches "
+         "%+.1fdB\n", 20 * log10(pitched / pitched_dry),
+         20 * log10(scratched / scratch_dry));
+  CHECK(pitched / pitched_dry > 8 * (scratched / scratch_dry),
+        "Shimmer took scratches (%.4f) nearly as well as chords (%.4f)",
+        scratched / scratch_dry, pitched / pitched_dry);
+  CHECK(fabs(20 * log10(pitched / pitched_dry) + 4) < 3,
+        "Shimmer is %+.1fdB against the mandolin",
+        20 * log10(pitched / pitched_dry));
+  mando_voices = 0;
+  mando_publish();
+  double tail;
+  mando_strums(0.5, 0, false, 0.2, NULL, &tail);
+  CHECK(tail > pitched * 0.05, "Shimmer's tail should ring on (%.4f)", tail);
+  mando_strums(20, 0, false, 1, NULL, &tail);
+  CHECK(tail < 1e-4, "Shimmer's tail should die away, not build (%.5f)",
+        tail);
+  mando_reset();
+}
+
 static void test_whistle() {
   full_reset();
   whistle_reset();
@@ -1058,7 +1594,9 @@ static void test_whistle() {
   for (int i = 0; i < N_WHISTLE_VOICES; i++) {
     CHECK(whistle_engine_voice[i] > 0 ||
           (!WHISTLE_VOICES[i].preset &&
-           whistle_engine_voice[i] == WHISTLE_VOICES[i].own),
+           whistle_engine_voice[i] == WHISTLE_VOICES[i].own) ||
+          (WHISTLE_VOICES[i].own == WHISTLE_PASS_THROUGH &&
+           whistle_engine_voice[i] == 0),
           "no preset for whistle voice %s", WHISTLE_VOICES[i].label);
     const Key* key = key_for_cap_note(WHISTLE_VOICES[i].note);
     CHECK(key != NULL, "no key sends %d for %s", WHISTLE_VOICES[i].note,
@@ -1092,13 +1630,24 @@ static void test_whistle() {
   CHECK(!key_is_selected_endpoint(key_for_cap("R")),
         "no endpoint is selected while the whistle is");
 
-  // Every voice key but B is one of the whistle's.
+  // Every voice key is one of the whistle's: B passes the microphone
+  // through, as the engine's voice 0, 6dB under the whistle's level.
   CHECK(!whistle_key_is_dead(key_for_cap("N")), "N shouldn't draw as dead");
   CHECK(!whistle_key_is_dead(key_for_cap("D")), "D shouldn't");
-  CHECK(whistle_key_is_dead(key_for_cap("B")), "B should");
+  CHECK(!whistle_key_is_dead(key_for_cap("B")), "B shouldn't");
+  int before = atomic_load(&whistle_pub_target_gain);
   strike("B", false);
-  CHECK(whistle_voice == 2 && c->voices[ENDPOINT_FLEX] == flex_voice,
-        "B should do nothing");
+  CHECK(WHISTLE_VOICES[whistle_voice].own == WHISTLE_PASS_THROUGH &&
+        lit("B") && !lit("D") && c->voices[ENDPOINT_FLEX] == flex_voice,
+        "B should pick Pass Through");
+  CHECK(atomic_load(&whistle_pub_voice) == 0,
+        "Pass Through should be the engine's raw input");
+  CHECK(abs(2 * atomic_load(&whistle_pub_target_gain) - before) <= 1,
+        "Pass Through should be 6dB down (%d against %d)",
+        atomic_load(&whistle_pub_target_gain), before);
+  strike("D", false);
+  CHECK(whistle_voice == 2 && atomic_load(&whistle_pub_target_gain) == before,
+        "D should bring Reese back at its level");
 
   // J is the vocoder, which the engine doesn't know about: a layer over
   // the voice rather than a voice, so the voice keeps playing beside it.
@@ -1828,13 +2377,15 @@ static void test_speech_dictionary() {
   full_reset();
   static char known[1024][SW_NAME_MAX];
   int n_known = 0;
-  for (int state = 0; state < 6; state++) {
+  for (int state = 0; state < 7; state++) {
     whistle_reset();
+    mando_reset();
     c->selected_endpoint = state == 1 ? ENDPOINT_DRUM :
                            state == 2 ? ENDPOINT_DRONE_BASS :
                            state == 4 ? ENDPOINT_BREATH :
                            state == 5 ? ENDPOINT_JAWHARP : ENDPOINT_FLEX;
     if (state == 3) whistle_selected = true;
+    if (state == 6) mando_selected = true;
     static char names[256][SW_NAME_MAX];
     static int keys[256];
     int n = key_spoken_names(names, keys, 256);
@@ -3118,7 +3669,7 @@ static void test_breath_sounds_follow_ch() {
 // The vocoder: the chord, shaped by the microphone, and nothing when the
 // microphone is quiet.
 static void test_vocoder() {
-  vocoder_prepare(48000);
+  vocoder_prepare(&vocoder, 48000);
   double hz[VOCODER_VOICES], weight[VOCODER_VOICES];
   int n = vocoder_chord(hz, weight);
   CHECK(n >= 2 * VOCODER_OCTAVES, "the vocoder's chord has %d notes", n);
@@ -3144,13 +3695,13 @@ static void test_vocoder() {
   n = vocoder_chord(hz, weight);
   double quiet = 0, loud = 0;
   for (int i = 0; i < 48000; i++) {
-    float out = vocoder_process(0, hz, weight, n, 1);
+    float out = vocoder_process(&vocoder, 0, hz, weight, n, 1);
     if (i > 24000) quiet += out * out;
   }
   // A held note, which shouldn't be taken for the room however long it goes.
   for (int i = 0; i < 48000 * 4; i++) {
     float in = (float)(0.1 * sin(2 * M_PI * 440 * i / 48000.0));
-    float out = vocoder_process(in, hz, weight, n, 1);
+    float out = vocoder_process(&vocoder, in, hz, weight, n, 1);
     CHECK(isfinite(out), "the vocoder blew up");
     if (i > 48000 * 3) loud += out * out;
   }
@@ -3200,6 +3751,9 @@ int main() {
   test_extra_footbasses();
   test_drones();
   test_whistle();
+  test_mandolin();
+  test_mandolin_sound();
+  test_mandolin_effects();
   test_vocoder_holds();
   test_voice_fx();
   test_fx_gate();

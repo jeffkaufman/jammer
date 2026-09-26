@@ -57,7 +57,7 @@ static double loudness(int fx, const float* clip, long n) {
   float* out = calloc(total, sizeof(float));
   double chord_hz[VOCODER_VOICES], chord_weight[VOCODER_VOICES];
   int chord_notes = vocoder_chord(chord_hz, chord_weight);
-  vocoder_prepare(RATE);
+  vocoder_prepare(&vocoder, RATE);
   vfx_prepare(RATE);
   VfxBlock b;
   audio_block_ns = 1000000000ULL;
@@ -67,7 +67,8 @@ static double loudness(int fx, const float* clip, long n) {
     float in = i < lead ? (room ? clip[i % room] : 0)
              : i < lead + n ? clip[i - lead] : 0;
     float l = fx == VFX_VOCODER
-      ? vocoder_process(in, chord_hz, chord_weight, chord_notes, 1)
+      ? vocoder_process(&vocoder, in, chord_hz, chord_weight, chord_notes,
+                        1)
       : vfx_process(fx, in, &b);
     out[i] = i < lead ? 0 : l;
   }

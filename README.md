@@ -233,6 +233,8 @@ the physical keyboard in the middle, and what it actually does underneath:
   mode.
 * **`1`** (pink) is the whistle bass, which is its own synthesis engine rather
   than a fluidsynth channel -- see below.
+* **Left `option`** (pink, `M`) is the mandolin, on the audio device's second
+  input -- see [The mandolin](#the-mandolin).
 
 Click the key signature at the top left to play in another key.  You can click
 keyboard keys with the mouse too, shift-clicking to select.
@@ -641,7 +643,9 @@ doesn't know about it and neither does the Pi.
 * **While it's selected** the voice keys pick its ten voices -- Bass,
   Octaveless, Reese, 808, FM, Sub FM, Square, Drawbar, High Drawbar, Accordion
   on `A S D F G H` and `Z X C V`, or the breath voices on `N` and `M` (see
-  [Breathing into the microphone](#breathing-into-the-microphone)); `J K L ; '`
+  [Breathing into the microphone](#breathing-into-the-microphone)), or
+  **Pass Through** on `B`: the microphone itself, 6dB under the whistle's
+  level so it's less likely to feed back; `J K L ; '`
   layer the Vocoder or one of the effects beside it over whichever it is (see [Builds
   and drops](#builds-and-drops)); and
   `]`/`\` and `-`/`=` move its octave
@@ -656,6 +660,63 @@ The status row under the audio row shows whether it's running, what it's
 listening to, the level the detector is hearing while you play, and the note
 it's currently finding.  A dot fills while the gate is open, so you can see it
 trigger without listening for it.
+
+### The mandolin
+
+Left `option` is the mandolin: whatever comes into the audio device's second
+input, played out of the **right** channel, the alternate one, which goes to
+the talkbox the mandolin shares.  Everything else only reaches the right when
+`CH` puts it there; the mandolin always does.  It's on from the start; left
+`option` switches it off and on, and shift-left `option` selects it, the way
+`1` and shift-`1` do the whistle.  Right `option` does nothing.  Like the
+whistle it isn't an endpoint, and there's none of it on the Pi
+(`mandolin.h`).
+
+While it's selected its voices are on the keys, each on and off by itself,
+any of them at once, and the mandolin plays under all of them but the Tuner:
+
+| key | voice | |
+|---|---|---|
+| `Z` | Tuner | mutes it, all of it, and puts a tuning guide over the top of the keyboard: the note, a needle from -50 to +50 cents, and which of G D A E it is |
+| `X` | Boost | about 6dB louder, the mandolin and everything on it |
+| `J` | Vocoder | the whistle's, played by the mandolin, 9dB hotter than it comes in |
+| `A` | Bass | the whistle's Bass voice, following the mandolin down to 190Hz, just under its G, and two octaves under it, so the low G is a bass's G1; the mandolin goes into it 15dB hotter than it comes in |
+| `S` | Synth | a synth pedal: jammer's chord -- its root from C2 up and an octave above, its third and fifth -- in pairs of detuned saws through a resonant lowpass, played by the mandolin: as loud as it's played, the filter from 200Hz to 5kHz over the 40dB above the gate, so each strum is a stab and each chop a blip.  The chord the feet or a voice chose, so it's in tune whatever you voice |
+| `D` | Oct Down | every note of the chord an octave down at once, beside it: 36 narrow bands, each turned at half its own speed, so it's in tune for a chord where a grain shifter can't be |
+| `F` | Shimmer | a reverb whose tail climbs an octave each time round, fed only what's pitched -- how periodic the last 20ms has been -- so scratches stay dry; switched off, it rings on |
+| `C` | Breath FX | a setting rather than a sound: the breath controller (or the whistle's breath voices) sets how loud the effects are, from 15% at rest to 300% at full -- the voices, and the mandolin itself while it's going through Drive or Leslie.  The plain mandolin is left alone.  The Bass it switches instead: no breath, no bass, and any breath at all, all of it |
+
+And on the rest of the bottom row, effects on the mandolin itself rather
+than voices beside it, one after the other in a pedalboard's order, each
+crossfaded in and out:
+
+| key | effect | |
+|---|---|---|
+| `V` | Drive | an overdrive, a Tube Screamer's shape: the lows kept out, the mids pushed hard into a soft clip that's a little uneven, and a lowpass after for the fizz, 6dB over the mandolin.  Set for an electric mandolin into an interface's instrument input, around -20dB peak |
+| `N` | Leslie | a Leslie at fast: horn and drum split at 800Hz, spinning at 6.8 and 5.9 times a second, each swinging in pitch and level |
+
+They're at about the mandolin's own level (Shimmer 4dB under), from
+`make test-mac`'s synthesized strums; by ear is still to do.
+
+The voices go to the right with the mandolin, unless `F2`
+(`CH`), while it's selected, moves them to the left; the mandolin itself
+stays on the right.  esc brings them back.
+
+The copied ones are instances of their own, so the whistle's can run at the
+same time on input 1.  They have a gate of their own, **Mandolin gate** in the
+Vocal FX menu, under the whistle effects' one and working the same way, from
+-70 to -10dBFS peak and remembered.  It's only for the three that make
+something out of nothing: the Bass, whose pitch tracker would play the room
+as notes, and goes through it ahead of its own detector and its 15dB; the
+Vocoder, which brings a quiet input up, and whose gate is moved up by its
+9dB, so it goes by the mandolin as it comes in too; and the Synth, which
+would play the chord from the room.  The rest pass what
+comes in, and quiet in is quiet out.  The audio row shows the
+mandolin's input as `in -NNdB`; set the gate a little above what it reads
+between tunes.  The mandolin is summed in after the alternate channel volume,
+since that's what everything else on the right is matched against.  The
+audio row also says whether it's on, which voices are, where they're going,
+and "no input 2" on a device without one.
 
 ### Breathing into the microphone
 
@@ -847,11 +908,14 @@ The Audio Output menu lists the CoreAudio devices and carries a global volume
 slider on top of the per-voice levels in `voices.h`.  Under it, "Alternate
 channel volume" sets the right channel -- where `CH` sends a voice -- as a
 proportion of the global volume, for matching it by ear to whatever else
-shares where it goes (a talkbox, with a mandolin).  Nothing plays on the
+shares where it goes (a talkbox, with the mandolin, which isn't moved by
+it).  Under that, "Mandolin volume" is the mandolin's own, it and its voices
+together, from silent to double of where it starts, which is about 5dB over
+the input.  Nothing but the mandolin plays on the
 right unless `CH` sends it there: every fluidsynth channel starts hard left,
 and the Breath Gate's own sounds -- its brushes' stir, the Tamb Shake, the
 scrapers, the riser and the wobble, and its Brush and 808 kits -- follow the
-Breath Gate's `CH` rather than playing in stereo.  All three are remembered
+Breath Gate's `CH` rather than playing in stereo.  All four are remembered
 across launches; `$JAMMER_AUDIO_DEVICE` overrides it (exact name or any
 substring, so "Scarlett" finds "Scarlett 2i2 USB").  Without a choice it
 follows the system default, which on a laptop is the built-in speakers.

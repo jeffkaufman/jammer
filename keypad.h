@@ -147,6 +147,63 @@ static bool whistle_key(const Key* key, bool selecting) {
 }
 
 // ---------------------------------------------------------------------------
+// The mandolin
+//
+// The same again for the mandolin (mandolin.h): selected, its voices are on
+// the voice keys and the row keys, each on and off by itself, and every other
+// per-endpoint key is swallowed.  Only one of it and the whistle is ever
+// selected.
+// ---------------------------------------------------------------------------
+
+// Whether the whistle or the mandolin has the keys, rather than an endpoint.
+static bool instrument_selected(void) {
+  return whistle_selected || mando_selected;
+}
+
+// The mandolin's voice on this key right now, or -1.  Caller must hold the
+// lock.
+static int mando_voice_on_key(const Key* key) {
+  if (!mando_selected || !key->label ||
+      (key->group != GROUP_VOICE && key->group != GROUP_MODIFIER)) {
+    return -1;
+  }
+  return mando_voice_for_note(key->note);
+}
+
+static bool mando_key_is_dead(const Key* key) {
+  return mando_selected && key->label &&
+    (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) &&
+    mando_voice_on_key(key) < 0 && key->note != F2;
+}
+
+// Handle a key press if the mandolin owns it, and say whether it did.
+// Caller must hold the lock.
+static bool mando_key(const Key* key, bool selecting) {
+  if (key->lit == LIT_MANDO_ON) {
+    if (!selecting) mando_toggle();
+    mando_selected = true;
+    whistle_selected = false;
+    return true;
+  }
+  // Anything else that selects -- the whistle, or an endpoint -- takes the
+  // keys back, and does its own work.
+  if (key->lit == LIT_WHISTLE_ON || key->group == GROUP_TOGGLE) {
+    mando_selected = false;
+    return false;
+  }
+  if (!mando_selected) return false;
+  if (key->note == F2) {
+    mando_swap_fx_side();
+    return true;
+  }
+  if (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) {
+    mando_set_voice(mando_voice_on_key(key));
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // The drones
 //
 // With a drone selected the voice keys pick from DRONE_VOICES rather than the
@@ -156,7 +213,7 @@ static bool whistle_key(const Key* key, bool selecting) {
 // ---------------------------------------------------------------------------
 
 static bool drone_keys_active(void) {
-  return !whistle_selected && is_drone(c->selected_endpoint);
+  return !instrument_selected() && is_drone(c->selected_endpoint);
 }
 
 // The Breath Gate's BREATH_VOICES entry on this key, or -1.  Caller must
@@ -182,7 +239,7 @@ static int drone_voice_on_key(const Key* key) {
 // The JAWHARP_VOICES entry this key picks right now, or -1: the voice keys
 // while the jaw harp's selected.  Caller must hold the lock.
 static int jawharp_voice_on_key(const Key* key) {
-  if (whistle_selected || c->selected_endpoint != ENDPOINT_JAWHARP ||
+  if (instrument_selected() || c->selected_endpoint != ENDPOINT_JAWHARP ||
       key->group != GROUP_VOICE) {
     return -1;
   }
@@ -192,7 +249,7 @@ static int jawharp_voice_on_key(const Key* key) {
 // A voice key with no voice on it does nothing while the jaw harp's selected.
 // Caller must hold the lock.
 static bool jawharp_key_is_dead(const Key* key) {
-  return !whistle_selected && c->selected_endpoint == ENDPOINT_JAWHARP &&
+  return !instrument_selected() && c->selected_endpoint == ENDPOINT_JAWHARP &&
     key->group == GROUP_VOICE && key->label &&
     jawharp_voice_for_note(key->note) < 0;
 }
@@ -247,7 +304,8 @@ static bool endpoint_uses_flag(int ep, int flag) {
 // True if this modifier does nothing for the selected endpoint.  The whistle
 // has its own rules (whistle_key_is_dead).  Caller must hold the lock.
 static bool endpoint_key_is_dead(const Key* key) {
-  if (whistle_selected || !key->label || key->group != GROUP_MODIFIER) {
+  if (instrument_selected() || !key->label ||
+      key->group != GROUP_MODIFIER) {
     return false;
   }
   int sel = c->selected_endpoint;
@@ -259,21 +317,25 @@ static bool endpoint_key_is_dead(const Key* key) {
 
 // Any reason for a key to draw dead right now.  Caller must hold the lock.
 static bool key_is_dead(const Key* key) {
-  return whistle_key_is_dead(key) || drone_key_is_dead(key) ||
-    jawharp_key_is_dead(key) || endpoint_key_is_dead(key);
+  return whistle_key_is_dead(key) || mando_key_is_dead(key) ||
+    drone_key_is_dead(key) || jawharp_key_is_dead(key) ||
+    endpoint_key_is_dead(key);
 }
 
 // Strike a key, as a keypress would, minus the drawing.  Caller must hold the
 // lock.
 static void strike_key_locked(const Key* key, bool selecting) {
   int note = (selecting && key->select_note) ? key->select_note : key->note;
-  // The whistle gets first refusal: while it is selected the voice, octave
-  // and volume keys are its, and its own on/off key never reaches
-  // handle_keypad at all.
-  if (!whistle_key(key, selecting)) {
+  // The mandolin and the whistle get first refusal: while one is selected
+  // the voice keys, and the rest it uses, are its, and their own on/off keys
+  // never reach handle_keypad at all.
+  if (!mando_key(key, selecting) && !whistle_key(key, selecting)) {
     // A reset is a reset.  The whistle's setup knobs are left alone -- see
     // whistle_reset.
-    if (note == ESCAPE) whistle_reset();
+    if (note == ESCAPE) {
+      whistle_reset();
+      mando_reset();
+    }
     keypad_key(note);
   }
 }
@@ -292,6 +354,9 @@ static void strike_key_locked(const Key* key, bool selecting) {
 static const char* key_current_label(const Key* key) {
   if (!key->label) return NULL;
   if (key_is_dead(key)) return NULL;
+  int mando = mando_voice_on_key(key);
+  if (mando >= 0) return MANDO_VOICES[mando].label;
+  if (mando_selected && key->note == F2) return mando_fx_side_label();
   // The whistle first: while it's selected the voice keys are its, whatever
   // endpoint was selected before it.
   if (whistle_selected && key->group == GROUP_VOICE) {
@@ -363,6 +428,7 @@ SPOKEN_ALIASES[] = {
   {"Wash\nboard", "washboard"},
   {"Tamb\nShake", "tambourine shake"},
   {"MIXO\nLYDIAN", "mixolydian"},
+  {"Mando\nlin", "mandolin"},
 };
 
 // A label as words to say: lower case, with the line breaks as spaces.
@@ -433,6 +499,9 @@ static int all_spoken_phrases(char (*out)[48], int max) {
   for (int fx = VFX_VOCODER; fx < N_VFX; fx++) {
     n = add_spoken_phrases(WHISTLE_FX[fx].label, out, n, max);
   }
+  for (int v = 0; v < N_MANDO_VOICES; v++) {
+    n = add_spoken_phrases(MANDO_VOICES[v].label, out, n, max);
+  }
   return n;
 }
 
@@ -462,7 +531,8 @@ static int key_spoken_names(char (*names)[SW_NAME_MAX], int* keys, int max) {
 // Whether shift-clicking this key means anything, so "select ..." can refuse
 // the keys where it would just be a click.
 static bool key_selects(const Key* key) {
-  return key->select_note || key->lit == LIT_WHISTLE_ON;
+  return key->select_note || key->lit == LIT_WHISTLE_ON ||
+    key->lit == LIT_MANDO_ON;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +545,17 @@ static bool key_is_lit(const Key* key) {
   bool drums_selected = (sel == ENDPOINT_DRUM);
 
   if (key->lit == LIT_WHISTLE_ON) return whistle_on;
+  if (key->lit == LIT_MANDO_ON) return mando_on;
+
+  if (mando_selected) {
+    int v = mando_voice_on_key(key);
+    if (v >= 0) return mando_voices & MANDO_BIT(v);
+    // Lit, as CH is, when they've been moved.
+    if (key->note == F2) return mando_fx_left;
+    if (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) {
+      return false;
+    }
+  }
 
   if (whistle_selected) {
     // The vocal effects' keys show their effects.
@@ -540,6 +621,7 @@ static bool key_is_lit(const Key* key) {
   case LIT_OCTAVE:      return c->octave_deltas[sel] * arg > 0;
   case LIT_VOLUME:      return c->volume_deltas[sel] * arg > 0;
   case LIT_WHISTLE_ON:  // handled above, before the whistle override
+  case LIT_MANDO_ON:
   case LIT_NEVER:       break;
   }
   return false;
@@ -551,7 +633,8 @@ static bool key_is_lit(const Key* key) {
 // Caller must hold the lock.
 static bool key_is_selected_endpoint(const Key* key) {
   if (key->lit == LIT_WHISTLE_ON) return whistle_selected;
-  return !whistle_selected && key->lit == LIT_EP_ON && key->label &&
+  if (key->lit == LIT_MANDO_ON) return mando_selected;
+  return !instrument_selected() && key->lit == LIT_EP_ON && key->label &&
     key->arg == c->selected_endpoint;
 }
 
