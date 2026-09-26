@@ -1255,6 +1255,8 @@ static void flash_from_speech(int key) {
 @property(strong) NSMenu* audioMenu;
 @property(strong) NSMenuItem* volumeItem;
 @property(strong) NSSlider* volumeSlider;
+@property(strong) NSMenuItem* altVolumeItem;
+@property(strong) NSSlider* altVolumeSlider;
 @property(strong) NSMenu* whistleMenu;
 @property(strong) NSMenu* speechMenu;
 @property(strong) NSTextField* speechGateCaption;
@@ -1389,6 +1391,27 @@ static void flash_from_speech(int key) {
   return self.volumeItem;
 }
 
+// The right channel, where CH sends a voice, relative to the global volume:
+// it goes to a talkbox shared with the mandolin, so it's matched to that.
+- (void)altVolumeChanged:(NSSlider*)slider {
+  set_alt_channel_gain(slider.doubleValue);
+  [NSUserDefaults.standardUserDefaults setDouble:slider.doubleValue
+                                          forKey:@"altChannelGain"];
+}
+
+- (NSMenuItem*)altVolumeMenuItem {
+  if (self.altVolumeItem) return self.altVolumeItem;
+  NSSlider* slider = nil;
+  self.altVolumeItem =
+    [self sliderMenuItem:@"Alternate channel volume"
+                   value:alt_channel_gain
+                     max:MAX_ALT_CHANNEL_GAIN
+                  action:@selector(altVolumeChanged:)
+                  slider:&slider];
+  self.altVolumeSlider = slider;
+  return self.altVolumeItem;
+}
+
 - (void)rebuildAudioMenu {
   NSMenu* menu = self.audioMenu;
   [menu removeAllItems];
@@ -1409,6 +1432,7 @@ static void flash_from_speech(int key) {
   [menu addItem:[NSMenuItem separatorItem]];
   self.volumeSlider.doubleValue = synth_gain;  // in case it changed elsewhere
   [menu addItem:[self volumeMenuItem]];
+  [menu addItem:[self altVolumeMenuItem]];
 }
 
 // ---------------------------------------------------------------------------
@@ -2055,6 +2079,9 @@ int main(int argc, const char** argv) {
     NSNumber* saved_gain =
       [NSUserDefaults.standardUserDefaults objectForKey:@"synthGain"];
     if (saved_gain) synth_gain = saved_gain.doubleValue;
+    NSNumber* saved_alt_gain =
+      [NSUserDefaults.standardUserDefaults objectForKey:@"altChannelGain"];
+    if (saved_alt_gain) set_alt_channel_gain(saved_alt_gain.doubleValue);
 
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.

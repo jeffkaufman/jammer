@@ -1352,9 +1352,10 @@ int breath = 0;  // current value from breath controller
 
 // Tell the Mac's audio what the breath is doing and how hard you're blowing:
 // the sweeps that are on, and the Breath Gate's percussion if it's on and on
-// one of those voices.
+// one of those voices, and which channel that goes to.
 void update_breath_fx(void) {
   unsigned fx = breath_fx;
+  if (c->pans[ENDPOINT_BREATH]) fx |= BREATH_FX_RIGHT;
   if (c->on[ENDPOINT_BREATH]) {
     for (int i = 0; i < N_BREATH_VOICES; i++) {
       if (c->breath_layers & BREATH_VOICES[i].layer) {
@@ -2555,6 +2556,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case F2:
     c->pans[c->selected_endpoint] = !c->pans[c->selected_endpoint];
     reload_voice_setting(c);
+    update_breath_fx();  // the Breath Gate's own sounds move with it
     return;
   case '-':
     c->volume_deltas[c->selected_endpoint] -= 5;

@@ -3054,6 +3054,67 @@ static void test_build_voices() {
   breath_set(0, 0);
 }
 
+// The Breath Gate's own sounds play on one channel, the left, and all on the
+// right instead with CH: the right goes to a talkbox, so nothing should
+// reach it unless asked.
+static void render_sides(unsigned fx, double seconds, double* left,
+                         double* right) {
+  const double sr = 48000;
+  const int len = 64;
+  int breath = BREATH_FLOOR + (int)(0.6 * (BREATH_FULL - BREATH_FLOOR));
+  breath_set(breath, fx);
+  double l2 = 0, r2 = 0;
+  long n = 0;
+  for (int b = 0; b < (int)(seconds * sr / len); b++) {
+    audio_block_ns = (uint64_t)sim_ns;
+    memset(build_l, 0, sizeof(build_l));
+    memset(build_r, 0, sizeof(build_r));
+    build_follow_breath(breath_blown(breath));
+    play_breath_instruments(build_l, build_r, len, sr);
+    for (int i = 0; i < len; i++) {
+      l2 += build_l[i] * build_l[i];
+      r2 += build_r[i] * build_r[i];
+      n++;
+    }
+    sim_ns += len * 1e9 / sr;
+  }
+  *left = sqrt(l2 / n);
+  *right = sqrt(r2 / n);
+}
+
+static void test_breath_sounds_follow_ch() {
+  const struct { unsigned fx; const char* name; } VOICES[] = {
+    {BREATH_FX_GUIRO, "guiro"}, {BREATH_FX_WASHBOARD, "washboard"},
+    {BREATH_FX_GUIRA, "guira"}, {BREATH_FX_RISER, "riser"},
+    {BREATH_FX_WOBBLE, "wobble"}, {BREATH_FX_BRUSH, "brushes"},
+    {BREATH_FX_TAMB, "tamb shake"},
+  };
+  for (int v = 0; v < 7; v++) {
+    double l, r;
+    render_sides(VOICES[v].fx, 0.5, &l, &r);
+    CHECK(l > 1e-5 && r == 0, "%s should be on the left alone: %.6f, %.6f",
+          VOICES[v].name, l, r);
+    render_sides(0, 0.5, &l, &r);  // let it stop
+    render_sides(VOICES[v].fx | BREATH_FX_RIGHT, 0.5, &l, &r);
+    CHECK(r > 1e-5 && l == 0, "with CH, %s should be on the right alone: "
+          "%.6f, %.6f", VOICES[v].name, l, r);
+    render_sides(0, 0.5, &l, &r);
+  }
+  breath_set(0, 0);
+
+  // And CH on the Breath Gate is what says so.
+  full_reset();
+  breath_hook = record_breath;
+  press("`");
+  CHECK(!(told_fx & BREATH_FX_RIGHT), "the Breath Gate should start left");
+  press("F2");
+  CHECK(told_fx & BREATH_FX_RIGHT, "CH should move the Breath Gate right");
+  press("F2");
+  CHECK(!(told_fx & BREATH_FX_RIGHT), "CH again should move it back");
+  breath_hook = NULL;
+  full_reset();
+}
+
 // The vocoder: the chord, shaped by the microphone, and nothing when the
 // microphone is quiet.
 static void test_vocoder() {
@@ -3129,6 +3190,7 @@ int main() {
   test_every_kick_plays();
   test_tambourines();
   test_brush_swish();
+  test_breath_sounds_follow_ch();
   test_grid_hat_on_the_pedals();
   test_tamb_shake();
   test_jawharp_voices();

@@ -844,7 +844,14 @@ rest of the rig too: fluidsynth used to always run at its own default of
 ### Audio output
 
 The Audio Output menu lists the CoreAudio devices and carries a global volume
-slider on top of the per-voice levels in `voices.h`.  Both are remembered
+slider on top of the per-voice levels in `voices.h`.  Under it, "Alternate
+channel volume" sets the right channel -- where `CH` sends a voice -- as a
+proportion of the global volume, for matching it by ear to whatever else
+shares where it goes (a talkbox, with a mandolin).  Nothing plays on the
+right unless `CH` sends it there: every fluidsynth channel starts hard left,
+and the Breath Gate's own sounds -- its brushes' stir, the Tamb Shake, the
+scrapers, the riser and the wobble, and its Brush and 808 kits -- follow the
+Breath Gate's `CH` rather than playing in stereo.  All three are remembered
 across launches; `$JAMMER_AUDIO_DEVICE` overrides it (exact name or any
 substring, so "Scarlett" finds "Scarlett 2i2 USB").  Without a choice it
 follows the system default, which on a laptop is the built-in speakers.

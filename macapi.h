@@ -132,9 +132,12 @@ static volatile int audio_block_frames = 0;
 static _Atomic int audio_breath;
 static _Atomic unsigned audio_breath_fx;
 
+static void pan_breath_kits(bool right);
+
 static void breath_set(int breath, unsigned fx) {
   atomic_store_explicit(&audio_breath, breath, memory_order_relaxed);
   atomic_store_explicit(&audio_breath_fx, fx, memory_order_relaxed);
+  pan_breath_kits(fx & BREATH_FX_RIGHT);
 }
 
 // ---------------------------------------------------------------------------
@@ -1078,14 +1081,16 @@ static void play_riser(float* left, float* right, int len, bool on,
     double q = 1.4;
     double a1 = 1 / (1 + g * (g + 1 / q)), a2 = g * a1;
     double gain = RISER_LEVEL * pow(riser.level, 1.5);
-    for (int ch = 0; ch < 2; ch++) {
-      double v1 = a1 * riser.ic1[ch] + a2 * (breath_noise() - riser.ic2[ch]);
-      double v2 = riser.ic2[ch] + g * v1;
-      riser.ic1[ch] = 2 * v1 - riser.ic1[ch];
-      riser.ic2[ch] = 2 * v2 - riser.ic2[ch];
-      float y = (float)(gain * (v1 / q + 0.3 * v2));
-      if (ch == 0) left[i] += y; else right[i] += y;
-    }
+    // One noise, not a pair: it all ends up on one channel (see
+    // play_breath_instruments), and two uncorrelated noises folded together
+    // would come out 3dB quieter.
+    double v1 = a1 * riser.ic1[0] + a2 * (breath_noise() - riser.ic2[0]);
+    double v2 = riser.ic2[0] + g * v1;
+    riser.ic1[0] = 2 * v1 - riser.ic1[0];
+    riser.ic2[0] = 2 * v2 - riser.ic2[0];
+    float y = (float)(gain * (v1 / q + 0.3 * v2));
+    left[i] += y;
+    right[i] += y;
   }
 }
 
@@ -1170,8 +1175,8 @@ static void play_wobble(float* left, float* right, int len, bool on,
   if (!held && wobble.gain == 0) wobble.live = false;
 }
 
-static void play_breath_instruments(float* left, float* right, int len,
-                                    double sample_rate) {
+static void render_breath_instruments(float* left, float* right, int len,
+                                      double sample_rate) {
   unsigned fx = atomic_load_explicit(&audio_breath_fx, memory_order_relaxed);
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
@@ -1209,6 +1214,33 @@ static void play_breath_instruments(float* left, float* right, int len,
   }
 }
 
+// The right channel's level, as a proportion of the global volume.  Voices
+// play on the left unless CH swaps them to the right, and the right goes to a
+// talkbox shared with a mandolin, so it wants matching to that by ear rather
+// than to the rest of the rig.  Scaled after everything is mixed, on the
+// audio thread, hence atomic.
+#define MAX_ALT_CHANNEL_GAIN 2.0
+static _Atomic float alt_channel_gain = 1.0f;
+
+// The Breath Gate's own sounds, on one channel like everything else: the
+// left, or the right if its CH is on.  They're made in stereo -- the brushes
+// circle from side to side -- so each is folded down to its middle, which is
+// what either side of it carries on average.
+#define BREATH_CHUNK 512
+static void play_breath_instruments(float* left, float* right, int len,
+                                    double sample_rate) {
+  static float l[BREATH_CHUNK], r[BREATH_CHUNK];
+  unsigned fx = atomic_load_explicit(&audio_breath_fx, memory_order_relaxed);
+  float* out = (fx & BREATH_FX_RIGHT) ? right : left;
+  for (int done = 0; done < len; done += BREATH_CHUNK) {
+    int n = len - done < BREATH_CHUNK ? len - done : BREATH_CHUNK;
+    memset(l, 0, sizeof(l));
+    memset(r, 0, sizeof(r));
+    render_breath_instruments(l, r, n, sample_rate);
+    for (int i = 0; i < n; i++) out[done + i] += (l[i] + r[i]) / 2;
+  }
+}
+
 static int jammer_audio_render(void* data, int len, int nfx, float** fx,
                                int nout, float** out) {
   audio_frames_rendered += len;
@@ -1233,6 +1265,10 @@ static int jammer_audio_render(void* data, int len, int nfx, float** fx,
   }
   if (audio_mix_hook) {
     audio_mix_hook(out, nout, len, synth_sample_rate);
+  }
+  float alt = atomic_load_explicit(&alt_channel_gain, memory_order_relaxed);
+  if (nout >= 2 && alt != 1.0f) {
+    for (int i = 0; i < len; i++) out[1][i] *= alt;
   }
   return result;
 }
@@ -1412,6 +1448,27 @@ void set_synth_gain(double gain) {
   if (fl_synth) fluid_synth_set_gain(fl_synth, (float)gain);
 }
 
+void set_alt_channel_gain(double gain) {
+  if (gain < 0) gain = 0;
+  if (gain > MAX_ALT_CHANNEL_GAIN) gain = MAX_ALT_CHANNEL_GAIN;
+  atomic_store_explicit(&alt_channel_gain, (float)gain, memory_order_relaxed);
+}
+
+// The Breath Gate's brushes and Grid Hat, on their own kits' channels, go
+// where the Breath Gate does: left, or right with its CH on.  From
+// breath_set, which is often, so only when that changes.
+static bool breath_kits_right = false;
+
+static void pan_breath_kits(bool right) {
+  if (!fl_synth || right == breath_kits_right) return;
+  breath_kits_right = right;
+  int value = right ? 127 : 0;
+  fluid_synth_cc(fl_synth, CHANNEL_BRUSH, CC_PAN, value);
+  fluid_synth_cc(fl_synth, CHANNEL_BRUSH, CC_BALANCE, value);
+  fluid_synth_cc(fl_synth, CHANNEL_HAT, CC_PAN, value);
+  fluid_synth_cc(fl_synth, CHANNEL_HAT, CC_BALANCE, value);
+}
+
 // Mirrors run-fluidsynth.sh: -c 2 -z 64 -g 1.0, stereo, reverb/chorus off.
 void start_synth(const char* soundfont_path, const char* device) {
   fl_settings = new_fluid_settings();
@@ -1448,6 +1505,14 @@ void start_synth(const char* soundfont_path, const char* device) {
   fluid_synth_set_channel_type(fl_synth, CHANNEL_KICK, CHANNEL_TYPE_DRUM);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_BRUSH, CHANNEL_TYPE_DRUM);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_HAT, CHANNEL_TYPE_DRUM);
+  // Everything on the left until CH says otherwise: fluidsynth starts each
+  // channel in the middle, which would put a little of anything nothing's
+  // panned yet on the right, the alternate channel.
+  for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
+    fluid_synth_cc(fl_synth, ch, CC_PAN, 0);
+    fluid_synth_cc(fl_synth, ch, CC_BALANCE, 0);
+  }
+  breath_kits_right = false;
 
   fl_sfont_id = fluid_synth_sfload(fl_synth, soundfont_path, 1);
   if (fl_sfont_id == FLUID_FAILED) {
@@ -1492,11 +1557,14 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   if (action == MIDI_CC) {
     fluid_synth_cc(fl_synth, channel, note, velocity);
     // The kick's channel is the drum's, split off: same volume, pan, fade.
-    // And so are the brushes' and the Grid Hat's, on their own kits.
+    // And so are the brushes' and the Grid Hat's, on their own kits -- all
+    // but their pan, which is the Breath Gate's (pan_breath_kits).
     if (channel == CHANNEL_DRUM) {
       fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
-      fluid_synth_cc(fl_synth, CHANNEL_BRUSH, note, velocity);
-      fluid_synth_cc(fl_synth, CHANNEL_HAT, note, velocity);
+      if (note != CC_PAN && note != CC_BALANCE) {
+        fluid_synth_cc(fl_synth, CHANNEL_BRUSH, note, velocity);
+        fluid_synth_cc(fl_synth, CHANNEL_HAT, note, velocity);
+      }
     }
     // And a drone's voice channels are the drone's.
     int base = voice_channel_base(channel);

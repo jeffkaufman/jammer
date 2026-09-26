@@ -98,6 +98,9 @@ enum {
   // The Tamb Shake: a tambourine jiggled in the hand, on the beat's grid,
   // harder the harder you blow.
   BREATH_FX_TAMB = 1 << 9,
+  // Not a sound: the Breath Gate's CH is on, so the Mac's own sounds for it
+  // play on the right, the alternate channel, instead of the left.
+  BREATH_FX_RIGHT = 1 << 10,
 };
 
 // The trance gate's patterns on a drone, from its DOUB and PRE UNIQ flags:
