@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Signed for distribution the app runs under the hardened runtime, which
+       refuses the microphone (the whistle bass, and the chord numbers) unless
+       it's asked for here, prompt or no prompt. -->
+  <key>com.apple.security.device.audio-input</key><true/>
+</dict>
+</plist>

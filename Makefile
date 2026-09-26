@@ -100,6 +100,11 @@ app: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
 	codesign --force --deep --sign - $(APP)
 	@echo "built $(APP)"
 
+# Jammer.zip, for handing out: Jammer.app signed with a Developer ID,
+# notarized and stapled.  See dist.sh for what that needs, once.
+dist: app jammer.entitlements dist.sh
+	./dist.sh
+
 clean-mac:
 	rm -rf jammer-mac $(APP) audition pads speechphrases speechmodel \
 	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval \
@@ -191,7 +196,7 @@ whistlelevels: whistlelevels.c loudness.h jammermidilib.h voices.h common.h \
 	  -I$(WHISTLE_DIR) \
 	  -std=gnu11 -Wall -O2
 
-.PHONY: run run-fakeinput runmac soundfont run-mac app clean-mac test-mac
+.PHONY: run run-fakeinput runmac soundfont run-mac app dist clean-mac test-mac
 
 test-mac: test-keypad.c test-startup.c kitlevels.c loudness.h \
           $(MAC_SRCS) keypad.h $(WHISTLE_OBJS)

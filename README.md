@@ -4,6 +4,10 @@ This isn't really intended for other people to use directly, because it's very
 tied to my specific equipment and the kind of music I'm playing.  But it may
 still be useful if you want to build something similar.
 
+The Mac version is also available ready-built:
+[Jammer-1.0.zip](https://www.jefftk.com/Jammer-1.0.zip), signed and notarized,
+for Apple Silicon Macs on macOS 26 or later.
+
 Run `make run` to build this software and run it.  It will look for various
 midi devices:
 
@@ -385,6 +389,15 @@ $ make run-mac
 `make app` instead builds a self-contained `Jammer.app` that carries the
 soundfont and its own copies of libfluidsynth and everything under it, so it
 runs on a Mac without homebrew.
+
+`make dist` builds on that a `Jammer.zip` to hand out: the app signed with a
+Developer ID, notarized and stapled, so it opens on another Mac without
+Gatekeeper refusing it.  It needs a Developer ID Application certificate and
+the notary service's credentials, once; `dist.sh` says how.  It runs on the
+macOS homebrew's libraries were built for and later, on Apple Silicon.  A
+release goes up as `Jammer-<version>.zip` (`CFBundleShortVersionString` in
+`Info.plist`): `scp Jammer.zip ps:jtk/Jammer-1.0.zip`, which serves it at
+https://www.jefftk.com/Jammer-1.0.zip.
 
 `make test-mac` checks the on-screen keyboard against `handle_keypad`: that
 every key is bound to something real, that no two keys collide or overlap, and
