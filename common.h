@@ -49,6 +49,14 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 #define MIDI_BRUSH_SLAP 39
 #define MIDI_BRUSH_SWIRL 40
 
+// And its Grid Hat: another, set to the 808's, for its closed hat.  On the Pi
+// the drum's again, playing that kit's hat.
+#ifndef CHANNEL_HAT
+#define CHANNEL_HAT CHANNEL_DRUM
+#endif
+#define HAT_KIT 25              // FluidR3's TR-808 set
+#define MIDI_HAT 42             // its closed hat
+
 // The breath controller's range, as the Mac's breath effects read it: below
 // BREATH_FLOOR is the controller at rest, and BREATH_FULL is as far as it
 // goes.  The Breath Gate opens BREATH_GATE_OPEN of the way between them and
@@ -60,9 +68,6 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 #define BREATH_GATE_OPEN 0.12
 #define BREATH_GATE_SHUT 0.06
 
-// Where the Tamb Shake hits (jammermidilib.h's breath_shake), and the
-// Brushes' stir is at its fastest (macapi.h), of the breath's range.
-#define SHAKE_HIT 0.75
 
 // The breath as 0-1, from the controller at rest to as far as it goes.
 static inline double breath_blown(int breath) {
@@ -90,6 +95,9 @@ enum {
   // The Brushes' stir: brushes circling on a snare head, faster the harder
   // you blow.
   BREATH_FX_BRUSH = 1 << 8,
+  // The Tamb Shake: a tambourine jiggled in the hand, on the beat's grid,
+  // harder the harder you blow.
+  BREATH_FX_TAMB = 1 << 9,
 };
 
 // The trance gate's patterns on a drone, from its DOUB and PRE UNIQ flags:

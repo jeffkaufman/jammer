@@ -299,8 +299,8 @@ static int drone_voice_for_note(int note) {
 // The Breath Gate's own voices, in place of a pad, on the home row: the Snare
 // Roll and the percussion the breath plays by moving (macapi.h), then the
 // voices for builds and drops (see the README's "Builds and drops").  And
-// the tambourines, on J and K: modifier keys, but DOWNBEAT and UPBEAT mean
-// nothing to a drone.  Its
+// the shakers, on J, K and L: modifier keys, but DOWNBEAT, UPBEAT and UP
+// HIGH mean nothing to a drone.  Its
 // pads are on the row below (BREATH_PADS), so the two kinds are a row each
 // rather than mixed; the other drones keep all ten pads where they are.
 //
@@ -309,8 +309,14 @@ static int drone_voice_for_note(int note) {
 //   Brushes         a jazz kit's brushes, on J: blowing stirs them round
 //                   the head, faster and louder the harder you blow
 //                   (macapi.h), and blowing up past 90% slaps them, once,
-//                   not again until you've come back under 60% (breath_shake)
-//   Tamb Shake      the same with a tambourine, on K: a wiggle jangles it
+//                   not again until you've come back under 60%
+//                   (breath_brush_slap)
+//   Tamb Shake      a tambourine, on K, jiggled in the hand on the beat's
+//                   grid, 16ths or three a beat in jig time, its jingles
+//                   shaken harder the harder you blow (macapi.h)
+//   Grid Hat        the 808's closed hat, on L, on the foot bass's grid,
+//                   harder the harder you blow, and harder still with 32nds
+//                   fading in between (breath_hat_tick)
 //   Noise Riser     noise through a filter the breath opens (macapi.h)
 //   Wobble          a saw bass on the bass note, its filter swinging on the
 //                   beat's grid, 1-4 times a beat the harder you blow
@@ -329,6 +335,7 @@ enum {
   BREATH_LAYER_WASHBOARD = 1 << 5,
   BREATH_LAYER_BRUSHES = 1 << 6,
   BREATH_LAYER_TAMB_SHAKE = 1 << 7,
+  BREATH_LAYER_GRID_HAT = 1 << 8,
 };
 static const struct {
   char note;
@@ -343,7 +350,8 @@ static const struct {
   {'G', BREATH_LAYER_RISER,      "Noise\nRiser", BREATH_FX_RISER},
   {'H', BREATH_LAYER_WOBBLE,     "Wobble",       BREATH_FX_WOBBLE},
   {'J', BREATH_LAYER_BRUSHES,    "Brushes",      BREATH_FX_BRUSH},
-  {'K', BREATH_LAYER_TAMB_SHAKE, "Tamb\nShake",  0},
+  {'K', BREATH_LAYER_TAMB_SHAKE, "Tamb\nShake",  BREATH_FX_TAMB},
+  {'L', BREATH_LAYER_GRID_HAT,   "Grid\nHat",    0},
 };
 
 // And its pads, on the row below: seven of the drones' ten, by program, so
@@ -2853,7 +2861,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-void breath_shakers(void);  // below, with the Snare Roll
+void breath_brush_slap(void);  // below, with the Snare Roll
 
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc != CC_BREATH && cc != CC_11) {
@@ -2869,7 +2877,7 @@ void handle_cc(unsigned int cc, unsigned int val) {
   breath_heard = true;
   update_breath_fx();
   breath_gate_breath();
-  breath_shakers();
+  breath_brush_slap();
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
@@ -3138,6 +3146,21 @@ int64_t roll_last_slot;
 uint64_t roll_last_hit_ns;
 
 #define ROLL_DEFAULT_BEAT_NS (60 * NS_PER_SEC / 116)
+
+// The beat, and where it started: the pedals' if they've kept time within
+// the last couple of beats, or 116 BPM's from `start`.  Whether it's the
+// pedals'.
+static bool breath_grid(uint64_t t, uint64_t start, uint64_t* beat,
+                        uint64_t* origin) {
+  *beat = ROLL_DEFAULT_BEAT_NS;
+  *origin = start;
+  if (current_beat_ns > 0 && t - last_downbeat_ns < 2 * current_beat_ns) {
+    *beat = current_beat_ns;
+    *origin = last_downbeat_ns;
+    return true;
+  }
+  return false;
+}
 // The tambourine's velocity, against the roll's snare on the Standard kit:
 // FluidR3's tambourine is the same in every percussion set, and within half a
 // dB of that snare at the same velocity, so it takes the snare's scale.
@@ -3160,13 +3183,8 @@ void breath_roll_tick(void) {
   }
 
   int division = blown < 0.3 ? 1 : blown < 0.5 ? 2 : blown < 0.75 ? 4 : 8;
-  // The pedals' grid if they've kept time within the last couple of beats.
-  uint64_t beat = ROLL_DEFAULT_BEAT_NS;
-  uint64_t origin = roll_origin_ns;
-  if (current_beat_ns > 0 && t - last_downbeat_ns < 2 * current_beat_ns) {
-    beat = current_beat_ns;
-    origin = last_downbeat_ns;
-  }
+  uint64_t beat, origin;
+  breath_grid(t, roll_origin_ns, &beat, &origin);
   int64_t since = (int64_t)(t - origin);
   int64_t slot = since * division / (int64_t)beat;
   if (division != roll_division) {
@@ -3190,127 +3208,156 @@ void breath_roll_tick(void) {
              normalize((int)((35 + 85 * blown) * scale)), ENDPOINT_DRUM);
 }
 
-// The Breath Gate's shakers, the Tamb Shake and the Brushes: an instrument
-// the breath shakes.  Three ways, by how hard you're blowing:
-//
-//   jangle    any wiggle of the breath, a soft touch every 1/SHAKE_STEPS of
-//             its range it moves, quieter the less you're blowing -- a
-//             shimmer, or a swirl, not a hit
-//   hit       blowing up past its hit_at: one proper hit
-//   big hit   up past SHAKE_BIG, for those that have one: one as hard as it
-//             goes
-//
-// Each hit is armed again once the breath's come back down its rearm below
-// it, so hovering at the edge doesn't hit again and again, and the jangle holds
-// off a moment after one so the hit reads clean.  Held steady, it's quiet.
-// Played from the breath as it comes, on MIDI, so it's the soundfont's own
-// samples, the Pi's too.
-#define SHAKE_STEPS 36
-#define SHAKE_GAP_NS (22 * 1000000LL)
-#define SHAKE_BIG 0.92
-#define SHAKE_AFTER_HIT_NS (90 * 1000000LL)
-#define SHAKE_BACKLASH 0.012        // of the range: the controller's jitter
+// The Breath Gate's Grid Hat: the 808's closed hat on the beat's grid for as
+// long as you blow, as hard as you're blowing.  16ths, or three to a beat in
+// jig time, from barely there just past the gate to as hard as they go by
+// HAT_MAIN_FULL, every other one a little softer; and blowing on up past
+// HAT_EXTRA_FROM, more between them, halfway, fading up from nothing until
+// by HAT_EXTRA_FULL they're as loud as the softer ones and it's 32nds, or
+// six to a beat in jig time.  On the pedals' grid while they're going, where
+// the foot bass plays -- leaning off it the way the foot bass does, its
+// upbeat a subbeat early and in jig time its lilt -- and from the start of
+// the breath at an even 116 BPM when they aren't, like the Snare Roll.  On a
+// channel of its own, set to the 808 kit, whichever kit the drum's on.
+#define HAT_MAIN_FULL 0.8
+#define HAT_EXTRA_FROM 0.35
+#define HAT_EXTRA_FULL 0.95
+#define HAT_SOFTEST 6
+#define HAT_HARDEST 120
+#define HAT_OFF 0.8       // the one between, against the one on the grid's 8th
+// Level with the soundfont's tambourine at TAMB_VEL: the 808's hat is about
+// 2.4dB louder at the same velocity.
+#define HAT_VEL (TAMB_VEL * 0.87)
+#define HAT_MAX_STEPS 12
 
-// What a shaker plays: notes on a channel, how hard, and the velocity scale
-// that puts it level with the rest, and where it hits, of the breath's
-// range, and how far back down it has to come before it'll hit again.  A
-// jangle of -1 is none: the Brushes' stir, under their slap, is the Mac's own
-// (macapi.h).  A big of -1 is none too.
-typedef struct {
-  unsigned layer;
-  int channel;
-  int jangle, hit, big, big_under;  // big_under: -1, or a note under the big
-  int hit_vel, big_vel;
-  double vel;
-  double hit_at, rearm;
-} ShakerSound;
+bool hat_open;
+uint64_t hat_origin_ns;
+int hat_grid;             // which grid it's on, or -1 for none yet
+uint64_t hat_last_step_ns;  // when the last step it played was due
 
-// The tambourine, off whichever kit the drum's on -- FluidR3's is the same in
-// every one -- and the brushes off the Brush kit: one slap, a good deal
-// softer than the tambourine's -- a brush slap is a light thing -- only
-// blowing hard, and not again until the breath's come well back down, so
-// it's a slap you mean over the stir rather than one you drift into.  Their
-// slap is about 3dB under the tambourine at the same velocity, so their
-// scale is 16% up to start from level.
-static const ShakerSound TAMB_SHAKE = {
-  BREATH_LAYER_TAMB_SHAKE, CHANNEL_DRUM, MIDI_DRUM_OUT_TAMBOURINE,
-  MIDI_DRUM_OUT_TAMBOURINE, MIDI_DRUM_OUT_TAMBOURINE, -1, 100, 127, TAMB_VEL,
-  SHAKE_HIT, 0.12,
-};
-static const ShakerSound BRUSHES = {
-  BREATH_LAYER_BRUSHES, CHANNEL_BRUSH, -1, MIDI_BRUSH_SLAP, -1, -1, 68, 0,
-  TAMB_VEL * 1.16, 0.9, 0.3,
-};
-
-typedef struct {
-  double stick;       // where the breath's got to, through the slack; -1 idle
-  double travel;      // since the last touch
-  uint64_t last_ns;   // when it last sounded
-  bool hit_armed, big_armed;
-  uint64_t hit_ns;    // when it was last hit, jangle aside
-} Shaker;
-
-Shaker tamb_shaker = {-1}, brush_shaker = {-1};
-
-static void shaker_play(const ShakerSound* sound, int note, int velocity) {
-  send_midi(MIDI_ON, note, normalize((int)(velocity * sound->vel)),
-            sound->channel);
+// Where in the beat's N_SUBBEATS the hat plays: the main ones, on the foot
+// bass's own grid with the pedals and evenly without, each followed by the
+// one halfway to the next.  How many.
+static int hat_steps(bool pedals, int* at) {
+  int main[4];
+  int n_main;
+  if (!pedals) {
+    n_main = jig_time ? 3 : 4;
+    for (int i = 0; i < n_main; i++) main[i] = i * N_SUBBEATS / n_main;
+  } else if (jig_time) {
+    n_main = 3;
+    main[0] = 0;
+    main[1] = preup_subbeat();
+    main[2] = upbeat_subbeat();
+  } else {
+    n_main = 4;
+    main[0] = 0;
+    main[1] = preup_subbeat();
+    main[2] = upbeat_subbeat();
+    main[3] = 3 * N_SUBBEATS / 4;  // the foot bass's predown
+  }
+  for (int i = 0; i < n_main; i++) {
+    int next = i + 1 < n_main ? main[i + 1] : N_SUBBEATS;
+    at[2 * i] = main[i];
+    at[2 * i + 1] = (main[i] + next) / 2;
+  }
+  return 2 * n_main;
 }
 
-static void breath_shake(Shaker* s, const ShakerSound* sound) {
-  if (!c->on[ENDPOINT_BREATH] || !(c->breath_layers & sound->layer)) {
-    s->stick = -1;
+static double hat_ramp(double blown, double from, double full) {
+  double x = (blown - from) / (full - from);
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+void breath_hat_tick(void) {
+  double blown = breath_blown(breath);
+  if (!c->on[ENDPOINT_BREATH] ||
+      !(c->breath_layers & BREATH_LAYER_GRID_HAT) ||
+      blown < BREATH_GATE_SHUT) {
+    hat_open = false;
+    return;
+  }
+  uint64_t t = now();
+  if (!hat_open) {
+    if (blown <= BREATH_GATE_OPEN) return;
+    hat_open = true;
+    hat_origin_ns = t;
+    hat_grid = -1;
+    hat_last_step_ns = 0;
+  }
+
+  uint64_t beat, origin;
+  bool pedals = breath_grid(t, hat_origin_ns, &beat, &origin);
+  int at[HAT_MAX_STEPS];
+  int n = hat_steps(pedals, at);
+  int64_t subbeats = (int64_t)(t - origin) * N_SUBBEATS / (int64_t)beat;
+  int into = (int)(subbeats % N_SUBBEATS);
+  int k = n - 1;
+  while (k > 0 && at[k] > into) k--;
+  // When the step it's in was due.  Steps are told apart by that rather than
+  // counted, since each kick starts the pedals' grid again: a kick a little
+  // late comes just after the downbeat the hat's already played, and mustn't
+  // play it again, and one a little early skips what's left of the beat.
+  uint64_t step_ns = origin + (uint64_t)(subbeats / N_SUBBEATS) * beat +
+    (uint64_t)at[k] * beat / N_SUBBEATS;
+  uint64_t gap = beat / N_SUBBEATS * 4;
+  int grid = 2 * pedals + jig_time;
+  if (grid != hat_grid) {
+    // A breath just starting, or onto or off the pedals' grid, or into or
+    // out of jig time: now if this step has only just begun, or the next.
+    if (into - at[k] >= 3 && step_ns > hat_last_step_ns) {
+      hat_last_step_ns = step_ns;
+    }
+    hat_grid = grid;
+  }
+  if (step_ns < hat_last_step_ns + gap) return;
+  hat_last_step_ns = step_ns;
+
+  double velocity;
+  if (k % 2 == 0) {
+    velocity = HAT_SOFTEST + (HAT_HARDEST - HAT_SOFTEST) *
+      hat_ramp(blown, BREATH_GATE_SHUT, HAT_MAIN_FULL);
+    if (k % 4) velocity *= HAT_OFF;
+  } else {
+    velocity = HAT_HARDEST * HAT_OFF *
+      hat_ramp(blown, HAT_EXTRA_FROM, HAT_EXTRA_FULL);
+  }
+  int v = (int)(velocity * HAT_VEL);
+  if (v < 1) return;
+  send_midi(MIDI_ON, MIDI_HAT, normalize(v), CHANNEL_HAT);
+}
+
+// The Brushes' slap: blowing hard, past BRUSH_SLAP_AT, slaps them once off
+// the Brush kit, on a channel of its own -- a good deal softer than the
+// tambourine, a brush slap being a light thing -- and not again until the
+// breath's come well back down, below BRUSH_SLAP_AT - BRUSH_REARM, so it's a
+// slap you mean over the stir rather than one you drift into.  Their stir is
+// the Mac's own (macapi.h).  Played from the breath as it comes.
+#define BRUSH_SLAP_AT 0.9
+#define BRUSH_REARM 0.3
+// The slap is about 3dB under the tambourine at the same velocity, so its
+// scale is 16% up to start from level.
+#define BRUSH_SLAP_VEL ((int)(68 * TAMB_VEL * 1.16))
+
+bool brush_live, brush_armed;
+
+void breath_brush_slap(void) {
+  if (!c->on[ENDPOINT_BREATH] || !(c->breath_layers & BREATH_LAYER_BRUSHES)) {
+    brush_live = false;
     return;
   }
   double blown = breath_blown(breath);
-  uint64_t t = now();
-  if (s->stick < 0) {
-    s->stick = blown;
-    s->travel = 0;
-    s->hit_armed = blown < sound->hit_at;
-    s->big_armed = blown < SHAKE_BIG;
+  if (!brush_live) {
+    brush_live = true;
+    brush_armed = blown < BRUSH_SLAP_AT;
     return;
   }
-
-  // The hits, going up through them.  Past both at once is the big one.
-  if (sound->big >= 0 && s->big_armed && blown >= SHAKE_BIG) {
-    s->big_armed = s->hit_armed = false;
-    if (sound->big_under >= 0) {
-      shaker_play(sound, sound->big_under, sound->big_vel * 3 / 4);
-    }
-    shaker_play(sound, sound->big, sound->big_vel);
-    s->last_ns = s->hit_ns = t;
-  } else if (s->hit_armed && blown >= sound->hit_at) {
-    s->hit_armed = false;
-    shaker_play(sound, sound->hit, sound->hit_vel);
-    s->last_ns = s->hit_ns = t;
+  if (brush_armed && blown >= BRUSH_SLAP_AT) {
+    brush_armed = false;
+    send_midi(MIDI_ON, MIDI_BRUSH_SLAP, normalize(BRUSH_SLAP_VEL),
+              CHANNEL_BRUSH);
   }
-  if (blown < sound->hit_at - sound->rearm) s->hit_armed = true;
-  if (blown < SHAKE_BIG - sound->rearm) s->big_armed = true;
-
-  // The jangle: movement, through the slack.
-  if (sound->jangle < 0) return;
-  double was = s->stick;
-  if (blown > s->stick + SHAKE_BACKLASH) {
-    s->stick = blown - SHAKE_BACKLASH;
-  } else if (blown < s->stick - SHAKE_BACKLASH) {
-    s->stick = blown + SHAKE_BACKLASH;
-  }
-  double moved = s->stick - was;
-  s->travel += fabs(moved);
-  if (s->travel < 1.0 / SHAKE_STEPS) return;
-  s->travel = 0;
-  if (t - s->hit_ns < SHAKE_AFTER_HIT_NS) return;
-  if (t - s->last_ns < SHAKE_GAP_NS) return;
-  s->last_ns = t;
-  // 20 at a whisper to 55 blowing hard; the way down a little softer.
-  shaker_play(sound, sound->jangle,
-              (int)((20 + 35 * blown) * (moved > 0 ? 1 : 0.8)));
-}
-
-void breath_shakers(void) {
-  breath_shake(&tamb_shaker, &TAMB_SHAKE);
-  breath_shake(&brush_shaker, &BRUSHES);
+  if (blown < BRUSH_SLAP_AT - BRUSH_REARM) brush_armed = true;
 }
 
 // Tell the Mac's audio about the music, every tick.  NULL on the Pi.
@@ -3375,6 +3422,7 @@ void jml_tick() {
   maybe_end_notes();
   maybe_end_pitched_kick();
   breath_roll_tick();
+  breath_hat_tick();
   advance_lead_schedule();
   advance_glides();
   publish_music();

@@ -24,8 +24,10 @@
 // Past the sixteen channels the endpoints and pitched kick use, so the synth
 // has thirty-two (start_synth).
 #define CHANNEL_KICK 16
-// And the Breath Gate's brushes, past the drones' voice channels, below.
+// And the Breath Gate's brushes and Grid Hat, past the drones' voice
+// channels, below.
 #define CHANNEL_BRUSH 32
+#define CHANNEL_HAT 33
 
 #include "common.h"
 
@@ -149,6 +151,7 @@ static _Atomic int audio_chord_third;
 static _Atomic int audio_chord_fifth = 7;
 static _Atomic uint64_t audio_beat_start_ns;
 static _Atomic uint64_t audio_beat_ns;
+static _Atomic bool audio_jig;
 static _Atomic unsigned char audio_trance_gate[N_ENDPOINTS];
 static _Atomic unsigned char audio_gate_steps[6];
 static _Atomic int audio_n_gate_steps;
@@ -164,6 +167,7 @@ static void music_set(const MusicState* m) {
   atomic_store_explicit(&audio_beat_start_ns, m->beat_start_ns,
                         memory_order_relaxed);
   atomic_store_explicit(&audio_beat_ns, m->beat_ns, memory_order_relaxed);
+  atomic_store_explicit(&audio_jig, m->jig, memory_order_relaxed);
   for (int i = 0; i < m->n_gate_steps; i++) {
     atomic_store_explicit(&audio_gate_steps[i], m->gate_steps[i],
                           memory_order_relaxed);
@@ -275,7 +279,7 @@ static bool trance_gate_open(int pattern, double phase,
 // it isn't ducked; it isn't fluidsynth's.
 // ---------------------------------------------------------------------------
 
-#define SYNTH_CHANNELS 33  // MIDI channels, each rendered to its own pair
+#define SYNTH_CHANNELS 34  // MIDI channels, each rendered to its own pair
 #define KICK_DUCK_DEPTH 0.788f   // taken off at the bottom: about -13.5dB
 #define KICK_DUCK_ATTACK_MS 5    // down this fast, so it doesn't click
 #define KICK_DUCK_RELEASE 0.6    // back up over this much of a beat
@@ -769,14 +773,15 @@ static void play_scraper(Scraper* s, BreathPlayer* p, const ScraperSound* sound,
 
 // The Brushes' stir: brushes circling on a snare head without letting up,
 // the jazz drummer's stirring the soup, as fast as you're blowing.  Just past
-// the gate it's a slow, soft stir; blown up to where the slap comes in,
-// SHAKE_HIT, a quick hard scrub, and it holds there under the slaps
-// (jammermidilib.h's breath_shake).  Noise through the head's swish and the
+// the gate it's a slow, soft stir; blown up to BRUSH_FULL, a quick hard
+// scrub, and it holds there, under the slap past 90% (jammermidilib.h's
+// breath_brush_slap).  Noise through the head's swish and the
 // bristles' hiss, steady for a steady breath: the faster the stir, the
 // louder and brighter, and the grittier, the wires catching on the head's
 // coating more often.  It drifts a little from side to side as it circles,
 // BRUSH_SLOW_HZ to BRUSH_FAST_HZ times a second, and lifts off the head when
 // the breath shuts the gate, over BRUSH_LIFT_MS.
+#define BRUSH_FULL 0.75   // of the breath's range
 #define BRUSH_SLOW_HZ 0.6
 #define BRUSH_FAST_HZ 3.0
 #define BRUSH_PACE_MS 40    // how quickly the stir speeds up and slows down
@@ -785,9 +790,8 @@ static void play_scraper(Scraper* s, BreathPlayer* p, const ScraperSound* sound,
 #define BRUSH_GRIT_HZ 2500  // wires catching, a second, at full speed
 #define BRUSH_GRIT_MS 0.12
 #define BRUSH_PAN 0.2
-// A moderate stir at about -52dB, by perceived loudness: level with the Tamb
-// Shake's jangle, and under the Brush kit's slaps, the soft one about -49dB
-// and the big one about -42dB.
+// A moderate stir at about -52dB, by perceived loudness: under the Brush
+// kit's slap, which is about -45dB.
 #define BRUSH_LEVEL 0.015
 
 typedef struct {
@@ -809,7 +813,7 @@ static void play_brush(float* left, float* right, int len, bool playing,
   } else if (blown > BREATH_GATE_OPEN) {
     brush.down = true;
   }
-  double pace = (blown - BREATH_GATE_SHUT) / (SHAKE_HIT - BREATH_GATE_SHUT);
+  double pace = (blown - BREATH_GATE_SHUT) / (BRUSH_FULL - BREATH_GATE_SHUT);
   pace = !brush.down ? brush.pace : pace < 0 ? 0 : pace > 1 ? 1 : pace;
   double touch = brush.down ? 1 : 0;
   double k_pace = 1 - exp(-1 / (sample_rate * BRUSH_PACE_MS / 1000));
@@ -838,6 +842,163 @@ static void play_brush(float* left, float* right, int len, bool playing,
     double pan = BRUSH_PAN * cos(2 * M_PI * brush.phase);
     left[i] += (float)(y * level * (1 - pan));
     right[i] += (float)(y * level * (1 + pan));
+  }
+}
+
+// The Tamb Shake: a tambourine jiggled in the hand, the forearm shaking it
+// back and forth on the beat's grid -- 32nds, or six to a beat in jig time
+// -- for as long as you blow.  Its jingles, TAMB_JINGLES little metal discs,
+// each shake on their own: at each turn of the hand each is thrown against
+// its pair a moment after the hand turns, its own moment, and bounces back
+// a time or two, and loose as they are, they rattle between the turns too.
+// Just past the gate only some of them touch, softly and loosely spread;
+// blown harder, all of them, harder and closer together, bouncing more and
+// rattling on, until by TAMB_FULL it's a rough, dense shake.  The stroke out
+// a little harder than the stroke back.  Each jingle is noise through two
+// bands of its own, around 5kHz and 11kHz, as a tambourine's is, and a
+// faint ring, dying away over 50-90ms, and little under 3kHz.  On the pedals' grid while they're
+// going, and from the start of the breath at 116 BPM when they aren't
+// (audio_grid_beats).
+#define TAMB_FULL 0.9
+#define TAMB_JINGLES 12
+#define TAMB_SPREAD_MS 30.0     // how long a turn's clashes take, gently
+#define TAMB_TIGHT_MS 12.0      // and hard
+#define TAMB_RATTLE_HZ 12.0     // each jingle, between the turns, blowing hard
+#define TAMB_BACK 0.8           // the stroke back, against the stroke out
+#define TAMB_LEVEL 0.11
+
+typedef struct {
+  Bandpass low, high;
+  double ring_c1, ring_c2, ring_y1, ring_y2;
+  double env, decay;    // how hard it's sounding, and how fast that goes
+  double hit_at;        // seconds into the turn it strikes next, or -1
+  double hit;           // how hard
+} TambJingle;
+
+typedef struct {
+  bool open;
+  bool made;            // the jingles' sizes picked
+  uint64_t origin_ns;
+  int64_t slot;         // the turn it's on
+  double since_turn;    // seconds
+  bool back;            // this turn's the stroke back
+  double hard;          // 0-1, followed
+  double below;         // what the high-pass takes off
+  TambJingle jingles[TAMB_JINGLES];
+} Tambourine;
+
+static BreathPlayer tamb_player;
+static Tambourine tamb;
+
+static double tamb_random(void) {
+  return (breath_noise() + 1) / 2;
+}
+
+// Each jingle its own size, and so its own colour and ring.
+static void tamb_make(double sample_rate) {
+  for (int j = 0; j < TAMB_JINGLES; j++) {
+    TambJingle* g = &tamb.jingles[j];
+    bandpass_set(&g->low, 4600 + 2000 * tamb_random(), 6, sample_rate);
+    bandpass_set(&g->high, 10000 + 2500 * tamb_random(), 7, sample_rate);
+    double decay_s = 0.05 + 0.04 * tamb_random();
+    g->decay = exp(-1 / (sample_rate * decay_s));
+    double w = 2 * M_PI * (6000 + 3000 * tamb_random()) / sample_rate;
+    double r = exp(-1 / (sample_rate * decay_s * 0.7));
+    g->ring_c1 = 2 * r * cos(w);
+    g->ring_c2 = -r * r;
+    g->hit_at = -1;
+  }
+  tamb.made = true;
+}
+
+// The turn of the hand: each jingle that's loose enough to be thrown this
+// time, when, and how hard.
+static void tamb_turn(void) {
+  double spread = (TAMB_SPREAD_MS -
+    (TAMB_SPREAD_MS - TAMB_TIGHT_MS) * tamb.hard) / 1000;
+  for (int j = 0; j < TAMB_JINGLES; j++) {
+    TambJingle* g = &tamb.jingles[j];
+    if (tamb_random() > 0.35 + 0.65 * tamb.hard) {
+      g->hit_at = -1;
+      continue;
+    }
+    g->hit_at = spread * tamb_random() * tamb_random();
+    g->hit = (0.03 + 0.97 * pow(tamb.hard, 1.4)) *
+      (0.5 + 0.5 * tamb_random()) * (tamb.back ? TAMB_BACK : 1);
+  }
+}
+
+static void tamb_strike(TambJingle* g, double strength, double sample_rate) {
+  g->env += strength;
+  g->ring_y1 += 0.15 * strength;
+  // A bounce back off its pair, softer, more of them the harder it's
+  // shaken; or, between the turns, the odd rattle.
+  if (tamb_random() < 0.3 + 0.5 * tamb.hard && strength > 0.02) {
+    g->hit_at = tamb.since_turn + 0.006 + 0.012 * tamb_random();
+    g->hit = strength * (0.3 + 0.3 * tamb_random());
+  } else {
+    double rate = TAMB_RATTLE_HZ * tamb.hard * tamb.hard;
+    g->hit_at = rate > 0 ? tamb.since_turn - log(tamb_random() + 1e-9) / rate
+                         : -1;
+    g->hit = (0.1 + 0.3 * tamb_random()) * strength;
+  }
+  (void)sample_rate;
+}
+
+static void play_tamb(float* left, float* right, int len, bool playing,
+                      double blown, double sample_rate) {
+  if (!tamb.made) tamb_make(sample_rate);
+  if (!playing || blown < BREATH_GATE_SHUT) {
+    if (tamb.open) {
+      for (int j = 0; j < TAMB_JINGLES; j++) tamb.jingles[j].hit_at = -1;
+    }
+    tamb.open = false;
+  } else if (!tamb.open && blown > BREATH_GATE_OPEN) {
+    tamb.open = true;
+    tamb.origin_ns = audio_block_ns;
+    tamb.slot = -1;
+  }
+  double hard = (blown - BREATH_GATE_SHUT) / (TAMB_FULL - BREATH_GATE_SHUT);
+  hard = hard < 0 ? 0 : hard > 1 ? 1 : hard;
+  double k_hard = 1 - exp(-1 / (sample_rate * 0.02));
+  double k_below = 1 - exp(-2 * M_PI * 3000 / sample_rate);
+  int division =
+    atomic_load_explicit(&audio_jig, memory_order_relaxed) ? 6 : 8;
+  for (int i = 0; i < len; i++) {
+    tamb.hard += (hard - tamb.hard) * k_hard;
+    if (tamb.open) {
+      uint64_t t = audio_block_ns + (uint64_t)(i * 1e9 / sample_rate);
+      int64_t slot =
+        (int64_t)floor(audio_grid_beats(t, tamb.origin_ns) * division);
+      if (slot != tamb.slot) {
+        // A turn of the hand, and the first as the breath starts.
+        tamb.back = tamb.slot >= 0 && slot % 2;
+        tamb.slot = slot;
+        tamb.since_turn = 0;
+        tamb_turn();
+      }
+    }
+    double y = 0;
+    for (int j = 0; j < TAMB_JINGLES; j++) {
+      TambJingle* g = &tamb.jingles[j];
+      if (g->hit_at >= 0 && tamb.since_turn >= g->hit_at) {
+        g->hit_at = -1;
+        tamb_strike(g, g->hit, sample_rate);
+      }
+      if (g->env < 1e-6 && fabs(g->ring_y1) < 1e-6) continue;
+      double x = breath_noise() * g->env;
+      g->env *= g->decay;
+      double ring = g->ring_c1 * g->ring_y1 + g->ring_c2 * g->ring_y2;
+      g->ring_y2 = g->ring_y1;
+      g->ring_y1 = ring;
+      y += bandpass_run(&g->low, x) + bandpass_run(&g->high, x) + ring;
+    }
+    tamb.since_turn += 1 / sample_rate;
+    // Nothing much under 3kHz: the band's skirts, not the jingles.
+    tamb.below += (y - tamb.below) * k_below;
+    y -= tamb.below;
+    left[i] += (float)(y * TAMB_LEVEL);
+    right[i] += (float)(y * TAMB_LEVEL);
   }
 }
 
@@ -1040,6 +1201,11 @@ static void play_breath_instruments(float* left, float* right, int len,
   if (breath_player_run(&brush_player, on, &brush, sizeof(brush),
                         sample_rate, len)) {
     play_brush(left, right, len, on, blown, sample_rate);
+  }
+  on = fx & BREATH_FX_TAMB;
+  if (breath_player_run(&tamb_player, on, &tamb, sizeof(tamb), sample_rate,
+                        len)) {
+    play_tamb(left, right, len, on, blown, sample_rate);
   }
 }
 
@@ -1281,6 +1447,7 @@ void start_synth(const char* soundfont_path, const char* device) {
   fluid_settings_setint(fl_settings, "synth.audio-channels", 1);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_KICK, CHANNEL_TYPE_DRUM);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_BRUSH, CHANNEL_TYPE_DRUM);
+  fluid_synth_set_channel_type(fl_synth, CHANNEL_HAT, CHANNEL_TYPE_DRUM);
 
   fl_sfont_id = fluid_synth_sfload(fl_synth, soundfont_path, 1);
   if (fl_sfont_id == FLUID_FAILED) {
@@ -1290,6 +1457,8 @@ void start_synth(const char* soundfont_path, const char* device) {
   printf("loaded soundfont %s\n", soundfont_path);
   fluid_synth_program_select(fl_synth, CHANNEL_BRUSH, fl_sfont_id,
                              PERCUSSION_BANK, BRUSH_KIT);
+  fluid_synth_program_select(fl_synth, CHANNEL_HAT, fl_sfont_id,
+                             PERCUSSION_BANK, HAT_KIT);
 
   set_synth_gain(synth_gain);
   set_audio_device(device);
@@ -1323,10 +1492,11 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   if (action == MIDI_CC) {
     fluid_synth_cc(fl_synth, channel, note, velocity);
     // The kick's channel is the drum's, split off: same volume, pan, fade.
-    // And so are the brushes', on their own kit.
+    // And so are the brushes' and the Grid Hat's, on their own kits.
     if (channel == CHANNEL_DRUM) {
       fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
       fluid_synth_cc(fl_synth, CHANNEL_BRUSH, note, velocity);
+      fluid_synth_cc(fl_synth, CHANNEL_HAT, note, velocity);
     }
     // And a drone's voice channels are the drone's.
     int base = voice_channel_base(channel);

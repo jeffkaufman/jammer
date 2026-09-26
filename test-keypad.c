@@ -495,8 +495,8 @@ static void test_breath_gate() {
         "` didn't switch the Breath Gate on and select it");
   CHECK(lit("K") && !lit("A") && !lit("C"),
         "K should show the Tamb Shake on, and no pad");
-  CHECK(told_fx == 0, "the Tamb Shake is the drum's; there's nothing else "
-        "to play");
+  CHECK(told_fx == BREATH_FX_TAMB, "the Tamb Shake should be all the Mac "
+        "plays");
 
   // The rest of this is a pad, Halo Pad, on its own.
   press("C");
@@ -2545,8 +2545,36 @@ static int tamb_loudest(void) {
   }
   return loudest;
 }
-// The loudest a jangle goes, blowing hard.
-#define TAMB_JANGLE_LOUDEST ((int)(55 * TAMB_VEL) + 1)
+// Hats sent, with velocity in [lo, hi]; and the loudest.
+static int hat_taps(int lo, int hi) {
+  int n = 0;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].action == MIDI_ON && tapped[i].channel == CHANNEL_HAT &&
+        tapped[i].note == MIDI_HAT && tapped[i].velocity >= lo &&
+        tapped[i].velocity <= hi) {
+      n++;
+    }
+  }
+  return n;
+}
+static int hat_loudest(void) {
+  int loudest = 0;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].channel == CHANNEL_HAT && tapped[i].velocity > loudest) {
+      loudest = tapped[i].velocity;
+    }
+  }
+  return loudest;
+}
+
+// The Grid Hat playing for `ms`, ticked as jammer does.
+static void hat_for(int ms) {
+  uint64_t until = now() + ms * 1000000ULL;
+  while (now() < until) {
+    breath_hat_tick();
+    usleep(1000);
+  }
+}
 
 // The jaw harp's voice keys are its own: the four that work kept where they
 // were, and the rest what suits it at its pitch, each at its own volume.
@@ -2624,23 +2652,26 @@ static void test_jawharp_voices() {
   full_reset();
 }
 
-// The tambourines on the Breath Gate's J and K.  J rolls like the Snare
-// Roll, alongside it if both are on; K is shaken by moving the breath.
+// The shakers on the Breath Gate's J, K and L: the Brushes, the Tamb Shake
+// and the Grid Hat.
 static void test_tambourines() {
   full_reset();
   midi_tap = tap_midi;
   breath_hook = record_breath;
   press("`");
   press("K");  // the Tamb Shake it starts with, off, for the Brushes first
-  const char* caps[] = {"J", "K"};
-  const char* labels[] = {"Brushes", "Tamb\nShake"};
-  for (int i = 0; i < 2; i++) {
+  const char* caps[] = {"J", "K", "L"};
+  const char* labels[] = {"Brushes", "Tamb\nShake", "Grid\nHat"};
+  for (int i = 0; i < 3; i++) {
     const Key* k = key_for_cap(caps[i]);
     CHECK(!key_is_dead(k) && strcmp(key_current_label(k), labels[i]) == 0,
           "%s should be %s on the Breath Gate", caps[i], labels[i]);
   }
   const char* spoken[] = {"press", "brushes"};
   CHECK(strcmp(phrase(spoken, 2, true), "press J") == 0, "'press brushes'");
+  const char* spoken_hat[] = {"press", "grid", "hat"};
+  CHECK(strcmp(phrase(spoken_hat, 3, true), "press L") == 0,
+        "'press grid hat'");
 
   // J: brushes.  Blowing stirs them, which is the Mac's own sound (see
   // test_brush_swish) and no notes at all; past 90% one slap off the Brush
@@ -2682,57 +2713,171 @@ static void test_tambourines() {
   handle_cc(CC_BREATH, 0);
   press("J");
 
-  // K: shaken.  Holding the breath still is silence; wiggling it gently
-  // jangles, softly; blowing up past medium hits, and past hard hits big.
+  // K: the Tamb Shake, the Mac's own (see test_tamb_shake): no notes.
   press("K");
+  CHECK(lit("K") && (told_fx & BREATH_FX_TAMB), "K should switch the Tamb "
+        "Shake on");
+  n_tapped = 0;
+  handle_cc(CC_BREATH, 60);
+  hat_for(300);
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_DRUM) == 0 &&
+        count_tapped(MIDI_ON, -1, CHANNEL_HAT) == 0,
+        "the Tamb Shake shouldn't play any notes");
+  press("K");
+  CHECK(!(told_fx & BREATH_FX_TAMB), "K again should switch it off");
+
+  // L: the Grid Hat.  At rest, nothing; blowing, 16ths at 116 BPM with no
+  // pedals, one every 129ms, soft blowing gently and hard blowing medium;
+  // blowing hard, 32nds; three a beat in jig time, and six blowing hard; and
+  // it stops with the breath.
+  press("L");
+  handle_cc(CC_BREATH, 0);
+  n_tapped = 0;
+  hat_for(150);
+  CHECK(hat_taps(0, 127) == 0, "a breath at rest shouldn't play it");
   handle_cc(CC_BREATH, 20);
+  hat_for(1000);
+  int gentle = hat_taps(0, 127), gentle_loudest = hat_loudest();
+  CHECK(gentle >= 7 && gentle <= 9, "%d hats in a second of 16ths",
+        gentle);
+  CHECK(gentle_loudest <= 30, "a gentle breath should play it softly, "
+        "not at %d", gentle_loudest);
   n_tapped = 0;
-  for (int i = 0; i < 20; i++) handle_cc(CC_BREATH, 20);
-  CHECK(tamb_taps(0, 127) == 0, "a steady breath shouldn't shake it");
-  for (int w = 0; w < 12; w++) {  // a gentle wiggle, low down
-    handle_cc(CC_BREATH, w % 2 ? 16 : 30);
-    usleep(30000);
-  }
-  int jangles = tamb_taps(1, 127);
-  CHECK(jangles >= 8, "a wiggle should jangle, not %d times", jangles);
-  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 0,
-        "a gentle wiggle should only jangle, never hit");
+  handle_cc(CC_BREATH, BREATH_FLOOR + 35);  // under where the 32nds come in
+  hat_for(1000);
+  int medium = hat_taps(0, 127);
+  CHECK(medium >= 7 && medium <= 9, "%d hats in a second, blowing medium",
+        medium);
+  CHECK(hat_loudest() > gentle_loudest + 15, "blowing medium should play it "
+        "harder, not at %d", hat_loudest());
   n_tapped = 0;
-  for (int w = 0; w < 12; w++) {  // wiggling higher, still under the hit
-    handle_cc(CC_BREATH, w % 2 ? 60 : 78);
-    usleep(30000);
-  }
-  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 0,
-        "wiggling at 60-78 should still only jangle");
+  handle_cc(CC_BREATH, BREATH_FLOOR + 55);  // the 32nds fading in
+  hat_for(1000);
+  int fading = hat_taps(0, 127), fading_soft = hat_taps(0, 40);
+  CHECK(fading >= 14 && fading <= 17 && fading_soft >= 7,
+        "%d hats in a second, %d soft, as the 32nds fade in", fading,
+        fading_soft);
   n_tapped = 0;
-  handle_cc(CC_BREATH, 90);  // past the hit
-  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 1,
-        "blowing up past the hit should hit it once");
-  for (int i = 0; i < 10; i++) handle_cc(CC_BREATH, 90);
-  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 1,
-        "staying there shouldn't hit it again");
-  int hit = tamb_loudest();
-  usleep(100000);
-  handle_cc(CC_BREATH, 108);  // hard
-  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 2 && tamb_loudest() > hit,
-        "blowing up past hard should hit it again, and bigger");
+  handle_cc(CC_BREATH, 104);
+  hat_for(1000);
+  int hard = hat_taps(0, 127), hard_soft = hat_taps(0, 50);
+  CHECK(hard >= 14 && hard <= 17 && hard_soft == 0,
+        "%d hats in a second blowing hard, %d of them soft", hard, hard_soft);
   n_tapped = 0;
-  handle_cc(CC_BREATH, 30);  // back down, which arms it again
-  usleep(100000);
-  handle_cc(CC_BREATH, 90);
-  CHECK(tamb_taps(TAMB_JANGLE_LOUDEST + 1, 127) == 1,
-        "down and back up past the hit should hit it again");
-  press("K");
+  jig_time = true;
+  hat_for(1000);
+  int jig = hat_taps(0, 127);
+  CHECK(jig >= 10 && jig <= 13, "%d hats in a second of jig time, hard",
+        jig);
   n_tapped = 0;
-  for (int v = 10; v <= 110; v += 2) handle_cc(CC_BREATH, v);
-  CHECK(tamb_taps(0, 127) == 0, "K again should stop it");
+  handle_cc(CC_BREATH, 20);
+  hat_for(1000);
+  jig = hat_taps(0, 127);
+  CHECK(jig >= 5 && jig <= 7, "%d hats in a second of jig time, gently",
+        jig);
+  jig_time = false;
+  handle_cc(CC_BREATH, 0);
+  n_tapped = 0;
+  hat_for(300);
+  CHECK(hat_taps(0, 127) == 0, "it should stop with the breath");
+  press("L");
+  handle_cc(CC_BREATH, 60);
+  hat_for(300);
+  CHECK(hat_taps(0, 127) == 0, "L again should stop it");
   handle_cc(CC_BREATH, 0);
 
   // Away from the Breath Gate, J and K are DOWNBEAT and UPBEAT as ever.
   select_ep("W");
   CHECK(strcmp(key_current_label(key_for_cap("J")), "DOWN\nBEAT") == 0,
         "J should be DOWNBEAT on the foot bass");
+  CHECK(strcmp(key_current_label(key_for_cap("L")), "UP\nHIGH") == 0,
+        "L should be UP HIGH on the foot bass");
   breath_hook = NULL;
+  midi_tap = NULL;
+  full_reset();
+}
+
+// With the pedals keeping time, the Grid Hat plays where the foot bass
+// does, on the beat's 72 subbeats: 16ths blowing gently, with its upbeat a
+// subbeat early, and halfway between them too blowing hard -- or in jig time
+// its three, and six.  Three beats of it, a kick starting each, `late_ms`
+// after the beat before would have ended: which subbeats it played on in the
+// last, as a string, and how many hats in all.
+static int hat_subbeats(int breath, bool jig, int late_ms, char* out) {
+  jig_time = jig;
+  handle_cc(CC_BREATH, 0);
+  breath_hat_tick();
+  handle_cc(CC_BREATH, breath);
+  uint64_t beat = 60 * NS_PER_SEC / 116;
+  current_beat_ns = beat;
+  last_downbeat_ns = now();
+  int kicks = 0, from = hat_taps(0, 127), was = n_tapped;
+  out[0] = '\0';
+  while (true) {
+    uint64_t t = now();
+    if (t - last_downbeat_ns >= beat + late_ms * 1000000ULL) {
+      if (++kicks == 3) break;
+      last_downbeat_ns = t;  // a kick: the pedals' grid starts again
+      out[0] = '\0';
+    }
+    breath_hat_tick();
+    int subbeat = (int)((now() - last_downbeat_ns) * 72 / beat);
+    if (n_tapped != was) {
+      sprintf(out + strlen(out), "%s%d", out[0] ? " " : "", subbeat);
+    }
+    was = n_tapped;
+    usleep(500);
+  }
+  int hats = hat_taps(0, 127) - from;
+  handle_cc(CC_BREATH, 0);
+  breath_hat_tick();
+  current_beat_ns = 0;
+  last_downbeat_ns = 0;
+  jig_time = false;
+  return hats;
+}
+
+// Whether `got` is `want`, each subbeat or one after it, for scheduling.
+static bool subbeats_match(const char* got, const int* want, int n) {
+  const char* p = got;
+  for (int i = 0; i < n; i++) {
+    char* end;
+    long v = strtol(p, &end, 10);
+    if (end == p || v < want[i] || v > want[i] + 1) return false;
+    p = end;
+  }
+  while (*p == ' ') p++;
+  return *p == '\0';
+}
+
+static void test_grid_hat_on_the_pedals() {
+  full_reset();
+  midi_tap = tap_midi;
+  press("`");
+  press("K");  // the Tamb Shake it starts with, off
+  press("L");
+  char got[256];
+  hat_subbeats(BREATH_FLOOR + 20, false, 0, got);
+  const int straight[] = {0, 18, 35, 54};
+  CHECK(subbeats_match(got, straight, 4), "gently, the hat should play the "
+        "foot bass's 16ths, 0 18 35 54, beat after beat, not %s", got);
+  hat_subbeats(104, false, 0, got);
+  const int straight_hard[] = {0, 9, 18, 26, 35, 44, 54, 63};
+  CHECK(subbeats_match(got, straight_hard, 8), "hard, the hat should play "
+        "0 9 18 26 35 44 54 63, beat after beat, not %s", got);
+  hat_subbeats(BREATH_FLOOR + 20, true, 0, got);
+  const int jig[] = {0, 21, 45};
+  CHECK(subbeats_match(got, jig, 3), "gently in jig time, the hat should "
+        "play the foot bass's 0 21 45, beat after beat, not %s", got);
+  hat_subbeats(104, true, 0, got);
+  const int jig_hard[] = {0, 10, 21, 33, 45, 58};
+  CHECK(subbeats_match(got, jig_hard, 6), "hard in jig time, the hat should "
+        "play 0 10 21 33 45 58, beat after beat, not %s", got);
+  // Kicks a little late: the hat's played the downbeat already, when it was
+  // due, and doesn't again.
+  int hats = hat_subbeats(BREATH_FLOOR + 20, false, 15, got);
+  CHECK(hats >= 11 && hats <= 13, "%d hats in three beats of 16ths with the "
+        "kicks late", hats);
   midi_tap = NULL;
   full_reset();
 }
@@ -2795,6 +2940,70 @@ static void test_brush_swish() {
         held);
   CHECK(after < 0.01 * fast, "it should lift off once the breath stops: "
         "%.5f", after);
+  atomic_store(&audio_breath_fx, 0);
+  atomic_store(&audio_breath, 0);
+}
+
+// The Tamb Shake, rendered off a clock of its own, `seconds` at `breath`
+// after `settle`: how loud, and, if `pulse` isn't NULL, how strongly its
+// loudness 5ms at a time pulses at 32nds and at six a beat, at 116 BPM.
+static uint64_t tamb_clock = 1000000000ULL;
+static double tamb_shake(int breath, double settle, double seconds,
+                         double* pulse) {
+  const double sr = 48000;
+  float l[240], r[240];
+  double windows[1000];
+  int n = 0;
+  double sum = 0;
+  atomic_store(&audio_breath_fx, BREATH_FX_TAMB);
+  atomic_store(&audio_breath, breath);
+  for (int b = 0; b < (int)(settle * 200) + (int)(seconds * 200); b++) {
+    memset(l, 0, sizeof(l));
+    memset(r, 0, sizeof(r));
+    audio_block_ns = tamb_clock;
+    play_breath_instruments(l, r, 240, sr);
+    tamb_clock += 5000000;
+    if (b < (int)(settle * 200) || n >= 1000) continue;
+    double w = 0;
+    for (int i = 0; i < 240; i++) w += (double)l[i] * l[i];
+    windows[n++] = sqrt(w / 240);
+    sum += w;
+  }
+  double rms = sqrt(sum / (n * 240.0));
+  for (int k = 0; pulse && k < 2; k++) {
+    double hz = 116.0 / 60 * (k ? 6 : 8), re = 0, im = 0;
+    for (int i = 0; i < n; i++) {
+      re += windows[i] * cos(2 * M_PI * hz * i * 0.005);
+      im += windows[i] * sin(2 * M_PI * hz * i * 0.005);
+    }
+    pulse[k] = sqrt(re * re + im * im) / n;
+  }
+  return rms;
+}
+
+static void test_tamb_shake() {
+  int at_rest = BREATH_FLOOR;
+  int gentle = BREATH_FLOOR + (int)(0.25 * (BREATH_FULL - BREATH_FLOOR));
+  int medium = BREATH_FLOOR + (int)(0.5 * (BREATH_FULL - BREATH_FLOOR));
+  int hard = BREATH_FLOOR + (int)(0.9 * (BREATH_FULL - BREATH_FLOOR));
+  double straight[2], jig[2];
+  double still = tamb_shake(at_rest, 0.3, 0.5, NULL);
+  double soft = tamb_shake(gentle, 0.3, 3.0, NULL);
+  double mid = tamb_shake(medium, 0.3, 3.0, straight);
+  double loud = tamb_shake(hard, 0.3, 3.0, NULL);
+  atomic_store(&audio_jig, true);
+  tamb_shake(medium, 0.3, 3.0, jig);
+  atomic_store(&audio_jig, false);
+  double after = tamb_shake(at_rest, 0.5, 0.5, NULL);
+  CHECK(soft > 1e-5, "a gentle breath should shake it: %.6f", soft);
+  CHECK(still < soft * 0.01, "a breath at rest shouldn't: %.6f", still);
+  CHECK(mid > soft * 2 && loud > mid * 2, "blowing harder should shake it "
+        "harder: %.6f, %.6f, %.6f", soft, mid, loud);
+  CHECK(straight[0] > 2 * straight[1], "it should shake in 32nds: %.6f at "
+        "32nds, %.6f at six a beat", straight[0], straight[1]);
+  CHECK(jig[1] > 2 * jig[0], "it should shake six a beat in jig time: "
+        "%.6f at 32nds, %.6f at six a beat", jig[0], jig[1]);
+  CHECK(after < loud * 0.01, "it should stop with the breath: %.6f", after);
   atomic_store(&audio_breath_fx, 0);
   atomic_store(&audio_breath, 0);
 }
@@ -2922,6 +3131,8 @@ int main() {
   test_every_kick_plays();
   test_tambourines();
   test_brush_swish();
+  test_grid_hat_on_the_pedals();
+  test_tamb_shake();
   test_jawharp_voices();
   test_build_voices();
   test_vocoder();
