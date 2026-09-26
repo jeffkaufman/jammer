@@ -131,6 +131,8 @@ typedef struct {
   bool mando_on;
   bool mando_selected;
   bool mando_has_input;
+  bool mando_recording;
+  double mando_rec_seconds;
   unsigned mando_voices;
   int mando_voice[N_KEYS];  // MANDO_VOICES index each key has, or -1
   const char* mando_fx_side_label;
@@ -229,6 +231,9 @@ static void take_snapshot(Snapshot* s) {
   s->mando_on = mando_on;
   s->mando_selected = mando_selected;
   s->mando_has_input = whistle_available && mando_has_input();
+  s->mando_recording = mando_rec_running();
+  s->mando_rec_seconds = s->mando_recording
+    ? atomic_load(&mando_rec_frames) / mando_rec.rate : 0;
   s->mando_voices = mando_voices;
   s->mando_fx_side_label = mando_fx_side_label();
   float mando_level =
@@ -800,6 +805,10 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     // The input, in the units its gate is set in, and where the voices go.
     [mando appendFormat:@"  in %3.0fdB",
           20 * log10(fmax(snapshot.mando_level, 1e-4))];
+    if (snapshot.mando_recording) {
+      int t = (int)snapshot.mando_rec_seconds;
+      [mando appendFormat:@"  ● rec %d:%02d", t / 60, t % 60];
+    }
     if (snapshot.mando_voices & ~(MANDO_BIT(MANDO_TUNER) |
                                   MANDO_BIT(MANDO_BOOST) |
                                   MANDO_BIT(MANDO_BREATH))) {
@@ -1471,6 +1480,7 @@ static void flash_from_speech(int key) {
 @property(strong) NSMenu* fxMenu;
 @property(strong) NSTextField* fxGateCaption;
 @property(strong) NSTextField* mandoGateCaption;
+@property(strong) NSMenu* mandoMenu;
 - (void)rebuildAudioMenu;
 - (void)rebuildWhistleMenu;
 @end
@@ -2133,6 +2143,80 @@ static void flash_from_speech(int key) {
 
 - (void)menuNeedsUpdate:(NSMenu*)menu {
   if (menu == self.fxMenu) [self rebuildFxMenu];
+  if (menu == self.mandoMenu) [self rebuildMandoMenu];
+}
+
+// ---------------------------------------------------------------------------
+// The Mandolin menu: recording it, for trying the effects against later.
+// See mandolin.h.
+// ---------------------------------------------------------------------------
+
+// Where the recordings go, made if it isn't there.
+static NSURL* mando_recordings_dir(void) {
+  NSURL* support = [[NSFileManager.defaultManager
+    URLsForDirectory:NSApplicationSupportDirectory
+           inDomains:NSUserDomainMask] firstObject];
+  NSURL* dir =
+    [support URLByAppendingPathComponent:@"com.jefftk.jammer/mandolin"];
+  [NSFileManager.defaultManager createDirectoryAtURL:dir
+                         withIntermediateDirectories:YES
+                                          attributes:nil
+                                               error:nil];
+  return dir;
+}
+
+- (void)rebuildMandoMenu {
+  NSMenu* menu = self.mandoMenu;
+  [menu removeAllItems];
+  bool running = mando_rec_running();
+  NSMenuItem* record = [[NSMenuItem alloc]
+    initWithTitle:running ? @"Stop Recording Mandolin" : @"Record Mandolin"
+           action:@selector(recordMandolin:) keyEquivalent:@""];
+  record.target = self;
+  record.state = running ? NSControlStateValueOn : NSControlStateValueOff;
+  record.enabled = running || (whistle_available && mando_has_input());
+  [menu addItem:record];
+  if (!running && !record.enabled) {
+    NSMenuItem* why = [[NSMenuItem alloc]
+      initWithTitle:@"Needs an audio input with a second channel"
+             action:nil keyEquivalent:@""];
+    why.enabled = NO;
+    [menu addItem:why];
+  }
+  NSMenuItem* show = [[NSMenuItem alloc]
+    initWithTitle:@"Show Recordings in Finder"
+           action:@selector(showMandolinRecordings:) keyEquivalent:@""];
+  show.target = self;
+  [menu addItem:show];
+  menu.autoenablesItems = NO;
+}
+
+// The second input as it comes, into mandolin-YYYYMMDD-HHMMSS.wav, until
+// it's chosen again.
+- (void)recordMandolin:(id)sender {
+  if (mando_rec_running()) {
+    double seconds = mando_rec_stop();
+    printf("mandolin: recorded %.1fs to %s", seconds, mando_rec.path);
+    int dropped = atomic_load(&mando_rec_dropped);
+    if (dropped) printf(" (%d blocks dropped)", dropped);
+    printf("\n");
+    fflush(stdout);
+  } else {
+    NSDateFormatter* format = [NSDateFormatter new];
+    format.dateFormat = @"yyyyMMdd-HHmmss";
+    NSString* path = [mando_recordings_dir() URLByAppendingPathComponent:
+      [NSString stringWithFormat:@"mandolin-%@.wav",
+                                 [format stringFromDate:[NSDate date]]]].path;
+    if (!mando_rec_start(path.UTF8String, synth_sample_rate)) {
+      printf("mandolin: can't record to %s: %s\n", path.UTF8String,
+             strerror(errno));
+    }
+  }
+  [self.view setNeedsDisplay:YES];
+}
+
+- (void)showMandolinRecordings:(id)sender {
+  [NSWorkspace.sharedWorkspace openURL:mando_recordings_dir()];
 }
 
 // An effect's item switches it on or off beside the rest; None, all of them
@@ -2296,6 +2380,7 @@ static void flash_from_speech(int key) {
 
 - (void)applicationWillTerminate:(NSNotification*)note {
   fkeys_release();
+  mando_rec_stop();  // so the file's finished, not left saying it's empty
   LOCK();
   all_notes_off();
   UNLOCK();
@@ -2345,6 +2430,12 @@ static void setup_menu(JammerAppDelegate* delegate) {
   delegate.speechMenu =
     [[NSMenu alloc] initWithTitle:@"Speech Recognition"];
   speech_item.submenu = delegate.speechMenu;
+
+  NSMenuItem* mando_item = [NSMenuItem new];
+  [menubar addItem:mando_item];
+  delegate.mandoMenu = [[NSMenu alloc] initWithTitle:@"Mandolin"];
+  delegate.mandoMenu.delegate = delegate;
+  mando_item.submenu = delegate.mandoMenu;
 }
 
 int main(int argc, const char** argv) {

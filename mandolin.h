@@ -1,6 +1,8 @@
 #ifndef JML_MANDOLIN_H
 #define JML_MANDOLIN_H
 
+#include <pthread.h>
+
 // The mandolin: whatever comes into the audio device's second input, played
 // out of the right channel, the alternate one, which goes to the talkbox the
 // mandolin shares.  Everything else only reaches the right when CH puts it
@@ -737,6 +739,8 @@ static bool mando_ramp_live(const WhistleRamp* r) {
   return r->live > 0 || r->target > 0;
 }
 
+static void mando_rec_push(const float* in, int len);  // below
+
 // The mandolin, from the second input, into mando_block, and its voices
 // into mando_voice_block.  Called from whistle_mix with the block it popped.
 static void mando_process(const float* in, int len, double rate) {
@@ -794,6 +798,8 @@ static void mando_process(const float* in, int len, double rate) {
   mando.gate.threshold = threshold;
   mando.vocoder.room.threshold = threshold * MANDO_VOCODER_INPUT_GAIN;
   mando_voices_left = pub & MANDO_PUB_LEFT;
+
+  mando_rec_push(in, len);
 
   float peak = 0;
   for (int i = 0; i < len; i++) {
@@ -933,6 +939,128 @@ __attribute__((unused))
 static bool mando_has_input(void) {
   return atomic_load_explicit(&whistle_input_count,
                               memory_order_relaxed) >= 2;
+}
+
+// ---------------------------------------------------------------------------
+// Recording it
+//
+// Mandolin > Record Mandolin: the second input as it comes, before anything
+// is done to it, into a WAV -- 32-bit float, mono, the rig's rate, as the
+// number clips are -- for trying the effects against afterwards.  The audio
+// thread only copies each block into a ring; a thread of the recording's
+// own drains it to the file, so the disk never holds the audio up.  A block
+// that finds the ring full is dropped, and counted.
+// ---------------------------------------------------------------------------
+
+#define MANDO_REC_RING (1u << 20)  // about 20s at 48kHz: plenty of slack
+
+static float mando_rec_ring[MANDO_REC_RING];
+static _Atomic unsigned mando_rec_write, mando_rec_read;
+static _Atomic int mando_recording;      // the audio thread should copy
+static _Atomic long long mando_rec_frames;  // written to the file so far
+static _Atomic int mando_rec_dropped;    // blocks the ring had no room for
+
+static struct {
+  FILE* file;
+  pthread_t thread;
+  _Atomic int stop;
+  double rate;
+  char path[1024];
+} mando_rec;
+
+// Audio thread, from mando_process: the block as it came in.
+static void mando_rec_push(const float* in, int len) {
+  if (!atomic_load_explicit(&mando_recording, memory_order_acquire)) return;
+  unsigned write = atomic_load_explicit(&mando_rec_write,
+                                        memory_order_relaxed);
+  unsigned read = atomic_load_explicit(&mando_rec_read, memory_order_acquire);
+  if (MANDO_REC_RING - (write - read) < (unsigned)len) {
+    atomic_fetch_add_explicit(&mando_rec_dropped, 1, memory_order_relaxed);
+    return;
+  }
+  for (int i = 0; i < len; i++) {
+    mando_rec_ring[(write + (unsigned)i) & (MANDO_REC_RING - 1)] = in[i];
+  }
+  atomic_store_explicit(&mando_rec_write, write + (unsigned)len,
+                        memory_order_release);
+}
+
+static void mando_wav_header(FILE* f, double rate, long long frames) {
+  uint32_t data = (uint32_t)(frames * 4);
+  uint32_t r = (uint32_t)rate;
+  uint32_t riff = 36 + data, fmt_len = 16, bytes_per_s = r * 4;
+  uint16_t format = 3 /* float */, channels = 1, align = 4, bits = 32;
+  fseek(f, 0, SEEK_SET);
+  fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f);
+  fwrite("WAVEfmt ", 1, 8, f); fwrite(&fmt_len, 4, 1, f);
+  fwrite(&format, 2, 1, f); fwrite(&channels, 2, 1, f);
+  fwrite(&r, 4, 1, f); fwrite(&bytes_per_s, 4, 1, f);
+  fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f);
+  fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
+  fseek(f, 0, SEEK_END);
+}
+
+// Whatever's in the ring, onto the end of the file.
+static void mando_rec_drain(void) {
+  unsigned read = atomic_load_explicit(&mando_rec_read, memory_order_relaxed);
+  unsigned write = atomic_load_explicit(&mando_rec_write,
+                                        memory_order_acquire);
+  while (read != write) {
+    unsigned at = read & (MANDO_REC_RING - 1);
+    unsigned n = write - read;
+    if (n > MANDO_REC_RING - at) n = MANDO_REC_RING - at;  // to the wrap
+    fwrite(mando_rec_ring + at, sizeof(float), n, mando_rec.file);
+    read += n;
+    atomic_fetch_add_explicit(&mando_rec_frames, n, memory_order_relaxed);
+  }
+  atomic_store_explicit(&mando_rec_read, read, memory_order_release);
+}
+
+static void* mando_rec_thread(void* unused) {
+  (void)unused;
+  while (!atomic_load_explicit(&mando_rec.stop, memory_order_acquire)) {
+    mando_rec_drain();
+    usleep(50000);
+  }
+  mando_rec_drain();
+  return NULL;
+}
+
+// Main thread.  Start recording into `path`, at `rate`; false, and errno,
+// if the file can't be made.
+static bool mando_rec_start(const char* path, double rate) {
+  if (mando_rec.file) return true;
+  FILE* f = fopen(path, "wb");
+  if (!f) return false;
+  snprintf(mando_rec.path, sizeof(mando_rec.path), "%s", path);
+  mando_rec.file = f;
+  mando_rec.rate = rate;
+  mando_wav_header(f, rate, 0);
+  atomic_store(&mando_rec_frames, 0);
+  atomic_store(&mando_rec_dropped, 0);
+  atomic_store(&mando_rec.stop, 0);
+  // Anything from before now isn't this recording's.
+  atomic_store(&mando_rec_read, atomic_load(&mando_rec_write));
+  pthread_create(&mando_rec.thread, NULL, mando_rec_thread, NULL);
+  atomic_store_explicit(&mando_recording, 1, memory_order_release);
+  return true;
+}
+
+// Main thread.  Stop, and finish the file; how many seconds it kept.
+static double mando_rec_stop(void) {
+  if (!mando_rec.file) return 0;
+  atomic_store_explicit(&mando_recording, 0, memory_order_release);
+  atomic_store_explicit(&mando_rec.stop, 1, memory_order_release);
+  pthread_join(mando_rec.thread, NULL);
+  long long frames = atomic_load(&mando_rec_frames);
+  mando_wav_header(mando_rec.file, mando_rec.rate, frames);
+  fclose(mando_rec.file);
+  mando_rec.file = NULL;
+  return frames / mando_rec.rate;
+}
+
+static bool mando_rec_running(void) {
+  return mando_rec.file != NULL;
 }
 
 #endif

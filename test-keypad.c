@@ -1603,6 +1603,52 @@ static void test_mandolin_effects() {
   mando_reset();
 }
 
+// Record Mandolin: the second input as it came, sample for sample, whatever
+// the mandolin was doing to it, and a header that says how long it is.
+static void test_mandolin_recording() {
+  mando_reset();
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_DRIVE) | MANDO_BIT(MANDO_SHIMMER);
+  mando_publish();
+  const char* path = "/tmp/jammer-test-mandolin.wav";
+  CHECK(mando_rec_start(path, 48000), "couldn't start recording");
+  CHECK(mando_rec_running(), "it should say it's recording");
+  static float sent[48000];
+  for (int b = 0; b < 100; b++) {
+    float in[480];
+    for (int i = 0; i < 480; i++) {
+      in[i] = sent[b * 480 + i] = mando_strum(b * 480 + i, 12000, b % 3);
+    }
+    mando_process(in, 480, 48000);
+  }
+  double seconds = mando_rec_stop();
+  CHECK(!mando_rec_running(), "and that it's stopped");
+  CHECK(fabs(seconds - 1) < 1e-9, "recorded %.3fs of 1", seconds);
+  mando_process(sent, 480, 48000);  // after it stopped: not recorded
+  long long n = 0;
+  double rate = 0;
+  float* got = nr_read_wav(path, &n, &rate);
+  CHECK(got && n == 48000 && rate == 48000,
+        "read back %lld samples at %.0fHz", n, rate);
+  if (got && n == 48000) {
+    CHECK(memcmp(got, sent, sizeof(sent)) == 0,
+          "the recording isn't the input as it came");
+  }
+  free(got);
+  FILE* f = fopen(path, "rb");
+  unsigned char h[44] = {0};
+  if (f) {
+    fread(h, 1, 44, f);
+    fclose(f);
+  }
+  unsigned data = h[40] | h[41] << 8 | h[42] << 16 | (unsigned)h[43] << 24;
+  CHECK(data == 48000 * 4, "the header says %u bytes, not %d", data,
+        48000 * 4);
+  CHECK(atomic_load(&mando_rec_dropped) == 0, "dropped blocks");
+  unlink(path);
+  mando_reset();
+}
+
 static void test_whistle() {
   full_reset();
   whistle_reset();
@@ -3775,6 +3821,7 @@ int main() {
   test_mandolin();
   test_mandolin_sound();
   test_mandolin_effects();
+  test_mandolin_recording();
   test_vocoder_holds();
   test_voice_fx();
   test_fx_gate();

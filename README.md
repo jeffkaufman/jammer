@@ -718,6 +718,14 @@ since that's what everything else on the right is matched against.  The
 audio row also says whether it's on, which voices are, where they're going,
 and "no input 2" on a device without one.
 
+**Mandolin > Record Mandolin** records the second input as it comes in,
+before any of this is done to it, until it's chosen again: 32-bit float mono
+WAVs at the rig's rate, as the number clips are, in `~/Library/Application
+Support/com.jefftk.jammer/mandolin/`, named for when they started.  **Show
+Recordings in Finder** opens that folder.  The audio row shows `● rec` and
+how long while it's going.  They're for trying the effects against real
+playing rather than `make test-mac`'s synthesized strums.
+
 ### Breathing into the microphone
 
 The whistle's `N` and `M` turn the microphone into a **breath

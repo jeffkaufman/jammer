@@ -103,7 +103,7 @@ app: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
 clean-mac:
 	rm -rf jammer-mac $(APP) audition pads speechphrases speechmodel \
 	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval \
-	  breathmic-eval voicefx-levels
+	  breathmic-eval voicefx-levels mandolin-levels
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
 audition: audition.c macapi.h common.h
@@ -165,6 +165,16 @@ breathmic-eval: breathmic-eval.c breathmic.h common.h $(WHISTLE_OBJS)
 voicefx-levels: voicefx-levels.c voicefx.h loudness.h $(MAC_SRCS) \
                 $(WHISTLE_OBJS)
 	clang voicefx-levels.c $(WHISTLE_OBJS) -o voicefx-levels \
+	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
+	  -I$(WHISTLE_DIR) \
+	  -framework Carbon -framework IOKit \
+	  -framework AudioToolbox -framework CoreAudio -std=gnu11 -Wall -O2 -w
+
+# Do the mandolin's effects sit where the mandolin does, on real playing?
+# See the top of mandolin-levels.c.
+mandolin-levels: mandolin-levels.c mandolin.h loudness.h $(MAC_SRCS) \
+                 $(WHISTLE_OBJS)
+	clang mandolin-levels.c $(WHISTLE_OBJS) -o mandolin-levels \
 	  -I$(FLUIDSYNTH)/include -L$(FLUIDSYNTH)/lib -lfluidsynth \
 	  -I$(WHISTLE_DIR) \
 	  -framework Carbon -framework IOKit \
