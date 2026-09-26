@@ -1211,11 +1211,11 @@ void clear_endpoint() {
   case ENDPOINT_DRONE_CHORD: clear_drone_chord(18); break;
   case ENDPOINT_DRONE_BASS_2: clear_drone_bass(89); break;
   case ENDPOINT_DRONE_CHORD_2: clear_drone_chord(89); break;
-  // The Breath Gate starts as the Tamb Shake alone, with no pad: switch it
-  // on and shake the breath.  A pad's key under it adds one.
+  // The Breath Gate starts as the Brushes alone, with no pad: switch it on
+  // and stir them with the breath.  A pad's key under it adds one.
   case ENDPOINT_BREATH:
     clear_drone_chord(VOICE_BREATH_NO_PAD);
-    c->breath_layers = BREATH_LAYER_TAMB_SHAKE;
+    c->breath_layers = BREATH_LAYER_BRUSHES;
     update_breath_fx();
     break;
   }

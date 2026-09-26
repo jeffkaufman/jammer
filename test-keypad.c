@@ -487,20 +487,20 @@ static void test_breath_gate() {
         "` isn't the Breath Gate");
   CHECK(is_drone(ENDPOINT_BREATH) && c->chord[ENDPOINT_BREATH] &&
         c->voices[ENDPOINT_BREATH] == VOICE_BREATH_NO_PAD &&
-        c->breath_layers == BREATH_LAYER_TAMB_SHAKE,
-        "the Breath Gate should start as the Tamb Shake alone, with no pad");
+        c->breath_layers == BREATH_LAYER_BRUSHES,
+        "the Breath Gate should start as the Brushes alone, with no pad");
 
   press("`");
   CHECK(c->on[ENDPOINT_BREATH] && c->selected_endpoint == ENDPOINT_BREATH,
         "` didn't switch the Breath Gate on and select it");
-  CHECK(lit("K") && !lit("A") && !lit("C"),
-        "K should show the Tamb Shake on, and no pad");
-  CHECK(told_fx == BREATH_FX_TAMB, "the Tamb Shake should be all the Mac "
+  CHECK(lit("J") && !lit("A") && !lit("C"),
+        "J should show the Brushes on, and no pad");
+  CHECK(told_fx == BREATH_FX_BRUSH, "the Brushes should be all the Mac "
         "plays");
 
   // The rest of this is a pad, Halo Pad, on its own.
   press("C");
-  press("K");
+  press("J");
   CHECK(c->voices[ENDPOINT_BREATH] == 94 && c->breath_layers == 0,
         "C and A should leave Halo Pad alone");
 
@@ -2490,7 +2490,7 @@ static void test_snare_roll() {
   full_reset();
   midi_tap = tap_midi;
   press("`");
-  press("K");  // the Tamb Shake it starts with, off
+  press("J");  // the Brushes it starts with, off
   press("A");  // and the Snare Roll on
   n_tapped = 0;
   handle_cc(CC_BREATH, 60);
@@ -2658,8 +2658,7 @@ static void test_tambourines() {
   full_reset();
   midi_tap = tap_midi;
   breath_hook = record_breath;
-  press("`");
-  press("K");  // the Tamb Shake it starts with, off, for the Brushes first
+  press("`");  // starting with the Brushes on
   const char* caps[] = {"J", "K", "L"};
   const char* labels[] = {"Brushes", "Tamb\nShake", "Grid\nHat"};
   for (int i = 0; i < 3; i++) {
@@ -2677,9 +2676,8 @@ static void test_tambourines() {
   // test_brush_swish) and no notes at all; past 90% one slap off the Brush
   // kit, on a channel of its own, and no more until the breath's come back
   // under 60%.
-  press("J");
   CHECK(lit("J") && (c->breath_layers & BREATH_LAYER_BRUSHES) &&
-        (told_fx & BREATH_FX_BRUSH), "J should switch the Brushes on");
+        (told_fx & BREATH_FX_BRUSH), "the Brushes should start on");
   handle_cc(CC_BREATH, 20);
   n_tapped = 0;
   for (int w = 0; w < 12; w++) {
@@ -2854,7 +2852,7 @@ static void test_grid_hat_on_the_pedals() {
   full_reset();
   midi_tap = tap_midi;
   press("`");
-  press("K");  // the Tamb Shake it starts with, off
+  press("J");  // the Brushes it starts with, off
   press("L");
   char got[256];
   hat_subbeats(BREATH_FLOOR + 20, false, 0, got);

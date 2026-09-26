@@ -147,7 +147,7 @@ the physical keyboard in the middle, and what it actually does underneath:
   the edge doesn't chatter.  Each breath after the breath has come all the way
   to rest strikes the chord afresh, so it opens on the pad's attack; pulsing
   without coming to rest just chops the chord that's sounding.  It starts as
-  the Tamb Shake alone, with no pad: switch it on and blow to shake it, and
+  the Brushes alone, with no pad: switch it on and blow to stir them, and
   a pad's key adds a pad under it.  With it selected the voice keys are a row each: the bottom row,
   in orange, picks from seven of the drones' pads -- Synth Strings on `Z`,
   Polysynth, Halo Pad and Sweep Pad on `X C V` as on every drone, then Synth
