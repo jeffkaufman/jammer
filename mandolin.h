@@ -23,10 +23,11 @@
 //   D  Oct Down    the whole chord an octave down, beside it
 //   F  Shimmer     a reverb that climbs an octave as it rings, fed only the
 //                  pitched part of what's played, so scratches stay dry
-//   C  Breath FX   not a sound but a setting: the breath controller sets how
-//                  loud the effects are, 15% at rest to 300% at full -- the
-//                  voices, and the mandolin itself while it's going through
-//                  Drive or Leslie -- except the Bass, which it switches:
+//   C  Breath FX   not a sound but a setting: the breath controller brings
+//                  the effects in, from none at all at rest -- the plain
+//                  mandolin, dry -- to 300% at full: the voices, and Drive
+//                  and Leslie, crossfaded in over the first third of the
+//                  breath and louder after.  The Bass it switches instead:
 //                  no breath, no bass, and any breath, all of it
 //
 // And on the bottom row, effects on the mandolin itself rather than voices
@@ -92,9 +93,13 @@ static const MandoVoice MANDO_VOICES[N_MANDO_VOICES] = {
   [MANDO_LESLIE] = {'N', "Leslie", "leslie"},
 };
 
-// Breath FX: the voices' level, breath at rest to full.
-#define MANDO_BREATH_LOW 0.15
+// Breath FX: the effects' level at full breath, from none at rest, and how
+// smoothly it follows the breath.  The breath controller comes in whole steps,
+// and at rest it flickers between two: that's the effects on and off, and
+// on a sustained sound -- Shimmer's tail -- it crackles.  Followed over this
+// long, sample by sample, the steps and the flicker are a glide.
 #define MANDO_BREATH_HIGH 3.0
+#define MANDO_BREATH_SMOOTH_S 0.040
 
 #define MANDO_BIT(v) (1u << (v))
 // And two more bits, in what's published: whether it's on at all, and
@@ -667,9 +672,10 @@ static struct {
   WhistleRamp dry, voice[N_MANDO_VOICES];
   WhistleRamp heard;  // Shimmer's tail, which rings on after its send stops
   WhistleRamp boost;
-  WhistleRamp breath;        // Breath FX's level for the voices
-  WhistleRamp chain_breath;  // and for the mandolin through Drive or Leslie
-  WhistleRamp bass_breath;   // and the Bass's switch
+  // Breath FX's level for the voices, and for Drive and Leslie, following
+  // the breath smoothly; and the Bass's switch.
+  double breath, chain_breath, breath_smooth;
+  WhistleRamp bass_breath;
   OctaveDown octave;
   SynthPedal synth;
   Drive drive;
@@ -710,7 +716,9 @@ static void mando_prepare(double rate) {
   room_gate_init(&mando.gate, rate);
   memset(&mando.heard, 0, sizeof(mando.heard));
   WhistleRamp unity = {.live = 1, .target = 1};
-  mando.boost = mando.breath = mando.chain_breath = mando.bass_breath = unity;
+  mando.boost = mando.bass_breath = unity;
+  mando.breath = mando.chain_breath = 1;
+  mando.breath_smooth = 1 - exp(-1 / (rate * MANDO_BREATH_SMOOTH_S));
   octave_prepare(&mando.octave, rate);
   synth_prepare(&mando.synth, rate);
   drive_prepare(&mando.drive, rate);
@@ -755,20 +763,15 @@ static void mando_process(const float* in, int len, double rate) {
                     (heard || in_chain) && (pub & MANDO_BIT(v)) ? 1 : 0,
                     ramp_frames);
   }
-  // Breath FX: the effects from 15% at rest to 300% at full, eased there
-  // over the block -- the voices, and the mandolin itself while it's going
-  // through the chain -- and the Bass on with any breath and off with none.
+  // Breath FX: the effects from none at rest to 300% at full, following
+  // the breath smoothly -- the voices, and Drive and Leslie -- and the Bass
+  // on with any breath and off with none.
   bool breathing = pub & MANDO_BIT(MANDO_BREATH);
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
-  float breath_level = breathing
-    ? (float)(MANDO_BREATH_LOW + (MANDO_BREATH_HIGH - MANDO_BREATH_LOW) *
-                                 blown)
-    : 1.0f;
+  double breath_level = breathing ? MANDO_BREATH_HIGH * blown : 1;
   bool chained = pub & (MANDO_BIT(MANDO_DRIVE) | MANDO_BIT(MANDO_LESLIE));
-  whistle_ramp_to(&mando.breath, breath_level, (float)len);
-  whistle_ramp_to(&mando.chain_breath, chained ? breath_level : 1.0f,
-                  fmaxf((float)len, ramp_frames));
+  double chain_level = chained ? breath_level : 1;
   whistle_ramp_to(&mando.bass_breath, !breathing || blown > 0 ? 1 : 0,
                   ramp_frames);
   whistle_ramp_to(&mando.heard, heard ? 1 : 0, ramp_frames);
@@ -797,7 +800,12 @@ static void mando_process(const float* in, int len, double rate) {
     float x = in[i];
     if (fabsf(x) > peak) peak = fabsf(x);
     if (tuning) tuner_run(&mando.tuner, x);
-    // The chain: each crossfaded in and out.
+    mando.breath += (breath_level - mando.breath) * mando.breath_smooth;
+    mando.chain_breath += (chain_level - mando.chain_breath) *
+                          mando.breath_smooth;
+    // The chain: each crossfaded in and out.  Then, with Breath FX, the
+    // chain crossfaded in from the plain mandolin as the breath comes, all
+    // of it by a third of the breath, and louder after that.
     double dry = x;
     if (drive) {
       double r = whistle_ramp_next(&mando.voice[MANDO_DRIVE]);
@@ -807,7 +815,10 @@ static void mando_process(const float* in, int len, double rate) {
       double r = whistle_ramp_next(&mando.voice[MANDO_LESLIE]);
       dry += r * (leslie_run(&mando.leslie, dry, rate) - dry);
     }
-    dry *= whistle_ramp_next(&mando.chain_breath);
+    if (drive || leslie) {
+      double e = mando.chain_breath;
+      dry = x * (1 - fmin(e, 1)) + dry * e;
+    }
     float boost = whistle_ramp_next(&mando.boost);
     mando_block[i] = boost * whistle_ramp_next(&mando.dry) * (float)dry;
     float out = 0, bass_out = 0;
@@ -847,7 +858,7 @@ static void mando_process(const float* in, int len, double rate) {
       if (!shimmer_in) mando.shimmer_tail--;
     }
     mando_voice_block[i] = boost *
-      (whistle_ramp_next(&mando.breath) * out +
+      ((float)mando.breath * out +
        whistle_ramp_next(&mando.bass_breath) * bass_out);
   }
   mando_block_len = len;

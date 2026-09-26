@@ -1375,8 +1375,8 @@ static void test_mandolin_effects() {
   double plain, voice;
   mando_strums(3, 24000, false, 2, &plain, NULL);
 
-  // Breath FX: the voices at 15% with the breath at rest, all of them at
-  // full, and the mandolin itself left alone.
+  // Breath FX: no voices with the breath at rest, 300% at full, and the
+  // mandolin itself left alone.
   double full, rest, dry_rest;
   mando_prepare(48000);
   mando_voices = MANDO_BIT(MANDO_OCTAVE);
@@ -1387,7 +1387,7 @@ static void test_mandolin_effects() {
   mando_publish();
   atomic_store(&audio_breath, 0);
   mando_strums(2, 24000, false, 1, &dry_rest, &rest);
-  CHECK(fabs(rest / full - MANDO_BREATH_LOW) < 0.01,
+  CHECK(rest / full < 0.01,
         "at rest Breath FX left the voices at %.2f", rest / full);
   CHECK(fabs(dry_rest / plain - 1) < 0.01, "and moved the mandolin");
   mando_prepare(48000);
@@ -1396,22 +1396,43 @@ static void test_mandolin_effects() {
   CHECK(fabs(rest / full - MANDO_BREATH_HIGH) < 0.03,
         "at full Breath FX left the voices at %.2f", rest / full);
 
-  // And the mandolin itself, through the chain.
+  // A breath controller near rest flickers between two steps: the level
+  // should glide between them, not jump from block to block, or Shimmer's
+  // tail crackles.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_SHIMMER) | MANDO_BIT(MANDO_BREATH);
+  mando_publish();
+  double lowest = 10, highest = 0;
+  for (int b = 0; b < 200; b++) {
+    atomic_store(&audio_breath, BREATH_FLOOR + 1 + b % 2);
+    mando_strums(0.01, 12000, false, 0.01, NULL, NULL);
+    if (b < 100) continue;
+    lowest = fmin(lowest, mando.breath);
+    highest = fmax(highest, mando.breath);
+  }
+  CHECK(highest < 1.3 * lowest,
+        "a flickering breath moved the effects from %.3f to %.3f", lowest,
+        highest);
+  atomic_store(&audio_breath, 0);
+
+  // And Drive: at rest, the plain mandolin, not 6dB up; at full, three
+  // times Drive.
   double chain_full, chain_breath;
   mando_prepare(48000);
-  mando_voices = MANDO_BIT(MANDO_LESLIE);
+  mando_voices = MANDO_BIT(MANDO_DRIVE);
   mando_publish();
   mando_strums(2, 24000, false, 1, &chain_full, NULL);
   for (int b = 0; b < 2; b++) {
     mando_prepare(48000);
-    mando_voices = MANDO_BIT(MANDO_LESLIE) | MANDO_BIT(MANDO_BREATH);
+    mando_voices = MANDO_BIT(MANDO_DRIVE) | MANDO_BIT(MANDO_BREATH);
     mando_publish();
     atomic_store(&audio_breath, b ? BREATH_FULL : 0);
     mando_strums(2, 24000, false, 1, &chain_breath, NULL);
-    double want = b ? MANDO_BREATH_HIGH : MANDO_BREATH_LOW;
-    CHECK(fabs(chain_breath / chain_full - want) < 0.03 * want,
-          "Breath FX left the mandolin through Leslie at %.2f, not %.2f",
-          chain_breath / chain_full, want);
+    double ratio = chain_breath / (b ? chain_full : plain);
+    double want = b ? MANDO_BREATH_HIGH : 1;
+    CHECK(fabs(ratio - want) < 0.03 * want,
+          "Breath FX left the mandolin through Drive at %.2f of %s, not %.2f",
+          ratio, b ? "Drive" : "plain", want);
   }
 
   // And the Bass, a switch: none with no breath, all of it with any.  On a
