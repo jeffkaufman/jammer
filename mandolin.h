@@ -28,17 +28,26 @@
 //   C  Breath FX   not a sound but a setting: the breath controller brings
 //                  the effects in, from none at all at rest -- the plain
 //                  mandolin, dry -- to 300% at full: the voices, and Drive
-//                  and Leslie, crossfaded in over the first third of the
-//                  breath and louder after.  The Bass it switches instead:
-//                  no breath, no bass, and any breath, all of it
+//                  crossfaded in over the first third of the breath and
+//                  louder after.  The Bass it switches instead: no breath,
+//                  no bass, and any breath, all of it.  And the Leslie it
+//                  spins: see below
 //
 // And on the bottom row, effects on the mandolin itself rather than voices
 // beside it, in a chain in the order a pedalboard would have them:
 //
+//   B  Talkbox     the mandolin through a mouth the breath opens: at rest a
+//                  closed "oo", opening to "ah" and then "ae" at full, so a
+//                  breath is a "wah" and a longer one a "wow-yeah".  Breath
+//                  FX leaves it be, since the breath is already playing it
 //   V  Drive       an overdrive, a Tube Screamer's shape: the mids pushed
 //                  into a soft, uneven clip, and the top taken off, 6dB up
 //   N  Leslie      a Leslie at fast: the horn and the drum each spinning,
-//                  pitch and level both, at their own speeds
+//                  pitch and level both, at their own speeds.  With Breath
+//                  FX, the breath is its motor instead: at rest it turns
+//                  slow, and blowing pushes it towards fast, the harder the
+//                  faster, the horn getting there in a second or so and the
+//                  heavier drum over several, and each coasting back down
 //
 // On the keys the whistle has them on, where it has them.  Each is on and off
 // by itself, any of them at once, like the whistle's vocal effects.  The
@@ -46,8 +55,8 @@
 //
 // The voices -- the Vocoder, the Bass, Synth, Oct Down and Shimmer -- go to
 // the left, where fluidsynth's endpoints are, since the mandolin itself is
-// still heard under them on the right.  Drive and Leslie are the mandolin
-// itself, so they're on the right with it.
+// still heard under them on the right.  The Talkbox, Drive and Leslie are
+// the mandolin itself, so they're on the right with it.
 //
 // The Bass and the Vocoder are instances of their own, apart from the
 // whistle's, so the two can run at once on their two inputs.  They
@@ -72,6 +81,7 @@ enum {
   MANDO_SYNTH,
   MANDO_BREATH,  // not a sound: see the top
   // The rest are the mandolin itself, through them, rather than voices.
+  MANDO_TALKBOX,
   MANDO_DRIVE,
   MANDO_LESLIE,
   N_MANDO_VOICES,
@@ -92,6 +102,7 @@ static const MandoVoice MANDO_VOICES[N_MANDO_VOICES] = {
   [MANDO_SHIMMER] = {'F', "Shimmer", "shimmer"},
   [MANDO_SYNTH] = {'S', "Synth", "synth"},
   [MANDO_BREATH] = {'C', "Breath\nFX", "breath"},
+  [MANDO_TALKBOX] = {'B', "Talk\nbox", "talkbox"},
   [MANDO_DRIVE] = {'V', "Drive", "drive"},
   [MANDO_LESLIE] = {'N', "Leslie", "leslie"},
 };
@@ -371,6 +382,55 @@ static double biquad_run(Biquad* f, double x) {
   return y;
 }
 
+// Talkbox: three formants, in parallel bandpasses, moving from one vowel to
+// the next as the breath comes -- "oo" at rest, "ah" at half, "ae" at full --
+// each between two by its frequencies' logs.  The breath is followed over
+// TALKBOX_SMOOTH_S, quick enough to say a "wah" with but not so quick the
+// controller's steps zip.  TALKBOX_LEVEL makes up what the mouth takes
+// away, and a little more, to sit about 3dB over the mandolin.
+#define TALKBOX_FORMANTS 3
+#define TALKBOX_VOWELS 3
+#define TALKBOX_Q 5.0
+#define TALKBOX_SMOOTH_S 0.025
+#define TALKBOX_LEVEL 3.25
+
+static const double TALKBOX_HZ[TALKBOX_VOWELS][TALKBOX_FORMANTS] = {
+  {300, 870, 2240},   // oo
+  {730, 1090, 2440},  // ah
+  {660, 1720, 2410},  // ae
+};
+static const double TALKBOX_GAIN[TALKBOX_FORMANTS] = {1, 0.7, 0.35};
+
+typedef struct {
+  double ic1[TALKBOX_FORMANTS], ic2[TALKBOX_FORMANTS];
+  double open, smooth;  // the breath, followed, 0 to 1
+} Talkbox;
+
+static void talkbox_prepare(Talkbox* t, double rate) {
+  memset(t, 0, sizeof(*t));
+  t->smooth = 1 - exp(-1 / (rate * TALKBOX_SMOOTH_S));
+}
+
+static double talkbox_run(Talkbox* t, double x, double blown, double rate) {
+  t->open += (blown - t->open) * t->smooth;
+  double at = t->open * (TALKBOX_VOWELS - 1);
+  int from = (int)fmin(at, TALKBOX_VOWELS - 2);
+  double frac = at - from, k = 1 / TALKBOX_Q, y = 0;
+  for (int f = 0; f < TALKBOX_FORMANTS; f++) {
+    double hz = TALKBOX_HZ[from][f] *
+      pow(TALKBOX_HZ[from + 1][f] / TALKBOX_HZ[from][f], frac);
+    // A state-variable filter's bandpass, 0dB at the centre.
+    double g = tan(M_PI * fmin(hz, 0.45 * rate) / rate);
+    double a1 = 1 / (1 + g * (g + k)), a2 = g * a1;
+    double v1 = a1 * t->ic1[f] + a2 * (x - t->ic2[f]);
+    double v2 = t->ic2[f] + g * v1;
+    t->ic1[f] = 2 * v1 - t->ic1[f];
+    t->ic2[f] = 2 * v2 - t->ic2[f];
+    y += TALKBOX_GAIN[f] * k * v1;
+  }
+  return TALKBOX_LEVEL * y;
+}
+
 // Drive: a Tube Screamer's shape.  The lows kept out of the clipping, so it
 // stays tight rather than farting out on the chop, the mids pushed hard into
 // a soft clip that isn't quite even -- a little second harmonic, as a diode
@@ -407,9 +467,22 @@ static double drive_run(Drive* d, double x) {
 // slower.  Each swings in pitch, as it comes towards you and goes away --
 // the horn's by a fraction of a millisecond of delay, the drum's less -- and
 // in level, the horn much more than the drum.
+//
+// With Breath FX the breath drives its motor: at rest it turns at chorale,
+// slow, and the breath pushes it towards tremolo, fast, as far as it's
+// blown.  The rotors take their time about it, as a cabinet's do: the horn,
+// light, spins up in about a second and down in a little more, and the drum,
+// heavier, takes four or five seconds up and longer still to coast down.
+// Each follows where it's being pushed over these, as time constants.
 #define LESLIE_CROSSOVER_HZ 800
 #define LESLIE_HORN_HZ 6.8
 #define LESLIE_DRUM_HZ 5.9
+#define LESLIE_HORN_SLOW_HZ 0.8
+#define LESLIE_DRUM_SLOW_HZ 0.67
+#define LESLIE_HORN_UP_S 0.35
+#define LESLIE_HORN_DOWN_S 0.5
+#define LESLIE_DRUM_UP_S 1.5
+#define LESLIE_DRUM_DOWN_S 2.2
 #define LESLIE_HORN_DELAY_MS 0.45
 #define LESLIE_DRUM_DELAY_MS 0.20
 #define LESLIE_HORN_AM 0.5
@@ -422,6 +495,8 @@ typedef struct {
   float horn[LESLIE_LINE], drum[LESLIE_LINE];
   int pos;
   double horn_phase, drum_phase;
+  double horn_hz, drum_hz;  // how fast each is turning now
+  double horn_up, horn_down, drum_up, drum_down;
 } Leslie;
 
 static void leslie_prepare(Leslie* l, double rate) {
@@ -429,15 +504,35 @@ static void leslie_prepare(Leslie* l, double rate) {
   biquad_set(&l->low, BQ_LOWPASS, LESLIE_CROSSOVER_HZ, 0.7, 0, rate);
   biquad_set(&l->low2, BQ_LOWPASS, LESLIE_CROSSOVER_HZ, 0.7, 0, rate);
   l->drum_phase = 0.3;  // not in step with the horn
+  l->horn_hz = LESLIE_HORN_HZ;
+  l->drum_hz = LESLIE_DRUM_HZ;
+  l->horn_up = 1 - exp(-1 / (rate * LESLIE_HORN_UP_S));
+  l->horn_down = 1 - exp(-1 / (rate * LESLIE_HORN_DOWN_S));
+  l->drum_up = 1 - exp(-1 / (rate * LESLIE_DRUM_UP_S));
+  l->drum_down = 1 - exp(-1 / (rate * LESLIE_DRUM_DOWN_S));
 }
 
-static double leslie_run(Leslie* l, double x, double rate) {
+// A rotor towards `to`, quicker spinning up than coasting down.
+static void leslie_spin(double* hz, double to, double up, double down) {
+  *hz += (to - *hz) * (to > *hz ? up : down);
+}
+
+// `motor` is how hard it's being pushed from slow, 0, to fast, 1.
+static double leslie_run(Leslie* l, double x, double motor, double rate) {
+  leslie_spin(&l->horn_hz,
+              LESLIE_HORN_SLOW_HZ + motor * (LESLIE_HORN_HZ -
+                                             LESLIE_HORN_SLOW_HZ),
+              l->horn_up, l->horn_down);
+  leslie_spin(&l->drum_hz,
+              LESLIE_DRUM_SLOW_HZ + motor * (LESLIE_DRUM_HZ -
+                                             LESLIE_DRUM_SLOW_HZ),
+              l->drum_up, l->drum_down);
   double low = biquad_run(&l->low2, biquad_run(&l->low, x));
   double high = x - low;
   l->horn[l->pos] = (float)high;
   l->drum[l->pos] = (float)low;
-  l->horn_phase += LESLIE_HORN_HZ / rate;
-  l->drum_phase += LESLIE_DRUM_HZ / rate;
+  l->horn_phase += l->horn_hz / rate;
+  l->drum_phase += l->drum_hz / rate;
   if (l->horn_phase >= 1) l->horn_phase -= 1;
   if (l->drum_phase >= 1) l->drum_phase -= 1;
   double hs = sin(2 * M_PI * l->horn_phase);
@@ -677,6 +772,7 @@ static struct {
   WhistleRamp bass_breath;
   OctaveDown octave;
   SynthPedal synth;
+  Talkbox talkbox;
   Drive drive;
   Leslie leslie;
   // Shimmer
@@ -685,6 +781,29 @@ static struct {
   double tonal_target, tonal_level, tonal_attack, tonal_release;
   long shimmer_tail;  // frames it has left to ring
 } mando;
+
+// The limiter mando_add puts on each side once the mandolin's on it, so
+// nothing on it -- the Talkbox's resonances, Boost, the volume turned up,
+// whatever else is on that side with it -- ever clips.  Quiet enough and it
+// does nothing; over MANDO_LIMIT it comes down right away, on the sample
+// that went over, and back up over MANDO_LIMIT_RELEASE_S.  About -1dBFS.
+#define MANDO_LIMIT 0.89
+#define MANDO_LIMIT_RELEASE_S 0.080
+
+typedef struct {
+  double env;  // the peak it's holding down to MANDO_LIMIT, falling back
+} MandoLimiter;
+
+static MandoLimiter mando_limiter[2];  // left, right
+static double mando_limit_release;
+
+static void mando_limit(MandoLimiter* l, float* buf, int len) {
+  for (int i = 0; i < len; i++) {
+    double a = fabs(buf[i]);
+    l->env = a > l->env ? a : l->env + (a - l->env) * mando_limit_release;
+    if (l->env > MANDO_LIMIT) buf[i] = (float)(buf[i] * MANDO_LIMIT / l->env);
+  }
+}
 
 // Its block, summed onto the right by mando_add after the right's level, and
 // its voices', onto the left.  As long as the longest block
@@ -719,6 +838,7 @@ static void mando_prepare(double rate) {
   mando.breath_smooth = 1 - exp(-1 / (rate * MANDO_BREATH_SMOOTH_S));
   octave_prepare(&mando.octave, rate);
   synth_prepare(&mando.synth, rate);
+  talkbox_prepare(&mando.talkbox, rate);
   drive_prepare(&mando.drive, rate);
   leslie_prepare(&mando.leslie, rate);
   shimmer_prepare(&mando.shimmer, rate);
@@ -727,6 +847,8 @@ static void mando_prepare(double rate) {
   mando.tonal_attack = 1 - exp(-1 / (rate * TONAL_ATTACK_S));
   mando.tonal_release = 1 - exp(-1 / (rate * TONAL_RELEASE_S));
   mando.shimmer_tail = 0;
+  memset(mando_limiter, 0, sizeof(mando_limiter));
+  mando_limit_release = 1 - exp(-1 / (rate * MANDO_LIMIT_RELEASE_S));
   mando_block_len = 0;
 }
 
@@ -758,7 +880,7 @@ static void mando_process(const float* in, int len, double rate) {
     if (v == MANDO_BREATH) continue;
     // The ones in the chain crossfade in and out whether or not it's heard:
     // the dry ramp's what mutes it.
-    bool in_chain = v >= MANDO_DRIVE;
+    bool in_chain = v >= MANDO_TALKBOX;
     whistle_ramp_to(&mando.voice[v],
                     (heard || in_chain) && (pub & MANDO_BIT(v)) ? 1 : 0,
                     ramp_frames);
@@ -770,8 +892,10 @@ static void mando_process(const float* in, int len, double rate) {
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
   double breath_level = breathing ? MANDO_BREATH_HIGH * blown : 1;
-  bool chained = pub & (MANDO_BIT(MANDO_DRIVE) | MANDO_BIT(MANDO_LESLIE));
+  bool chained = pub & MANDO_BIT(MANDO_DRIVE);
   double chain_level = chained ? breath_level : 1;
+  // The Leslie's motor: flat out, or with Breath FX, the breath.
+  double motor = breathing ? blown : 1;
   whistle_ramp_to(&mando.bass_breath, !breathing || blown > 0 ? 1 : 0,
                   ramp_frames);
   whistle_ramp_to(&mando.heard, heard ? 1 : 0, ramp_frames);
@@ -779,6 +903,7 @@ static void mando_process(const float* in, int len, double rate) {
   bool vocoder = mando_ramp_live(&mando.voice[MANDO_VOCODER]);
   bool octave = mando_ramp_live(&mando.voice[MANDO_OCTAVE]);
   bool synth = mando_ramp_live(&mando.voice[MANDO_SYNTH]);
+  bool talkbox = mando_ramp_live(&mando.voice[MANDO_TALKBOX]);
   bool drive = mando_ramp_live(&mando.voice[MANDO_DRIVE]);
   bool leslie = mando_ramp_live(&mando.voice[MANDO_LESLIE]);
   double synth_hz[SYNTH_VOICES];
@@ -804,21 +929,27 @@ static void mando_process(const float* in, int len, double rate) {
     mando.breath += (breath_level - mando.breath) * mando.breath_smooth;
     mando.chain_breath += (chain_level - mando.chain_breath) *
                           mando.breath_smooth;
-    // The chain: each crossfaded in and out.  Then, with Breath FX, the
-    // chain crossfaded in from the plain mandolin as the breath comes, all
-    // of it by a third of the breath, and louder after that.
+    // The chain: each crossfaded in and out.  With Breath FX, Drive is
+    // crossfaded in from what went into it as the breath comes, all of it by
+    // a third of the breath, and louder after that.  Not the Talkbox, which
+    // the breath already plays, nor the Leslie, which it spins.
     double dry = x;
+    if (talkbox) {
+      double r = whistle_ramp_next(&mando.voice[MANDO_TALKBOX]);
+      dry += r * (talkbox_run(&mando.talkbox, dry, blown, rate) - dry);
+    }
+    double pre = dry;
     if (drive) {
       double r = whistle_ramp_next(&mando.voice[MANDO_DRIVE]);
       dry += r * (drive_run(&mando.drive, dry) - dry);
     }
+    if (drive) {
+      double e = mando.chain_breath;
+      dry = pre * (1 - fmin(e, 1)) + dry * e;
+    }
     if (leslie) {
       double r = whistle_ramp_next(&mando.voice[MANDO_LESLIE]);
-      dry += r * (leslie_run(&mando.leslie, dry, rate) - dry);
-    }
-    if (drive || leslie) {
-      double e = mando.chain_breath;
-      dry = x * (1 - fmin(e, 1)) + dry * e;
+      dry += r * (leslie_run(&mando.leslie, dry, motor, rate) - dry);
     }
     float boost = whistle_ramp_next(&mando.boost);
     mando_block[i] = boost * whistle_ramp_next(&mando.dry) * (float)dry;
@@ -871,8 +1002,8 @@ static void mando_process(const float* in, int len, double rate) {
 }
 
 // Onto the right channel, and its voices onto the left, or both onto the only
-// one on a mono device.  After the right's level: see the top.  On the audio
-// thread.
+// one on a mono device, and each side limited.  After the right's level: see
+// the top.  On the audio thread.
 static void mando_add(float** out, int nout, int len) {
   if (nout < 1 || mando_block_len != len) {
     mando_block_len = 0;
@@ -885,6 +1016,8 @@ static void mando_add(float** out, int nout, int len) {
     right[i] += gain * mando_block[i];
     voices[i] += gain * mando_voice_block[i];
   }
+  mando_limit(&mando_limiter[0], voices, len);
+  if (right != voices) mando_limit(&mando_limiter[1], right, len);
   mando_block_len = 0;
 }
 

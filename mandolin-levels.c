@@ -34,7 +34,7 @@
 // the mandolin itself, through it.
 static const int EFFECTS[] = {
   MANDO_BASS, MANDO_SYNTH, MANDO_OCTAVE, MANDO_SHIMMER, MANDO_VOCODER,
-  MANDO_DRIVE, MANDO_LESLIE,
+  MANDO_TALKBOX, MANDO_DRIVE, MANDO_LESLIE,
 };
 #define N_EFFECTS ((int)(sizeof(EFFECTS) / sizeof(EFFECTS[0])))
 
@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
     double plain = perceived_loudness(out, (int)n, RATE);
     for (int e = 0; e < N_EFFECTS; e++) {
       int fx = EFFECTS[e];
-      bool chain = fx >= MANDO_DRIVE;
+      bool chain = fx >= MANDO_TALKBOX;
       double fx_peak = run(x, n, MANDO_BIT(fx), chain, out);
       double loud = perceived_loudness(out, (int)n, RATE);
       atomic_store(&audio_breath, BREATH_FULL);

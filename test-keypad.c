@@ -1144,8 +1144,14 @@ static float mando_run(double hz, double amp, int n, bool harmonics) {
       mando_left_peak = fmaxf(mando_left_peak, fabsf(left[i]));
     }
     float gain = atomic_load(&mando_gain);  // mando_add's, which it scales by
-    CHECK(fabsf(right[479] - gain * mando_block[479]) < 1e-6 &&
-          fabsf(left[479] - gain * mando_voice_block[479]) < 1e-6,
+    // Less whatever the limiter took off the last sample.
+    double to[2];
+    for (int side = 0; side < 2; side++) {
+      double env = mando_limiter[side].env;
+      to[side] = gain * (env > MANDO_LIMIT ? MANDO_LIMIT / env : 1);
+    }
+    CHECK(fabs(right[479] - to[1] * mando_block[479]) < 1e-6 &&
+          fabs(left[479] - to[0] * mando_voice_block[479]) < 1e-6,
           "the mandolin on the right and its voices on the left");
   }
   return last;
@@ -1203,7 +1209,7 @@ static void test_mandolin_sound() {
   // And the rest make a sound over it: all but Breath FX, which is a
   // setting.
   for (int v = MANDO_VOCODER; v < N_MANDO_VOICES; v++) {
-    if (v == MANDO_BREATH || v >= MANDO_DRIVE) continue;
+    if (v == MANDO_BREATH || v >= MANDO_TALKBOX) continue;
     mando_prepare(48000);
     mando_voices = MANDO_BIT(v);
     mando_publish();
@@ -1461,6 +1467,127 @@ static void test_mandolin_effects() {
           "%s is %+.1fdB against the mandolin", MANDO_VOICES[chain[c]].name,
           20 * log10(through / plain));
   }
+
+  // The Talkbox: about 3dB over the mandolin wherever the breath has it, and
+  // brighter the more it's blown -- its mouth opening -- whether or not
+  // Breath FX is on, which leaves it be.
+  int talk_breaths[] = {0, (BREATH_FLOOR + BREATH_FULL) / 2, BREATH_FULL};
+  double talk_bright[3];
+  for (int fx = 0; fx < 2; fx++) {
+    for (int b = 0; b < 3; b++) {
+      mando_prepare(48000);
+      mando_voices = MANDO_BIT(MANDO_TALKBOX) |
+                     (fx ? MANDO_BIT(MANDO_BREATH) : 0);
+      mando_publish();
+      atomic_store(&audio_breath, talk_breaths[b]);
+      double through;
+      mando_strums(3, 24000, false, 2, &through, &voice);
+      if (!fx) {
+        printf("mandolin: talkbox %+.1fdB against the mandolin at %d\n",
+               20 * log10(through / plain), talk_breaths[b]);
+      }
+      CHECK(fabs(20 * log10(through / plain) - 3) < 2.5 && voice == 0,
+            "the Talkbox is %+.1fdB against the mandolin at %d%s",
+            20 * log10(through / plain), talk_breaths[b],
+            fx ? " with Breath FX" : "");
+      mando_run(220, 0.1, 9600, true);
+      for (int k = 0; k < 100; k++) {
+        mando_run(220, 0.1, 480, true);
+        memcpy(heard + 480 * k, mando_block, sizeof(float) * 480);
+      }
+      // An A's third harmonic against its fundamental.
+      double bright = goertzel(heard, 48000, 660) /
+                      goertzel(heard, 48000, 220);
+      if (fx) {
+        CHECK(fabs(bright / talk_bright[b] - 1) < 0.01,
+              "Breath FX moved the Talkbox at %d", talk_breaths[b]);
+      } else {
+        talk_bright[b] = bright;
+      }
+    }
+  }
+  CHECK(talk_bright[0] < talk_bright[1] && talk_bright[1] < talk_bright[2],
+        "the Talkbox should open with the breath (%.3f %.3f %.3f)",
+        talk_bright[0], talk_bright[1], talk_bright[2]);
+  atomic_store(&audio_breath, 0);
+
+  // The limiter: the Talkbox wide open, Boosted, with the volume all the
+  // way up and a loud mandolin, over whatever else is on each side, and
+  // neither side goes over it; and a quiet one's left alone.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_TALKBOX) | MANDO_BIT(MANDO_BOOST) |
+                 MANDO_BIT(MANDO_OCTAVE);
+  mando_publish();
+  set_mando_gain(MAX_MANDO_GAIN);
+  atomic_store(&audio_breath, BREATH_FULL);
+  float limit_peak = 0, limit_in = 0;
+  for (int b = 0; b < 100; b++) {
+    float in[480], left[480], right[480];
+    for (int k = 0; k < 480; k++) {
+      in[k] = mando_strum(b * 480 + k, 12000, false);
+      left[k] = right[k] = 0.5f;
+    }
+    mando_process(in, 480, 48000);
+    for (int k = 0; k < 480; k++) {
+      limit_in = fmaxf(limit_in, fabsf(0.5f + atomic_load(&mando_gain) *
+                                         mando_block[k]));
+    }
+    float* out[2] = {left, right};
+    mando_add(out, 2, 480);
+    for (int k = 0; k < 480; k++) {
+      limit_peak = fmaxf(limit_peak, fmaxf(fabsf(left[k]), fabsf(right[k])));
+    }
+  }
+  CHECK(limit_in > 1.5 && limit_peak <= MANDO_LIMIT + 1e-6,
+        "the limiter let %.2f through of %.2f", limit_peak, limit_in);
+  set_mando_gain(1);
+  atomic_store(&audio_breath, 0);
+
+  // The Leslie: flat out without Breath FX; with it, the breath its motor,
+  // and each rotor taking its time -- the horn up in about a second, the
+  // drum in several, and both coasting back down.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_LESLIE);
+  mando_publish();
+  atomic_store(&audio_breath, 0);
+  mando_strums(2, 24000, false, 1, NULL, NULL);
+  CHECK(mando.leslie.horn_hz == LESLIE_HORN_HZ &&
+        mando.leslie.drum_hz == LESLIE_DRUM_HZ,
+        "without Breath FX the Leslie should stay fast");
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_LESLIE) | MANDO_BIT(MANDO_BREATH);
+  mando_publish();
+  mando_strums(12, 24000, false, 1, &chain_breath, NULL);
+  CHECK(fabs(mando.leslie.horn_hz - LESLIE_HORN_SLOW_HZ) < 0.05 &&
+        fabs(mando.leslie.drum_hz - LESLIE_DRUM_SLOW_HZ) < 0.05,
+        "at rest the Leslie should turn slow (%.2f %.2f)",
+        mando.leslie.horn_hz, mando.leslie.drum_hz);
+  CHECK(fabs(20 * log10(chain_breath / plain)) < 2,
+        "and Breath FX shouldn't fade it out (%+.1fdB)",
+        20 * log10(chain_breath / plain));
+  atomic_store(&audio_breath, BREATH_FULL);
+  mando_strums(1, 24000, false, 1, NULL, NULL);
+  double horn_1s = mando.leslie.horn_hz, drum_1s = mando.leslie.drum_hz;
+  CHECK(horn_1s > 0.9 * LESLIE_HORN_HZ && drum_1s < 0.6 * LESLIE_DRUM_HZ,
+        "a second of full breath should have the horn up and the drum "
+        "still coming (%.2f %.2f)", horn_1s, drum_1s);
+  mando_strums(6, 24000, false, 1, NULL, NULL);
+  CHECK(mando.leslie.horn_hz > 0.99 * LESLIE_HORN_HZ &&
+        mando.leslie.drum_hz > 0.95 * LESLIE_DRUM_HZ,
+        "blown long enough the Leslie should be fast (%.2f %.2f)",
+        mando.leslie.horn_hz, mando.leslie.drum_hz);
+  atomic_store(&audio_breath, (BREATH_FLOOR + BREATH_FULL) / 2);
+  mando_strums(12, 24000, false, 1, NULL, NULL);
+  double half = (LESLIE_HORN_SLOW_HZ + LESLIE_HORN_HZ) / 2;
+  CHECK(fabs(mando.leslie.horn_hz - half) < 0.5,
+        "half a breath should hold the horn about halfway (%.2f)",
+        mando.leslie.horn_hz);
+  atomic_store(&audio_breath, 0);
+  mando_strums(1, 24000, false, 1, NULL, NULL);
+  CHECK(mando.leslie.horn_hz < mando.leslie.drum_hz * LESLIE_HORN_HZ /
+                                 LESLIE_DRUM_HZ,
+        "letting go, the horn should slow quicker than the drum (%.2f %.2f)",
+        mando.leslie.horn_hz, mando.leslie.drum_hz);
 
   // Drive: a sine comes out with harmonics.
   mando_prepare(48000);

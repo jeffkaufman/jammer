@@ -697,7 +697,7 @@ any of them at once, and the mandolin plays under all of them but the Tuner:
 | `S` | Synth | a synth pedal: jammer's chord -- its root from C2 up and an octave above, its third and fifth -- in pairs of detuned saws through a resonant lowpass, played by the mandolin: as loud as it's played, the filter from 200Hz to 5kHz over the 40dB above the gate, so each strum is a stab and each chop a blip.  The chord the feet or a voice chose, so it's in tune whatever you voice |
 | `D` | Oct Down | every note of the chord an octave down at once, beside it: 36 narrow bands, each turned at half its own speed, so it's in tune for a chord where a grain shifter can't be |
 | `F` | Shimmer | a reverb whose tail climbs an octave each time round, fed only what's pitched -- how periodic the last 20ms has been -- so scratches stay dry; switched off, it rings on |
-| `C` | Breath FX | a setting rather than a sound: the breath controller (or the whistle's breath voices) brings the effects in.  At rest there are none, just the plain mandolin, dry; as you blow they come in, up to 300% at full.  The voices go from silent; Drive and Leslie crossfade in from the plain mandolin, all of the way by a third of the breath and louder after that.  It follows the breath over about 40ms, so the controller's steps, and its flicker near rest, glide rather than crackle.  The Bass it switches instead: no breath, no bass, and any breath at all, all of it |
+| `C` | Breath FX | a setting rather than a sound: the breath controller (or the whistle's breath voices) brings the effects in.  At rest there are none, just the plain mandolin, dry; as you blow they come in, up to 300% at full.  The voices go from silent; Drive crossfades in from what goes into it, all of the way by a third of the breath and louder after that.  It follows the breath over about 40ms, so the controller's steps, and its flicker near rest, glide rather than crackle.  The Bass it switches instead: no breath, no bass, and any breath at all, all of it.  And the Leslie it spins, below |
 
 And on the rest of the bottom row, effects on the mandolin itself rather
 than voices beside it, one after the other in a pedalboard's order, each
@@ -705,15 +705,20 @@ crossfaded in and out:
 
 | key | effect | |
 |---|---|---|
+| `B` | Talkbox | the mandolin through a mouth the breath opens: three vowel formants, a closed "oo" at rest, opening to "ah" at half and "ae" at full, following the breath over about 25ms, so a breath is a "wah" and a longer one a "wow-yeah", about 3dB over the mandolin.  First in the chain, like a wah pedal.  Breath FX leaves it alone, since the breath is already playing it |
 | `V` | Drive | an overdrive, a Tube Screamer's shape: the lows kept out, the mids pushed hard into a soft clip that's a little uneven, and a lowpass after for the fizz, 6dB over the mandolin.  Set for an electric mandolin into an interface's instrument input, around -20dB peak |
-| `N` | Leslie | a Leslie at fast: horn and drum split at 800Hz, spinning at 6.8 and 5.9 times a second, each swinging in pitch and level |
+| `N` | Leslie | a Leslie at fast: horn and drum split at 800Hz, spinning at 6.8 and 5.9 times a second, each swinging in pitch and level.  With Breath FX the breath is its motor: at rest it turns at chorale, about 0.8 and 0.7 times a second, and blowing pushes it towards fast, the harder the faster.  The rotors have their inertia: the light horn spins up in about a second and down in a little more, and the heavy drum takes four or five seconds to get up to speed and longer to coast down, so it's only fully fast once you've blown hard for a while |
 
 They're at about the mandolin's own level (Shimmer 4dB under), from
 `make test-mac`'s synthesized strums; by ear is still to do.
 
 The voices -- Vocoder, Bass, Synth, Oct Down and Shimmer -- go to the left,
-since the mandolin itself is still heard under them on the right.  Drive and
-Leslie are on the mandolin itself, so they stay on the right with it.
+since the mandolin itself is still heard under them on the right.  The
+Talkbox, Drive and Leslie are on the mandolin itself, so they stay on the
+right with it.  Each side, once the mandolin's on it, goes through a limiter
+that holds it under -1dBFS -- down at once on a peak and back up over 80ms --
+so the Talkbox's resonances, Boost or the volume turned up never clip, with
+whatever else is on that side.
 
 The copied ones are instances of their own, so the whistle's can run at the
 same time on input 1.  They have a gate of their own, **Mandolin gate** in the
