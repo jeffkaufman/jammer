@@ -173,7 +173,7 @@ static int mando_voice_on_key(const Key* key) {
 static bool mando_key_is_dead(const Key* key) {
   return mando_selected && key->label &&
     (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) &&
-    mando_voice_on_key(key) < 0 && key->note != F2;
+    mando_voice_on_key(key) < 0;
 }
 
 // Handle a key press if the mandolin owns it, and say whether it did.
@@ -192,10 +192,6 @@ static bool mando_key(const Key* key, bool selecting) {
     return false;
   }
   if (!mando_selected) return false;
-  if (key->note == F2) {
-    mando_swap_fx_side();
-    return true;
-  }
   if (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) {
     mando_set_voice(mando_voice_on_key(key));
     return true;
@@ -356,7 +352,6 @@ static const char* key_current_label(const Key* key) {
   if (key_is_dead(key)) return NULL;
   int mando = mando_voice_on_key(key);
   if (mando >= 0) return MANDO_VOICES[mando].label;
-  if (mando_selected && key->note == F2) return mando_fx_side_label();
   // The whistle first: while it's selected the voice keys are its, whatever
   // endpoint was selected before it.
   if (whistle_selected && key->group == GROUP_VOICE) {
@@ -550,8 +545,6 @@ static bool key_is_lit(const Key* key) {
   if (mando_selected) {
     int v = mando_voice_on_key(key);
     if (v >= 0) return mando_voices & MANDO_BIT(v);
-    // Lit, as CH is, when they've been moved.
-    if (key->note == F2) return mando_fx_left;
     if (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) {
       return false;
     }

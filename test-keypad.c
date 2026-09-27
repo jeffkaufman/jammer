@@ -1100,19 +1100,11 @@ static void test_mandolin() {
   strike("K", false);
   CHECK(c->downbeat[ENDPOINT_FLEX] == flex_downbeat,
         "the row keys should be the mandolin's, not the endpoint's");
-  // F2 moves its voices to the left and back.
-  const Key* f2 = key_for_cap("F2");
-  CHECK(!key_is_dead(f2) && !key_is_lit(f2) &&
-        strcmp(key_current_label(f2), "FX TO\nRIGHT") == 0,
-        "F2 should say the voices are on the right");
+  // Its voices are always on the left, so F2 has nothing to do.
   bool flex_pan = c->pans[ENDPOINT_FLEX];
+  CHECK(key_is_dead(key_for_cap("F2")), "F2 should be dead");
   strike("F2", false);
-  CHECK(mando_fx_left && key_is_lit(f2) &&
-        strcmp(key_current_label(f2), "FX TO\nLEFT") == 0,
-        "F2 should move them to the left");
-  CHECK(c->pans[ENDPOINT_FLEX] == flex_pan, "and not swap an endpoint");
-  strike("F2", false);
-  CHECK(!mando_fx_left, "F2 again should bring them back");
+  CHECK(c->pans[ENDPOINT_FLEX] == flex_pan, "F2 shouldn't swap an endpoint");
   select_ep("R");
   strike("R", true);
   CHECK(!mando_selected, "shift over an endpoint should take the keys back");
@@ -1120,9 +1112,8 @@ static void test_mandolin() {
   // esc: back to on, with nothing over it.
   mando_on = false;
   mando_voices = MANDO_BIT(MANDO_BOOST);
-  mando_fx_left = true;
   strike("esc", false);
-  CHECK(mando_on && !mando_voices && !mando_selected && !mando_fx_left,
+  CHECK(mando_on && !mando_voices && !mando_selected,
         "esc should leave the mandolin on and plain");
 }
 
@@ -1153,14 +1144,9 @@ static float mando_run(double hz, double amp, int n, bool harmonics) {
       mando_left_peak = fmaxf(mando_left_peak, fabsf(left[i]));
     }
     float gain = atomic_load(&mando_gain);  // mando_add's, which it scales by
-    if (!mando_fx_left) {
-      CHECK(mando_left_peak == 0 && fabsf(right[479] - gain * last) < 1e-6,
-            "the mandolin should be on the right alone");
-    } else {
-      CHECK(fabsf(right[479] - gain * mando_block[479]) < 1e-6 &&
-            fabsf(left[479] - gain * mando_voice_block[479]) < 1e-6,
-            "the mandolin on the right and its voices on the left");
-    }
+    CHECK(fabsf(right[479] - gain * mando_block[479]) < 1e-6 &&
+          fabsf(left[479] - gain * mando_voice_block[479]) < 1e-6,
+          "the mandolin on the right and its voices on the left");
   }
   return last;
 }
@@ -1224,13 +1210,8 @@ static void test_mandolin_sound() {
     float dry[480];
     mando_run(330, 0.2, 24000, true);
     memcpy(dry, mando_voice_block, sizeof(dry));
-    // And on the left, with F2.
-    mando_fx_left = true;
-    mando_publish();
-    mando_run(330, 0.2, 4800, true);
-    CHECK(mando_left_peak > 0.05, "%s didn't move to the left",
+    CHECK(mando_left_peak > 0.05, "%s isn't on the left",
           MANDO_VOICES[v].name);
-    mando_fx_left = false;
     mando_on = true;
     mando_voices = 0;
     mando_publish();
@@ -1271,7 +1252,6 @@ static void test_mandolin_sound() {
   // Its volume: all of it, the mandolin and its voices, wherever they go.
   mando_prepare(48000);
   mando_voices = MANDO_BIT(MANDO_VOCODER);
-  mando_fx_left = true;
   mando_publish();
   set_mando_gain(0.5);
   mando_run(330, 0.2, 24000, true);  // checks both sides are halved
@@ -1279,7 +1259,6 @@ static void test_mandolin_sound() {
   set_mando_gain(1);
   CHECK(atomic_load(&mando_gain) == MANDO_GAIN_UNIT,
         "the slider's middle should be where it was set by ear");
-  mando_fx_left = false;
 
   mando_on = false;
   mando_publish();

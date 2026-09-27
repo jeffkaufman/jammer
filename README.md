@@ -711,9 +711,9 @@ crossfaded in and out:
 They're at about the mandolin's own level (Shimmer 4dB under), from
 `make test-mac`'s synthesized strums; by ear is still to do.
 
-The voices go to the right with the mandolin, unless `F2`
-(`CH`), while it's selected, moves them to the left; the mandolin itself
-stays on the right.  esc brings them back.
+The voices -- Vocoder, Bass, Synth, Oct Down and Shimmer -- go to the left,
+since the mandolin itself is still heard under them on the right.  Drive and
+Leslie are on the mandolin itself, so they stay on the right with it.
 
 The copied ones are instances of their own, so the whistle's can run at the
 same time on input 1.  They have a gate of their own, **Mandolin gate** in the

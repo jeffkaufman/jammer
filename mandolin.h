@@ -44,9 +44,10 @@
 // by itself, any of them at once, like the whistle's vocal effects.  The
 // mandolin itself plays under all of them but the Tuner, which mutes the lot.
 //
-// The Vocoder and the Bass go to the right with the mandolin unless F2, CH,
-// while it's selected, moves them to the left, where fluidsynth's endpoints
-// are.  The mandolin itself stays on the right.
+// The voices -- the Vocoder, the Bass, Synth, Oct Down and Shimmer -- go to
+// the left, where fluidsynth's endpoints are, since the mandolin itself is
+// still heard under them on the right.  Drive and Leslie are the mandolin
+// itself, so they're on the right with it.
 //
 // The Bass and the Vocoder are instances of their own, apart from the
 // whistle's, so the two can run at once on their two inputs.  They
@@ -104,10 +105,8 @@ static const MandoVoice MANDO_VOICES[N_MANDO_VOICES] = {
 #define MANDO_BREATH_SMOOTH_S 0.040
 
 #define MANDO_BIT(v) (1u << (v))
-// And two more bits, in what's published: whether it's on at all, and
-// whether its voices are on the left.
+// And one more bit, in what's published: whether it's on at all.
 #define MANDO_PUB_ON (1u << N_MANDO_VOICES)
-#define MANDO_PUB_LEFT (1u << (N_MANDO_VOICES + 1))
 
 // About 6dB.
 #define MANDO_BOOST_GAIN 2.0f
@@ -162,7 +161,6 @@ static int mando_voice_for_note(int note) {
 static bool mando_on = true;
 static bool mando_selected;
 static unsigned mando_voices;  // MANDO_BIT each
-static bool mando_fx_left;     // its voices on the left rather than the right
 
 // Its voices' gate, in dBFS peak, like the whistle effects' (RoomGate), and
 // with the same range.  Remembered, like that one.
@@ -179,8 +177,7 @@ static _Atomic int mando_meter_level;
 
 static void mando_publish(void) {
   atomic_store_explicit(&mando_pub,
-                        mando_voices | (mando_on ? MANDO_PUB_ON : 0) |
-                          (mando_fx_left ? MANDO_PUB_LEFT : 0),
+                        mando_voices | (mando_on ? MANDO_PUB_ON : 0),
                         memory_order_relaxed);
   atomic_store_explicit(&mando_pub_gate_db, mando_gate_db,
                         memory_order_relaxed);
@@ -690,12 +687,11 @@ static struct {
 } mando;
 
 // Its block, summed onto the right by mando_add after the right's level, and
-// its voices', onto whichever side they're on.  As long as the longest block
+// its voices', onto the left.  As long as the longest block
 // the input takes (WHISTLE_MAX_BLOCK).
 #define MANDO_MAX_BLOCK 8192
 static float mando_block[MANDO_MAX_BLOCK];
 static float mando_voice_block[MANDO_MAX_BLOCK];
-static bool mando_voices_left;
 static int mando_block_len;
 
 // Which of the whistle's engine voices is its Bass: see
@@ -797,7 +793,6 @@ static void mando_process(const float* in, int len, double rate) {
   double threshold = pow(10, gate_db / 20.0);
   mando.gate.threshold = threshold;
   mando.vocoder.room.threshold = threshold * MANDO_VOCODER_INPUT_GAIN;
-  mando_voices_left = pub & MANDO_PUB_LEFT;
 
   mando_rec_push(in, len);
 
@@ -875,16 +870,16 @@ static void mando_process(const float* in, int len, double rate) {
   }
 }
 
-// Onto the right channel, or the only one on a mono device, and its voices
-// onto whichever side they're on.  After the right's level: see the top.  On
-// the audio thread.
+// Onto the right channel, and its voices onto the left, or both onto the only
+// one on a mono device.  After the right's level: see the top.  On the audio
+// thread.
 static void mando_add(float** out, int nout, int len) {
   if (nout < 1 || mando_block_len != len) {
     mando_block_len = 0;
     return;
   }
   float* right = out[nout >= 2 ? 1 : 0];
-  float* voices = mando_voices_left ? out[0] : right;
+  float* voices = out[0];
   float gain = atomic_load_explicit(&mando_gain, memory_order_relaxed);
   for (int i = 0; i < len; i++) {
     right[i] += gain * mando_block[i];
@@ -900,17 +895,6 @@ static void mando_add(float** out, int nout, int len) {
 static void mando_toggle(void) {
   mando_on = !mando_on;
   mando_publish();
-}
-
-// F2, while it's selected: its voices over to the other side.
-static void mando_swap_fx_side(void) {
-  mando_fx_left = !mando_fx_left;
-  mando_publish();
-}
-
-// What F2 says while it's selected.
-static const char* mando_fx_side_label(void) {
-  return mando_fx_left ? "FX TO\nLEFT" : "FX TO\nRIGHT";
 }
 
 // From the Vocal FX menu.
@@ -930,7 +914,6 @@ static void mando_reset(void) {
   mando_on = true;
   mando_selected = false;
   mando_voices = 0;
-  mando_fx_left = false;
   mando_publish();
 }
 

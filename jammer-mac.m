@@ -135,7 +135,6 @@ typedef struct {
   double mando_rec_seconds;
   unsigned mando_voices;
   int mando_voice[N_KEYS];  // MANDO_VOICES index each key has, or -1
-  const char* mando_fx_side_label;
   float mando_level;        // the input, peak, held like fx_level
   float mando_hz;           // what the tuner last heard, or 0
   uint64_t mando_heard_ns;  // and when
@@ -235,7 +234,6 @@ static void take_snapshot(Snapshot* s) {
   s->mando_rec_seconds = s->mando_recording
     ? atomic_load(&mando_rec_frames) / mando_rec.rate : 0;
   s->mando_voices = mando_voices;
-  s->mando_fx_side_label = mando_fx_side_label();
   float mando_level =
     atomic_exchange_explicit(&mando_meter_level, 0, memory_order_relaxed)
       / 10000.0f;
@@ -586,10 +584,6 @@ static CGFloat text_width(NSString* s, NSFont* font) {
     label = MANDO_VOICES[snapshot.mando_voice[i]].label;
     shortname = NULL;
   }
-  if (snapshot.mando_selected && key->note == F2) {
-    label = snapshot.mando_fx_side_label;
-    shortname = NULL;
-  }
   NSString* text = @(label);  // embedded \n in the table splits lines
 
   // Keys that carry a running value show it instead of a static label -- the
@@ -802,18 +796,12 @@ static CGFloat text_width(NSString* s, NSFont* font) {
               sizeof(voices) - strlen(voices) - 1);
     }
     [mando appendFormat:@"  %-24s", voices];
-    // The input, in the units its gate is set in, and where the voices go.
+    // The input, in the units its gate is set in.
     [mando appendFormat:@"  in %3.0fdB",
           20 * log10(fmax(snapshot.mando_level, 1e-4))];
     if (snapshot.mando_recording) {
       int t = (int)snapshot.mando_rec_seconds;
       [mando appendFormat:@"  ● rec %d:%02d", t / 60, t % 60];
-    }
-    if (snapshot.mando_voices & ~(MANDO_BIT(MANDO_TUNER) |
-                                  MANDO_BIT(MANDO_BOOST) |
-                                  MANDO_BIT(MANDO_BREATH))) {
-      [mando appendString:strstr(snapshot.mando_fx_side_label, "LEFT")
-                            ? @"  fx left" : @"  fx right"];
     }
   }
   NSColor* color = group_color(GROUP_WHISTLE);
