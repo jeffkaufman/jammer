@@ -1464,6 +1464,8 @@ static void flash_from_speech(int key) {
 @property(strong) NSMenuItem* altVolumeItem;
 @property(strong) NSSlider* altVolumeSlider;
 @property(strong) NSMenuItem* mandoVolumeItem;
+@property(strong) NSMenuItem* drumVolumeItem;
+@property(strong) NSSlider* drumVolumeSlider;
 @property(strong) NSSlider* mandoVolumeSlider;
 @property(strong) NSMenu* whistleMenu;
 @property(strong) NSMenu* speechMenu;
@@ -1665,6 +1667,26 @@ static void flash_from_speech(int key) {
   return self.mandoVolumeItem;
 }
 
+// The drum's, all of it: see drum_gain.
+- (void)drumVolumeChanged:(NSSlider*)slider {
+  set_drum_gain(slider.doubleValue);
+  [NSUserDefaults.standardUserDefaults setDouble:slider.doubleValue
+                                          forKey:@"drumVolume"];
+}
+
+- (NSMenuItem*)drumVolumeMenuItem {
+  if (self.drumVolumeItem) return self.drumVolumeItem;
+  NSSlider* slider = nil;
+  self.drumVolumeItem =
+    [self sliderMenuItem:@"Drum volume"
+                   value:drum_gain
+                     max:MAX_DRUM_GAIN
+                  action:@selector(drumVolumeChanged:)
+                  slider:&slider];
+  self.drumVolumeSlider = slider;
+  return self.drumVolumeItem;
+}
+
 - (void)rebuildAudioMenu {
   NSMenu* menu = self.audioMenu;
   [menu removeAllItems];
@@ -1687,6 +1709,7 @@ static void flash_from_speech(int key) {
   [menu addItem:[self volumeMenuItem]];
   [menu addItem:[self altVolumeMenuItem]];
   [menu addItem:[self mandoVolumeMenuItem]];
+  [menu addItem:[self drumVolumeMenuItem]];
 }
 
 // ---------------------------------------------------------------------------
@@ -2461,6 +2484,9 @@ int main(int argc, const char** argv) {
     NSNumber* saved_mando_gain =
       [NSUserDefaults.standardUserDefaults objectForKey:@"mandoVolume"];
     if (saved_mando_gain) set_mando_gain(saved_mando_gain.doubleValue);
+    NSNumber* saved_drum_gain =
+      [NSUserDefaults.standardUserDefaults objectForKey:@"drumVolume"];
+    if (saved_drum_gain) set_drum_gain(saved_drum_gain.doubleValue);
 
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.

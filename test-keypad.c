@@ -4352,6 +4352,12 @@ static void test_feet_sound() {
         thump_high);
   CHECK(board_after < 0.15, "the board shouldn't ring on (%.3f)",
         board_after);
+  // The Audio Output menu's drum volume reaches them.
+  set_drum_gain(0);
+  double muted = feet_render(FEET_THUMP, 0, &board_low, &board_high,
+                             &board_after);
+  set_drum_gain(1);
+  CHECK(muted == 0, "drum volume at 0 should silence the Feet (%.5f)", muted);
   printf("feet: gentle thump %.1fdB, tap %.1fdB, stomp %.1fdB RMS\n",
          20 * log10(thump), 20 * log10(tap), 20 * log10(stomp));
   memset(feet_voices, 0, sizeof(feet_voices));  // nothing left ringing

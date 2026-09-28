@@ -324,10 +324,29 @@ static void kit_gain_set(double gain) {
   atomic_store_explicit(&kit_gain_target, (float)gain, memory_order_relaxed);
 }
 
+// The Audio Output menu's drum volume: everything the drum plays -- its
+// kit, the kicks, the Grid Hat and the Feet -- on top of the global volume,
+// the drum's -/+ and the rest.  Remembered, like the others.
+#define MAX_DRUM_GAIN 2.0
+static _Atomic float drum_gain = 1.0f;
+
+void set_drum_gain(double gain) {
+  if (gain < 0) gain = 0;
+  if (gain > MAX_DRUM_GAIN) gain = MAX_DRUM_GAIN;
+  atomic_store_explicit(&drum_gain, (float)gain, memory_order_relaxed);
+}
+
 static void apply_kit_gain(float** bufs, int n, double sample_rate) {
   double target = atomic_load_explicit(&kit_gain_target,
                                        memory_order_relaxed);
-  if (target == 1 && kit_gain_now == 1) return;
+  float drum = atomic_load_explicit(&drum_gain, memory_order_relaxed);
+  if (drum != 1.0f) {
+    for (int i = 0; i < n; i++) {
+      bufs[2 * CHANNEL_HAT][i] *= drum;
+      bufs[2 * CHANNEL_HAT + 1][i] *= drum;
+    }
+  }
+  if (target == 1 && kit_gain_now == 1 && drum == 1.0f) return;
   static const int CHANNELS[] = {CHANNEL_DRUM, CHANNEL_KICK,
                                  CHANNEL_PITCHED_KICK};
   double k = 1 - exp(-1000 / (sample_rate * KIT_GAIN_SMOOTH_MS));
@@ -335,8 +354,8 @@ static void apply_kit_gain(float** bufs, int n, double sample_rate) {
   for (int i = 0; i < n; i++) {
     g += (target - g) * k;
     for (int c = 0; c < 3; c++) {
-      bufs[2 * CHANNELS[c]][i] *= (float)g;
-      bufs[2 * CHANNELS[c] + 1][i] *= (float)g;
+      bufs[2 * CHANNELS[c]][i] *= (float)(g * drum);
+      bufs[2 * CHANNELS[c] + 1][i] *= (float)(g * drum);
     }
   }
   kit_gain_now = fabs(g - target) < 1e-4 ? target : g;
@@ -1572,12 +1591,13 @@ static void play_breath_instruments(float* left, float* right, int len,
     for (int i = 0; i < n; i++) out[done + i] += (l[i] + r[i]) / 2;
   }
   float* drum = (fx & BREATH_FX_DRUM_RIGHT) ? right : left;
+  float gain = atomic_load_explicit(&drum_gain, memory_order_relaxed);
   for (int done = 0; done < len; done += BREATH_CHUNK) {
     int n = len - done < BREATH_CHUNK ? len - done : BREATH_CHUNK;
     memset(l, 0, sizeof(l));
     memset(r, 0, sizeof(r));
     play_feet(l, r, n, sample_rate);
-    for (int i = 0; i < n; i++) drum[done + i] += (l[i] + r[i]) / 2;
+    for (int i = 0; i < n; i++) drum[done + i] += gain * (l[i] + r[i]) / 2;
   }
 }
 
