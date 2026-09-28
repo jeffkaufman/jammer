@@ -136,8 +136,14 @@ static volatile int audio_block_frames = 0;
 
 static _Atomic int audio_breath;
 static _Atomic unsigned audio_breath_fx;
+// The Breath Gate's -/+, from breath_gain_hook: its layers' level.
+static _Atomic float audio_breath_gain = 1.0f;
 
 static void pan_breath_kits(bool right);
+
+static void breath_gain_set(double gain) {
+  atomic_store_explicit(&audio_breath_gain, (float)gain, memory_order_relaxed);
+}
 
 static void breath_set(int breath, unsigned fx) {
   atomic_store_explicit(&audio_breath, breath, memory_order_relaxed);
@@ -1416,7 +1422,6 @@ static void render_breath_instruments(float* left, float* right, int len,
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
 
-  play_feet(left, right, len, sample_rate);
   play_riser(left, right, len, fx & BREATH_FX_RISER, blown, sample_rate);
   play_wobble(left, right, len, fx & BREATH_FX_WOBBLE, blown, sample_rate);
 
@@ -1448,6 +1453,13 @@ static void render_breath_instruments(float* left, float* right, int len,
                         len)) {
     play_tamb(left, right, len, on, blown, sample_rate);
   }
+  // All but the Feet, which are the drum's, and come with its level.
+  float gain = atomic_load_explicit(&audio_breath_gain, memory_order_relaxed);
+  for (int i = 0; i < len; i++) {
+    left[i] *= gain;
+    right[i] *= gain;
+  }
+  play_feet(left, right, len, sample_rate);
 }
 
 // The right channel's level, as a proportion of the global volume.  Voices

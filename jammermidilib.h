@@ -646,6 +646,8 @@ unsigned breath_fx;
 // the gate: see breath_gate_breath.
 bool breath_gate_rested = true;
 static void (*breath_hook)(int breath, unsigned fx) = NULL;
+// And how loud the Breath Gate's own sounds are, from its -/+ (mac_gain).
+static void (*breath_gain_hook)(double gain) = NULL;
 void update_breath_fx(void);
 bool allow_all_drums_downbeat;
 bool drum_chooses_notes;
@@ -1394,6 +1396,17 @@ int pitch = MIDI_MAX / 2;
 
 int breath = 0;  // current value from breath controller
 
+// The Mac's own sounds on an endpoint -- the Feet, the Breath Gate's layers
+// -- have no channel volume for -/+ to set, so they take this gain instead:
+// what the same change to CC7 does to a voice at voices.h's usual 70, which
+// fluidsynth hears as the square of the ratio.
+#define MAC_GAIN_VOLUME 70.0
+static double mac_gain(int endpoint) {
+  double volume = MAC_GAIN_VOLUME + c->volume_deltas[endpoint];
+  volume = fmax(0, fmin(MIDI_MAX, volume));
+  return pow(volume / MAC_GAIN_VOLUME, 2);
+}
+
 // Tell the Mac's audio what the breath is doing and how hard you're blowing:
 // the sweeps that are on, and the Breath Gate's percussion if it's on and on
 // one of those voices, and which channel that goes to.
@@ -1408,6 +1421,7 @@ void update_breath_fx(void) {
     }
   }
   if (breath_hook) breath_hook(breath, fx);
+  if (breath_gain_hook) breath_gain_hook(mac_gain(ENDPOINT_BREATH));
 }
 
 // Every breath after a rest starts the Breath Gate's chord afresh, so the
@@ -2684,10 +2698,12 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case '-':
     c->volume_deltas[c->selected_endpoint] -= 5;
     reload_voice_setting(c);
+    update_breath_fx();  // and the Breath Gate's own sounds
     return;
   case '=': // +
     c->volume_deltas[c->selected_endpoint] += 5;
     reload_voice_setting(c);
+    update_breath_fx();  // and the Breath Gate's own sounds
     return;
   case '`':
     c->selected_endpoint = ENDPOINT_DRUM;
@@ -3471,7 +3487,7 @@ void feet_pedal(int note_in, int velocity, uint64_t current_time) {
     if (!c->downbeat[ENDPOINT_DRUM]) return;
   }
   feet_hook(kind, fmin(1, feet_hard() + feet_vel_hard(velocity)),
-            feet_vel_level(velocity), false);
+            feet_vel_level(velocity) * mac_gain(ENDPOINT_DRUM), false);
   // The grid mustn't play a step of its own on top of it.
   feet_last_step_ns = current_time;
 }
@@ -3523,7 +3539,7 @@ void feet_tick(void) {
   double velocity = feet_kick_velocity();
   feet_hook(upbeat ? FEET_TAP : FEET_TAP_SOFT,
             fmin(1, feet_hard() + feet_vel_hard(velocity)),
-            level * feet_vel_level(velocity), true);
+            level * feet_vel_level(velocity) * mac_gain(ENDPOINT_DRUM), true);
 }
 
 // Tell the Mac's audio about the music, every tick.  NULL on the Pi.

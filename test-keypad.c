@@ -444,6 +444,11 @@ static void test_kick_duck() {
 // it all off.
 static int told_breath;
 static unsigned told_fx;
+static double told_breath_gain;
+static void record_breath_gain(double gain) {
+  told_breath_gain = gain;
+}
+
 static void record_breath(int breath, unsigned fx) {
   told_breath = breath;
   told_fx = fx;
@@ -3930,6 +3935,18 @@ static void test_feet() {
   CHECK(fabs(tap_level - pow(0.9, 1.5)) < 1e-6,
         "the taps should follow the last four kicks (%.3f, not %.3f)",
         tap_level, pow(0.9, 1.5));
+  // The drum's -/+ reach them, as they would a kit's channel volume.
+  n_feet_heard = 0;
+  feet_pedal(MIDI_DRUM_IN_HIHAT, 100, now());
+  press("=");
+  feet_pedal(MIDI_DRUM_IN_HIHAT, 100, now());
+  press("-");
+  press("-");
+  feet_pedal(MIDI_DRUM_IN_HIHAT, 100, now());
+  press("=");
+  CHECK(n_feet_heard == 3 && feet_heard[1].level > feet_heard[0].level &&
+        feet_heard[2].level < feet_heard[0].level,
+        "+ should make the Feet louder and - quieter");
   press("tab");
   n_feet_heard = 0;
   handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
@@ -4488,6 +4505,14 @@ static void test_breath_sounds_follow_ch() {
   CHECK(told_fx & BREATH_FX_RIGHT, "CH should move the Breath Gate right");
   press("F2");
   CHECK(!(told_fx & BREATH_FX_RIGHT), "CH again should move it back");
+  // And its -/+ are what say how loud they are.
+  breath_gain_hook = record_breath_gain;
+  press("=");
+  CHECK(told_breath_gain > 1, "+ should make the Breath Gate's own louder");
+  press("-");
+  press("-");
+  CHECK(told_breath_gain < 1, "- should make the Breath Gate's own quieter");
+  breath_gain_hook = NULL;
   breath_hook = NULL;
   full_reset();
 }
