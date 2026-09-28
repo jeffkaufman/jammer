@@ -158,31 +158,22 @@ the physical keyboard in the middle, and what it actually does underneath:
   Voice, Synth Brass 1 and Rock Organ on `B N M` -- and the home row, in
   blue, is its own voices, in place of a pad: percussion on `S D F` played by moving the breath rather than by how hard
   it is, so holding it steady is silence, and the build-and-drop voices on
-  `G` and `H` (see [Builds and drops](#builds-and-drops)).  `J`, `K` and
-  `L`, DOWNBEAT, UPBEAT and UP HIGH elsewhere but nothing to a drone, are
-  shakers: the Brushes on `J`, the Tamb Shake on `K` and the Grid Hat on
-  `L`.  Blowing stirs the brushes round the head without letting up, the
+  `G` and `H` (see [Builds and drops](#builds-and-drops)).  `J` and `K`,
+  DOWNBEAT and UPBEAT elsewhere but nothing to a drone, are shakers: the
+  Brushes on `J` and the Tamb Shake on `K`.  Blowing stirs the brushes round the head without letting up, the
   jazz drummer's stirring the soup, faster and louder the harder you blow,
   and nothing else: no slap or tap.  Blowing jiggles the tambourine in the hand,
   on the beat's grid -- 32nds, or six a beat in jig time, at 116 BPM
   without the pedals -- its jingles just touching each other at each turn of
   the hand just past the gate, and clashing harder, more of them, and
-  rattling on between, until at 90% it's a rough, hard shake.  The Grid Hat
-  is the 808's closed hat on the beat's 16ths, or three a beat in jig time
-  -- with the pedals going, just
-  where the foot bass plays, its upbeat a subbeat early and in jig time its
-  lilt -- soft to hard the same way, and blowing on past about a third,
-  more hats fade in halfway between, until blowing hard it's 32nds, or six
-  a beat in jig time.
+  rattling on between, until at 90% it's a rough, hard shake.
   The brushes' stir and the tambourine are the Mac's own sound: the stir
   noise through the head's swish and the bristles' hiss, steady for a steady
   breath, and brighter and grittier the faster it goes; the tambourine a
   dozen jingles each shaking on its own, thrown against its pair a moment
   after the hand turns, its own moment, bouncing back, and rattling between,
   each noise through two bands of its own around 5kHz and 11kHz, as the
-  soundfont's tambourine is.  The Grid Hat is the soundfont's 808, on a
-  channel of its own (on the Pi, the drum's, playing what that kit has on
-  its note).
+  soundfont's tambourine is.
   Its own voices are layers:
   each key switches one on or off, and any of them can play together, over
   the pad or without one.  There's only ever one pad, since it's the one
@@ -229,25 +220,59 @@ the physical keyboard in the middle, and what it actually does underneath:
   chord, octave, and so on.  They light up for whichever endpoint is selected,
   so switching endpoints switches what's lit.  On the drum kit, downbeat puts
   the kit's kick on the kick pedal: every kick, including extra ones between
-  beats, which don't fit the tempo and so start no beat of their own.
-* **The drum's kits**: with the drum selected, `A` is Rim, `S` the Feet, and
-  `Z X C V` 808 A, 808 B, Room 2 and Room 6.  The Feet are the kit it starts
-  on, on the Mac (on the Pi, with no sound for them, Rim is, and `S` does
-  nothing).  Switch the drum on with `tab` for them.  **Feet**: French
+  beats, which don't fit the tempo and so start no beat of their own.  And
+  upbeat, doubled and pre uniq put the kit's hat, or the Feet's toe, on the
+  upbeat, the preup and the predown.  Chord, which the drum has no use for,
+  is breath fill there: whether blowing fills out the kit; and `M` next to
+  it, which has no kit on it, is breath hard, in purple: whether blowing has
+  everything hit harder.  The drum starts on downbeat, upbeat, pre uniq,
+  breath fill and breath hard: "kick . hat hat", and the breath filling it
+  out and hitting it harder.
+* **The drum's kits**: with the drum selected, `A` is Rim, `S` the Feet,
+  and `Z X C V` 808 A, 808 B, Room 2 and Room 6, and `D` switches the Grid
+  Hat on and off over whichever of them is on.  The Feet are the kit it
+  starts on, on the Mac (on the Pi, with no sound for them, Rim is, and `S`
+  does nothing).  Switch the drum on with `tab` for them.  Every kit plays
+  the same way: each drum pedal is a sound of its
+  own whenever it's hit, beat or no beat, and while the pedals keep a beat
+  the modifier keys set the pattern -- which the breath fills out.  Blowing
+  fills in the steps the keys leave out, of the preup, upbeat and predown,
+  from about 15% of the breath to as loud as the rest by half, so from the
+  start "kick . hat hat" fills in to "kick hat hat hat" -- with breath fill
+  (`,`) on, as it starts; and has everything hit harder the harder you blow,
+  as hard as it goes by 90% -- with breath hard (`M`) on, as it starts.
+  Either can be off without the other.  On
+  fluidsynth's kits, Rim, the 808s and the Rooms, the pedals are the kit's
+  kick on 2 (with downbeat), its side stick on 1, its closed hat on 4 and
+  its ride on 3, each levelled against the Standard set by `kitlevels` as
+  the rest of the kit is, at 90, or as hard as they're hit with vel; and
+  blowing all the way plays everything a third again as hard.
+  **Grid Hat**, in blue, since it isn't a kit like the others but a layer,
+  over whichever kit is on, or over a drum synth the pedals play: the 808's closed hat on the beat's 16ths, or three a beat in
+  jig time, at 116 BPM without the pedals -- with the pedals going, just
+  where the foot bass plays, its upbeat a subbeat early and in jig time its
+  lilt -- every other one a little softer, from barely there just past the
+  gate to as hard as it goes at about 80% of the breath; and blowing on past
+  about a third, more hats fade in halfway between, up to the softer ones'
+  level at about 95%, until blowing hard it's 32nds, or six a beat in jig
+  time.  Only the hat, whatever the kit under it: the pedals and the
+  modifier keys leave it be.  It's the soundfont's 808, on a channel of its
+  own that's panned with the Breath Gate (on the Pi, the drum's, playing
+  that kit's hat).  **Feet**: French
   Canadian foot percussion, leather shoes on a well-sprung wooden floor. Each
   drum pedal is a step of its own whenever it's hit, beat or no beat: the kick
-  (2) a thump, the hihat (4) a tap, the snare (1) a lower tap, and the ride
+  (2) a thump (with downbeat), the hihat (4) a tap, the snare (1) a lower tap, and the ride
   (3) a lower one still.  As hard as the pedal's hit: a firm hit, velocity
   100, as loud as the grid's steps, a softer one quieter, and one harder
   louder and landing harder too, towards a stomp.  The grid's taps follow the
   kick the same way, going by the last four kicks' velocity on average. And
-  while the pedals keep a beat, the grid fills in: without a breath, a gentle
-  "thump . tap tap", the pedal's step on the beat, and toe taps on the foot
-  bass's upbeat and predown, leaning as the Grid Hat does (in jig time "thump
-  . tap"), and only within the beat the last kick started, so the last kick's
-  taps are the last.  Blowing fills in the gap, the preup, from about 15% of
-  the breath to as loud as the rest by half, and has every step hit harder,
-  louder and deeper, until by 90% they're stomps.  The Mac's own sound,
+  while the pedals keep a beat, the grid fills in: from the start, without a
+  breath, a gentle "thump . tap tap", the pedal's step on the beat, and toe
+  taps on the foot bass's upbeat and predown, leaning as the Grid Hat does
+  (in jig time "thump . tap"), and only within the beat the last kick
+  started, so the last kick's taps are the last.  Blowing fills in the gap,
+  the preup, and has every step hit harder, louder and deeper, until by 90%
+  they're stomps.  The Mac's own sound,
   modelled on recordings of real feet: a wooden floor doesn't ring at a pitch,
   and a step is a few hits a few milliseconds apart, each a burst of noise in
   three broad bands -- the leather's click, the boards' body, and the floor's
@@ -258,8 +283,8 @@ the physical keyboard in the middle, and what it actually does underneath:
   together, and heavier in the low.  No two steps are quite alike, as a
   player's aren't: each a little harder or softer, brighter or duller, longer
   or shorter, and a step on the grid up to 5ms behind it; a pedal's comes when
-  it's hit.  The drum's modifier keys are for the other kits; the Feet leave
-  them be.
+  it's hit.  Up high, clipped, shorter and vel are for fluidsynth's kits;
+  the Feet leave them be.
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.
 * **`1`** (pink) is the whistle bass, which is its own synthesis engine rather
@@ -561,7 +586,6 @@ on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
 |---|---|---|
 | `J` | Brushes | a jazz kit's brushes: blowing stirs them round the head without letting up, from a slow, soft stir just past the gate to a quick scrub at about three quarters of the breath, louder and brighter as it speeds up, and gone when you stop: only the stir, no slap or tap |
 | `K` | Tamb Shake | a tambourine jiggled in the hand for as long as you blow: 32nds on the beat's grid, or six a beat in jig time, at 116 BPM without the pedals, the stroke out a little harder than the stroke back; from the jingles just touching just past the gate to a rough, hard shake at about 90% of the breath, rattling on between the turns of the hand.  The Mac's own sound |
-| `L` | Grid Hat | the 808's closed hat on the beat's 16ths, or three a beat in jig time, at 116 BPM without the pedals, where the foot bass plays with the pedals going, every other one a little softer, from barely there just past the gate to as hard as it goes at about 80% of the breath; from about 35%, more fade in halfway between them, up to the softer ones' level at about 95%: 32nds, or six a beat in jig time |
 | `G` | Noise Riser | noise through a band that rises from 300Hz to 12kHz as you blow harder |
 | `H` | Wobble | a saw bass on the bass note, its filter swinging on the beat's grid once a beat, and 2, 3 and 4 times as you blow harder |
 

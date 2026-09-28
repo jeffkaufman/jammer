@@ -38,6 +38,8 @@ enum {
   FLAG_DOWNBEAT, FLAG_UPBEAT, FLAG_UPBEAT_HIGH, FLAG_DOUBLED,
   FLAG_SHORTISH, FLAG_SHORTER, FLAG_PRE_UNIQUE, FLAG_CHORD, FLAG_VEL,
   FLAG_PAN, FLAG_DUCKED, FLAG_AIR_LOCKED, FLAG_FOLLOWS_AIR,
+  // The drum's alone, on voice keys it has no kit on.
+  FLAG_BREATH_HARD, FLAG_GRID_HAT,
 };
 
 // Globals in jammermidilib.h.
@@ -210,7 +212,7 @@ static const Key KEYS[] = {
   {kVK_ANSI_S, 'S', 0, "S", NULL, "SynBass\n1", GROUP_VOICE, LIT_VOICE, 38,
    "Feet", LIT_DRUM_VOICE, KIT_FEET, 3, 2.75, 1},
   {kVK_ANSI_D, 'D', 0, "D", NULL, "Acou\nBass", GROUP_VOICE, LIT_VOICE, 32,
-   BLANK_ON_DRUM, 3, 3.75, 1},
+   "Grid\nHat", LIT_EP_FLAG, FLAG_GRID_HAT, 3, 3.75, 1},
   {kVK_ANSI_F, 'F', 0, "F", NULL, "Draw\nbar", GROUP_VOICE, LIT_VOICE, 16,
    BLANK_ON_DRUM, 3, 4.75, 1},
   {kVK_ANSI_G, 'G', 0, "G", NULL, "Fret\nless", GROUP_VOICE, LIT_VOICE, 35,
@@ -243,10 +245,13 @@ static const Key KEYS[] = {
    BLANK_ON_DRUM, 4, 6.25, 1},
   {kVK_ANSI_N, 'N', 0, "N", NULL, "Bass\nLead", GROUP_VOICE, LIT_VOICE, 87,
    BLANK_ON_DRUM, 4, 7.25, 1},
+  // BREATH HARD on the drum, next to BREATH FILL: a modifier there.
   {kVK_ANSI_M, 'M', 0, "M", NULL, "Tub\nBells", GROUP_VOICE, LIT_VOICE, 15,
-   BLANK_ON_DRUM, 4, 8.25, 1},
+   "BREATH\nHARD", LIT_EP_FLAG, FLAG_BREATH_HARD, 4, 8.25, 1},
+  // CHORD means nothing to the drum, so there it's whether the breath fills
+  // out the kit (drum_breath_fills), kept in the drum's chord flag.
   {kVK_ANSI_Comma, ',', 0, ",", "C", "CHORD", GROUP_MODIFIER, LIT_EP_FLAG,
-   FLAG_CHORD, NOLABEL, 4, 9.25, 1},
+   FLAG_CHORD, "BREATH\nFILL", LIT_EP_FLAG, FLAG_CHORD, 4, 9.25, 1},
   {kVK_ANSI_Period, '.', 0, ".", "V", "VEL", GROUP_MODIFIER, LIT_EP_FLAG,
    FLAG_VEL, NOLABEL, 4, 10.25, 1},
   {kVK_ANSI_Slash, '/', 0, "/", "f", "FADE\nOUT", GROUP_GLOBAL,

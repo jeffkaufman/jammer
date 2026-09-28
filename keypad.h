@@ -36,6 +36,8 @@ static bool ep_flag(int ep, int flag) {
   case FLAG_DUCKED:      return c->ducked[ep];
   case FLAG_AIR_LOCKED:  return c->air_lockeds[ep];
   case FLAG_FOLLOWS_AIR: return c->follows_air[ep];
+  case FLAG_BREATH_HARD: return ep == ENDPOINT_DRUM && c->drum_breath_hard;
+  case FLAG_GRID_HAT:    return ep == ENDPOINT_DRUM && c->drum_grid_hat;
   }
   return false;
 }
@@ -281,7 +283,7 @@ static bool drone_key_is_dead(const Key* key) {
 
 static bool endpoint_uses_flag(int ep, int flag) {
   if (is_footbass(ep) || ep == ENDPOINT_ARP) return true;
-  if (ep == ENDPOINT_DRUM) return flag != FLAG_CHORD;
+  if (ep == ENDPOINT_DRUM) return true;  // CHORD is BREATH FILL there
   switch (flag) {
   case FLAG_CHORD:
     return plays_chords(ep);

@@ -114,6 +114,11 @@ typedef struct {
 #define SND_KICK 0
 #define SND_SNARE 1
 #define SND_HIHAT 2
+// The pedals' own, which the grid never plays (kit_pedal): the set's side
+// stick, levelled as the Rim kit's is, and its ride, as the Ride kit's.
+#define SND_RIM 3
+#define SND_RIDE 4
+#define N_SOUNDS 5
 
 // Where a sound should sit relative to the reference, when that isn't level
 // with it.  Two kinds of entry, and the difference is worth keeping straight:
@@ -134,6 +139,8 @@ static const struct {
   const char* why;
 } LEVEL_OFFSETS[] = {
   {KIT_RIM, SND_SNARE, -3.9, "a side stick is a quiet sound by nature"},
+  // So is every kit's, on the snare pedal, against the reference's snare.
+  {-1, SND_RIM, -3.9, "a side stick is a quiet sound by nature"},
   {KIT_CLAP, SND_SNARE, 8.0, "FluidR3's hand clap is simply loud"},
   {KIT_808_A, SND_HIHAT, -5.6, "by ear"},
   {KIT_808_B, SND_KICK, 6.5, "by ear"},
@@ -144,7 +151,8 @@ static const struct {
 static double expected_offset(int kit, int sound) {
   int n = (int)(sizeof(LEVEL_OFFSETS) / sizeof(LEVEL_OFFSETS[0]));
   for (int i = 0; i < n; i++) {
-    if (LEVEL_OFFSETS[i].kit == kit && LEVEL_OFFSETS[i].sound == sound) {
+    if ((LEVEL_OFFSETS[i].kit == kit || LEVEL_OFFSETS[i].kit == -1) &&
+        LEVEL_OFFSETS[i].sound == sound) {
       return LEVEL_OFFSETS[i].offset_db;
     }
   }
@@ -208,13 +216,19 @@ int main(int argc, char** argv) {
   double target_hihat = measure(PERCUSSION_BANK, reference->program,
                                 reference->hihat,
                                 NOMINAL_VELOCITY * reference->hihat_vel, 0);
+  // The rim against the snare and the ride against the hat: the pedals'
+  // take the grid's places.
+  double target[N_SOUNDS] = {target_kick, target_snare, target_hihat,
+                             target_snare, target_hihat};
   if (!check) {
     printf("reference (Standard set at velocity %d):\n", NOMINAL_VELOCITY);
     printf("  kick %6.1f dB   snare %6.1f dB   hihat %6.1f dB\n\n",
            target_kick, target_snare, target_hihat);
-    printf("%-8s %-22s %-24s %s\n", "kit", "kick", "snare", "hihat");
-    printf("%-8s %-22s %-24s %s\n", "", "now -> want  scale",
-           "now -> want  scale", "now -> want  scale");
+    printf("%-8s %-22s %-22s %-22s %-22s %s\n", "kit", "kick", "snare",
+           "hihat", "rim", "ride");
+    printf("%-8s %-22s %-22s %-22s %-22s %s\n", "", "now -> want  scale",
+           "now -> want  scale", "now -> want  scale", "now -> want  scale",
+           "now -> want  scale");
   }
 
   for (int i = 0; i < (int)(sizeof(KIT_NAMES) / sizeof(KIT_NAMES[0])); i++) {
@@ -224,48 +238,41 @@ int main(int argc, char** argv) {
     int kick_prog = pitched ? k->kick_program : k->program;
     int gate = pitched ? k->kick_gate_ms : 0;
 
-    double now_kick = measure(kick_bank, kick_prog, k->kick,
-                              NOMINAL_VELOCITY * k->kick_vel, gate);
-    double now_snare = measure(PERCUSSION_BANK, k->program, k->snare,
-                               NOMINAL_VELOCITY * k->snare_vel, 0);
-    double now_hihat = measure(PERCUSSION_BANK, k->program, k->hihat,
-                               NOMINAL_VELOCITY * k->hihat_vel, 0);
-
-    // Aim at the reference plus whatever offset this sound is meant to have.
-    double want_kick =
-      velocity_for(kick_bank, kick_prog, k->kick, gate,
-                   target_kick + expected_offset(KIT_NAMES[i].kit, SND_KICK))
-      / (double)NOMINAL_VELOCITY;
-    double want_snare =
-      velocity_for(PERCUSSION_BANK, k->program, k->snare, 0,
-                   target_snare + expected_offset(KIT_NAMES[i].kit, SND_SNARE))
-      / (double)NOMINAL_VELOCITY;
-    double want_hihat =
-      velocity_for(PERCUSSION_BANK, k->program, k->hihat, 0,
-                   target_hihat + expected_offset(KIT_NAMES[i].kit, SND_HIHAT))
-      / (double)NOMINAL_VELOCITY;
-
-    double off[3] = {now_kick - target_kick, now_snare - target_snare,
-                     now_hihat - target_hihat};
-
-    if (check) {
-      static const char* SOUND[3] = {"kick", "snare", "hihat"};
-      for (int sound = 0; sound < 3; sound++) {
-        double want = expected_offset(KIT_NAMES[i].kit, sound);
-        if (fabs(off[sound] - want) > LEVEL_TOLERANCE_DB) {
+    // Each sound: its bank, program, note, gate and scale.
+    const struct { int bank, program, note, gate; float scale; } snd[] = {
+      {kick_bank, kick_prog, k->kick, gate, k->kick_vel},
+      {PERCUSSION_BANK, k->program, k->snare, 0, k->snare_vel},
+      {PERCUSSION_BANK, k->program, k->hihat, 0, k->hihat_vel},
+      {PERCUSSION_BANK, k->program, MIDI_DRUM_OUT_RIM, 0, k->rim_vel},
+      {PERCUSSION_BANK, k->program, MIDI_DRUM_OUT_RIDE, 0, k->ride_vel},
+    };
+    static const char* SOUND[N_SOUNDS] = {"kick", "snare", "hihat", "rim",
+                                          "ride"};
+    if (!check) printf("%-8s", KIT_NAMES[i].name);
+    for (int sound = 0; sound < N_SOUNDS; sound++) {
+      double now_db = measure(snd[sound].bank, snd[sound].program,
+                              snd[sound].note,
+                              NOMINAL_VELOCITY * snd[sound].scale,
+                              snd[sound].gate);
+      double want_db = expected_offset(KIT_NAMES[i].kit, sound);
+      double off = now_db - target[sound];
+      if (check) {
+        if (fabs(off - want_db) > LEVEL_TOLERANCE_DB) {
           printf("FAIL: %s %s is %+.1f dB from the reference, want %+.1f\n",
-                 KIT_NAMES[i].name, SOUND[sound], off[sound], want);
+                 KIT_NAMES[i].name, SOUND[sound], off, want_db);
           failures++;
         }
+        continue;
       }
-      continue;
+      // Aim at the reference plus whatever offset this sound is meant to
+      // have.
+      double want_scale =
+        velocity_for(snd[sound].bank, snd[sound].program, snd[sound].note,
+                     snd[sound].gate, target[sound] + want_db)
+        / (double)NOMINAL_VELOCITY;
+      printf(" %5.1f %+6.1f %5.2f  ", now_db, off, want_scale);
     }
-
-    printf("%-8s %5.1f %+6.1f %5.2f   %5.1f %+6.1f %5.2f     %5.1f %+6.1f %5.2f\n",
-           KIT_NAMES[i].name,
-           now_kick, off[0], want_kick,
-           now_snare, off[1], want_snare,
-           now_hihat, off[2], want_hihat);
+    if (!check) printf("\n");
   }
 
   if (check) {

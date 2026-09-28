@@ -463,8 +463,17 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSColor* color = group_color(shapes ? GROUP_MODIFIER : key->group);
   // The Breath Gate's layers are blue: unlike the orange voice keys around
   // them, which pick one, any of these can be on at once, and over the pad.
-  if (snapshot.breath_voice[i] >= 0) {
+  // So is the drum's Grid Hat, which isn't a kit like the others but a
+  // layer over whichever is on, or over a drum synth the pedals play.  And
+  // BREATH HARD, a voice key with no kit on it, is a modifier on the drum.
+  bool drum_keys = snapshot.selected_endpoint == ENDPOINT_DRUM &&
+                   !snapshot.whistle_selected && !snapshot.mando_selected &&
+                   key->drum_label && key->drum_lit == LIT_EP_FLAG;
+  if (snapshot.breath_voice[i] >= 0 ||
+      (drum_keys && key->drum_arg == FLAG_GRID_HAT)) {
     color = [NSColor colorWithSRGBRed:0.36 green:0.56 blue:1.00 alpha:1];
+  } else if (drum_keys && key->group == GROUP_VOICE) {
+    color = group_color(GROUP_MODIFIER);
   }
   bool lit = snapshot.lit[i];
   // A key with no label at all is filler; a voice key whose drum label is

@@ -181,6 +181,12 @@
 #define KIT_FEET   13
 #define N_KITS     14
 
+// Whether the kit is fluidsynth's percussion, which arpeggiate_drum and
+// kit_pedal play, rather than something of its own.
+static inline bool kit_plays_notes(int kit) {
+  return kit != KIT_FEET;
+}
+
 // The percussion sets, bank 128.  Everything used to come out of Standard,
 // because the drum channel was never sent a program change at all.
 #define PERC_STANDARD 0
@@ -205,58 +211,72 @@ typedef struct {
   // pitched, but it sustains, so it needs its own channel and a note-off.
   int kick_program;
   int kick_gate_ms;
+  // The rim and the ride, which only the pedals play (kit_pedal): the
+  // set's side stick and ride cymbal, at these scales.
+  float rim_vel;
+  float ride_vel;
 } DrumKit;
 
 static const DrumKit KITS[N_KITS] = {
   // set            kick                  snare                 hihat
+  //   kick_vel snare_vel hihat_vel  pitched kick, gate  rim_vel ride_vel
   [KIT_RIM] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
-               MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0, NO_PITCHED_KICK, 0},
+               MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0, NO_PITCHED_KICK, 0,
+               0.81, 0.59},
   [KIT_RIM2] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_RIM,
-                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 1.0, 1.0, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 1.0, 1.0, NO_PITCHED_KICK, 0,
+                0.81, 0.59},
   [KIT_SNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK, 0},
+                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.8, 1.0, NO_PITCHED_KICK,
+                 0, 0.81, 0.59},
   [KIT_CLAP] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_CLAP,
-                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.93, 1.0, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.93, 1.0, NO_PITCHED_KICK, 0,
+                0.81, 0.59},
   [KIT_ESNARE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_ESNARE,
-                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.88, 1.0, NO_PITCHED_KICK, 0},
+                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.88, 1.0, NO_PITCHED_KICK,
+                  0, 0.81, 0.59},
   [KIT_RIDE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
-                MIDI_DRUM_OUT_RIDE, 1.41, 0.8, 0.61, NO_PITCHED_KICK, 0},
+                MIDI_DRUM_OUT_RIDE, 1.41, 0.8, 0.61, NO_PITCHED_KICK, 0,
+                0.81, 0.59},
   [KIT_BONGO] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_BONGO,
                  MIDI_DRUM_OUT_HI_BONGO, MIDI_DRUM_OUT_CABASA,
-                 0.88, 1.03, 0.69, NO_PITCHED_KICK, 0},
+                 0.88, 1.03, 0.69, NO_PITCHED_KICK, 0, 0.81, 0.59},
   // The claves need nearly full velocity to keep up, so this kit has little
   // headroom left when the foot hits hard.
   [KIT_BLOCK] = {PERC_STANDARD, MIDI_DRUM_OUT_LOW_WOOD, MIDI_DRUM_OUT_HI_WOOD,
-                 MIDI_DRUM_OUT_CLAVES, 1.20, 1.11, 1.39, NO_PITCHED_KICK, 0},
+                 MIDI_DRUM_OUT_CLAVES, 1.20, 1.11, 1.39, NO_PITCHED_KICK, 0,
+                 0.81, 0.59},
 
   // The 808's two kicks, each with its own set's snare and hat.  The two
   // kicks measure far apart despite near-identical peaks -- 35 is the short
-  // one, 36 the long boom -- so they need quite different scales.
+  // one, 36 the long boom -- so they need quite different scales.  The 808's
+  // ride is a good deal louder than the Standard set's, and the Rooms' a
+  // little.
   [KIT_808_A] = {PERC_808, MIDI_DRUM_OUT_KICK_1, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.08, 0.54, 0.60,
-                 NO_PITCHED_KICK, 0},
+                 NO_PITCHED_KICK, 0, 0.81, 0.33},
   [KIT_808_B] = {PERC_808, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 0.99, 0.54, 0.60,
-                 NO_PITCHED_KICK, 0},
+                 NO_PITCHED_KICK, 0, 0.81, 0.33},
   [KIT_ROOM2] = {PERC_ROOM_2, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.26, 0.54, 0.84,
-                 NO_PITCHED_KICK, 0},
+                 NO_PITCHED_KICK, 0, 0.81, 0.49},
   [KIT_ROOM6] = {PERC_ROOM_6, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 1.23, 0.84, 0.84,
-                 NO_PITCHED_KICK, 0},
+                 NO_PITCHED_KICK, 0, 0.81, 0.49},
 
   // Synth Drum played at C0, with the 808's snare and hat around it -- the
   // hat can't come from Synth Drum, since note 42 of a melodic program is
   // just a higher note.
   [KIT_SYNTH] = {PERC_808, 12 /* C0 */, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 0.60, 0.54, 0.82,
-                 PROG_SYNTH_DRUM, 120},
+                 PROG_SYNTH_DRUM, 120, 0.81, 0.33},
 
   // Never played: the Feet are the Mac's own.  The drum channel's left on
   // Standard, so it's somewhere sensible if a note did reach it.
   [KIT_FEET] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0,
-                NO_PITCHED_KICK, 0},
+                NO_PITCHED_KICK, 0, 0.81, 0.59},
 };
 
 // The Feet's steps, to the Mac's sound: which (FEET_*, common.h), how hard,
@@ -321,8 +341,8 @@ static int drone_voice_for_note(int note) {
 // The Breath Gate's own voices, in place of a pad, on the home row: the
 // percussion the breath plays by moving (macapi.h), then the
 // voices for builds and drops (see the README's "Builds and drops").  And
-// the shakers, on J, K and L: modifier keys, but DOWNBEAT, UPBEAT and UP
-// HIGH mean nothing to a drone.  Its
+// the shakers, on J and K: modifier keys, but DOWNBEAT and UPBEAT mean
+// nothing to a drone.  Its
 // pads are on the row below (BREATH_PADS), so the two kinds are a row each
 // rather than mixed; the other drones keep all ten pads where they are.
 //
@@ -332,9 +352,6 @@ static int drone_voice_for_note(int note) {
 //   Tamb Shake      a tambourine, on K, jiggled in the hand on the beat's
 //                   grid, 16ths or three a beat in jig time, its jingles
 //                   shaken harder the harder you blow (macapi.h)
-//   Grid Hat        the 808's closed hat, on L, on the foot bass's grid,
-//                   harder the harder you blow, and harder still with 32nds
-//                   fading in between (breath_hat_tick)
 //   Noise Riser     noise through a filter the breath opens (macapi.h)
 //   Wobble          a saw bass on the bass note, its filter swinging on the
 //                   beat's grid, 1-4 times a beat the harder you blow
@@ -352,7 +369,6 @@ enum {
   BREATH_LAYER_WASHBOARD = 1 << 5,
   BREATH_LAYER_BRUSHES = 1 << 6,
   BREATH_LAYER_TAMB_SHAKE = 1 << 7,
-  BREATH_LAYER_GRID_HAT = 1 << 8,
 };
 static const struct {
   char note;
@@ -367,7 +383,6 @@ static const struct {
   {'H', BREATH_LAYER_WOBBLE,     "Wobble",       BREATH_FX_WOBBLE},
   {'J', BREATH_LAYER_BRUSHES,    "Brushes",      BREATH_FX_BRUSH},
   {'K', BREATH_LAYER_TAMB_SHAKE, "Tamb\nShake",  BREATH_FX_TAMB},
-  {'L', BREATH_LAYER_GRID_HAT,   "Grid\nHat",    0},
 };
 
 // And its pads, on the row below: seven of the drones' ten, by program, so
@@ -581,6 +596,11 @@ struct Configuration {
   // The Breath Gate's layers that are on, BREATH_LAYER_*, with its pad or
   // without.
   unsigned breath_layers;
+
+  // The drum's: whether blowing has everything hit harder (BREATH HARD, on
+  // M), and the Grid Hat, over whichever kit it's on (D).
+  bool drum_breath_hard;
+  bool drum_grid_hat;
 };
 
 // TODO: allow multiple of these.
@@ -1110,12 +1130,19 @@ void clear_footbass_3() {
   c->doubled[ENDPOINT_FOOTBASS_3] = true;
 }
 
+// "Kick . hat hat": the kick pedal's kick, and hats on the upbeat and the
+// predown, which blowing fills out (see DRUM_FILL_FROM) -- the Feet's
+// "thump . tap tap".  And BREATH FILL on, the drum's CHORD.
 void clear_drum() {
   // select_voice ??
-  c->downbeat[ENDPOINT_DRUM] = false;
+  c->downbeat[ENDPOINT_DRUM] = true;
   c->upbeat[ENDPOINT_DRUM] = true;
   c->upbeat_high[ENDPOINT_DRUM] = false;
   c->doubled[ENDPOINT_DRUM] = false;
+  c->pre_unique[ENDPOINT_DRUM] = true;
+  c->chord[ENDPOINT_DRUM] = true;
+  c->drum_breath_hard = true;
+  c->drum_grid_hat = false;
 }
 
 void clear_arp() {
@@ -1601,10 +1628,58 @@ void kick_duck_kick(uint64_t current_time) {
 // beat can tell it still needs one.
 uint64_t kit_kick_ns;
 
+// The breath and the drum, every kit alike, the Feet included: the modifier
+// keys set the pattern, and blowing fills in the steps they leave out -- the
+// preup, the upbeat and the predown, whichever of DOUBLED, UPBEAT and PRE
+// UNIQ are off -- from nothing at DRUM_FILL_FROM to as loud as the rest by
+// DRUM_FILL_FULL, and has everything hit harder the harder it's blown, by
+// DRUM_FULL as hard as it goes.  The drum starts on DOWNBEAT, UPBEAT and PRE
+// UNIQ (clear_drum), so at rest "kick . hat hat", and blowing fills the gap.
+// The filling in is BREATH FILL's, the CHORD key, which the drum has no
+// other use for, and the hitting harder BREATH HARD's, on M, next to it:
+// each on to start with, and either can be off without the other.
+#define DRUM_FILL_FROM 0.15
+#define DRUM_FILL_FULL 0.5
+#define DRUM_FULL 0.9
+// On fluidsynth's kits, how much harder: every note's velocity up to this
+// much more.
+#define KIT_BREATH_BOOST 0.35
+
+// 0 below `from`, 1 above `full`, and in a line between.
+static double hat_ramp(double blown, double from, double full) {
+  double x = (blown - from) / (full - from);
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+// How hard the breath has the drum play, 0 at rest to 1: always at rest
+// with BREATH HARD off.
+static double drum_breath(void) {
+  if (!c->drum_breath_hard) return 0;
+  return hat_ramp(breath_blown(breath), BREATH_GATE_SHUT, DRUM_FULL);
+}
+
+// How loud a step that `on` leaves out plays, against the rest: all of it
+// if it's on, and blowing fills it in if it isn't.
+// Whether blowing fills out the kit: BREATH FILL, kept in the drum's chord
+// flag.
+static bool drum_breath_fills(void) {
+  return c->chord[ENDPOINT_DRUM];
+}
+
+static double drum_step_level(bool on) {
+  if (on) return 1;
+  if (!drum_breath_fills()) return 0;
+  return hat_ramp(breath_blown(breath), DRUM_FILL_FROM, DRUM_FILL_FULL);
+}
+
+static double kit_boost(void) {
+  return 1 + KIT_BREATH_BOOST * drum_breath();
+}
+
 // The kit's kick, at the drum's velocity.
 void play_kit_kick(uint64_t current_time) {
-  if (c->drum_voice == KIT_FEET) return;  // the Feet make their own thump
-  int vel = c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90;
+  if (!kit_plays_notes(c->drum_voice)) return;  // the Feet thump their own
+  int vel = (c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90) * kit_boost();
   const DrumKit* kit = &KITS[c->drum_voice];
   kit_kick_ns = current_time;
   kick_duck_kick(current_time);
@@ -1628,9 +1703,9 @@ void play_kit_kick(uint64_t current_time) {
 void arpeggiate_drum(int subbeat, uint64_t current_time) {
   if (!c->on[ENDPOINT_DRUM]) return;
   // The Feet play on their own grid, feet_tick, not the kit's.
-  if (c->drum_voice == KIT_FEET) return;
+  if (!kit_plays_notes(c->drum_voice)) return;
 
-  int vel = c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90;
+  double vel = (c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90) * kit_boost();
 
   const DrumKit* kit = &KITS[c->drum_voice];
 
@@ -1662,32 +1737,57 @@ void arpeggiate_drum(int subbeat, uint64_t current_time) {
   }
 
 
-  if (upbeat(subbeat) && c->upbeat[ENDPOINT_DRUM]) {
-    if (!c->upbeat_high[ENDPOINT_DRUM] &&
+  // The hats between: those the keys leave out filled in by the breath.
+  double level = 0;
+  if (upbeat(subbeat)) {
+    level = drum_step_level(c->upbeat[ENDPOINT_DRUM]);
+    if (c->upbeat[ENDPOINT_DRUM] &&
+        !c->upbeat_high[ENDPOINT_DRUM] &&
 	!c->doubled[ENDPOINT_DRUM] &&
 	!c->pre_unique[ENDPOINT_DRUM]) {
-      vel *= 1.4;
-    }	
-	
+      level *= 1.4;
+    }
+    level *= 0.88;
+  } else if (preup(subbeat)) {
+    level = 0.74 * drum_step_level(c->doubled[ENDPOINT_DRUM]);
+  } else if (predown(subbeat)) {
+    level = 0.88 * drum_step_level(c->pre_unique[ENDPOINT_DRUM]);
+  }
+  int hat_vel = (int)(vel * level * kit->hihat_vel);
+  if (hat_vel > 0) {
     psend_midi(MIDI_ON,
                kit->hihat,
-               vel * 0.88 * kit->hihat_vel,
+               hat_vel,
                ENDPOINT_DRUM);
   }
+}
 
-  if (preup(subbeat) && c->doubled[ENDPOINT_DRUM]) {
-    psend_midi(MIDI_ON,
-               kit->hihat,
-               vel * 0.74 * kit->hihat_vel,
-               ENDPOINT_DRUM);
+// A drum pedal on one of fluidsynth's kits: its own sound, whenever it's
+// hit, beat or no beat, and whether or not the pedals are choosing notes --
+// the snare (pedal 1) the set's rim, the hihat (4) its closed hat, and the
+// crash (3) its ride.  The kick (2) is the kit's kick, with DOWNBEAT on:
+// count_drum_hit and arpeggiate_drum see to that.  At the pedal's velocity
+// with VEL on, as the kick is, and harder the harder it's blown.
+void kit_pedal(int note_in, int velocity) {
+  if (!c->on[ENDPOINT_DRUM] || !kit_plays_notes(c->drum_voice)) return;
+  const DrumKit* kit = &KITS[c->drum_voice];
+  int note;
+  float scale;
+  if (note_in == MIDI_DRUM_IN_SNARE) {
+    note = MIDI_DRUM_OUT_RIM;
+    scale = kit->rim_vel;
+  } else if (note_in == MIDI_DRUM_IN_HIHAT) {
+    note = kit->hihat;
+    scale = kit->hihat_vel;
+  } else if (note_in == MIDI_DRUM_IN_CRASH) {
+    note = MIDI_DRUM_OUT_RIDE;
+    scale = kit->ride_vel;
+  } else {
+    return;
   }
-
-  if (predown(subbeat) && c->pre_unique[ENDPOINT_DRUM]) {
-    psend_midi(MIDI_ON,
-               kit->hihat,
-               vel * 0.88 * kit->hihat_vel,
-               ENDPOINT_DRUM);
-  }
+  if (velocity <= 0) return;
+  double vel = (c->vel[ENDPOINT_DRUM] ? velocity : 90) * kit_boost();
+  psend_midi(MIDI_ON, note, (int)(vel * scale), ENDPOINT_DRUM);
 }
 
 // Called on each beat, before its notes are played, with the lock held.  For
@@ -2511,6 +2611,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     switch (note_in) {
     case 'A': select_drum_kit(KIT_RIM); return;
     case 'S': if (feet_hook) select_drum_kit(KIT_FEET); return;
+    case 'D': c->drum_grid_hat = !c->drum_grid_hat; return;
+    case 'M': c->drum_breath_hard = !c->drum_breath_hard; return;
     case 'Z': select_drum_kit(KIT_808_A); return;
     case 'X': select_drum_kit(KIT_808_B); return;
     case 'C': select_drum_kit(KIT_ROOM2); return;
@@ -2518,8 +2620,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     // The rest of the voice keys do nothing with the drum selected.  They
     // must still return, or they'd fall through and pick a melodic voice
     // for a channel that's playing a percussion set.
-    case 'D': case 'F': case 'G': case 'H':
-    case 'B': case 'N': case 'M':
+    case 'F': case 'G': case 'H':
+    case 'B': case 'N':
       return;
     }
   }
@@ -2878,6 +2980,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
 
   //printf("foot: %d %d\n", note_in, val);
   feet_pedal(note_in, val, now());
+  kit_pedal(note_in, val);
   count_drum_hit(note_in);
   if (note_in == MIDI_DRUM_IN_KICK) kick_duck_kick(now());
   if (drum_chooses_notes ||
@@ -3178,7 +3281,7 @@ static bool breath_grid(uint64_t t, uint64_t start, uint64_t* beat,
 // dB of that snare at the same velocity, so it takes the snare's scale.
 #define TAMB_VEL 0.81
 
-// The Breath Gate's Grid Hat: the 808's closed hat on the beat's grid for as
+// The drum's Grid Hat: the 808's closed hat on the beat's grid for as
 // long as you blow, as hard as you're blowing.  16ths, or three to a beat in
 // jig time, from barely there just past the gate to as hard as they go by
 // HAT_MAIN_FULL, every other one a little softer; and blowing on up past
@@ -3188,7 +3291,11 @@ static bool breath_grid(uint64_t t, uint64_t start, uint64_t* beat,
 // the foot bass plays -- leaning off it the way the foot bass does, its
 // upbeat a subbeat early and in jig time its lilt -- and from the start of
 // the breath at an even 116 BPM when they aren't.  On a channel of its own,
-// set to the 808 kit, whichever kit the drum's on.
+// set to the 808 kit, and panned with the Breath Gate (macapi.h's
+// pan_breath_kits).  With the drum on and D switching it on, a layer over
+// whichever kit's playing, which it leaves be, as the drum's modifier keys
+// leave it: it's for over a drum synth the pedals play, the Feet or a kit.
+// On the Pi its channel's the drum's, so it plays that kit's hat.
 #define HAT_MAIN_FULL 0.8
 #define HAT_EXTRA_FROM 0.35
 #define HAT_EXTRA_FULL 0.95
@@ -3234,15 +3341,9 @@ static int hat_steps(bool pedals, int* at) {
   return 2 * n_main;
 }
 
-static double hat_ramp(double blown, double from, double full) {
-  double x = (blown - from) / (full - from);
-  return x < 0 ? 0 : x > 1 ? 1 : x;
-}
-
 void breath_hat_tick(void) {
   double blown = breath_blown(breath);
-  if (!c->on[ENDPOINT_BREATH] ||
-      !(c->breath_layers & BREATH_LAYER_GRID_HAT) ||
+  if (!c->on[ENDPOINT_DRUM] || !c->drum_grid_hat ||
       blown < BREATH_GATE_SHUT) {
     hat_open = false;
     return;
@@ -3300,23 +3401,19 @@ void breath_hat_tick(void) {
 // The drum's Feet kit: French Canadian foot percussion -- a fiddler's
 // leather shoes on a well-sprung wooden floor.  Each drum pedal is a step
 // of its own whenever it's hit, beat or no beat (feet_pedal): the kick a
-// thump, the hihat a tap, the snare a lower one and the ride lower still.  And while
-// the pedals are keeping a beat, the grid fills in, the breath needn't be
-// blowing: at rest a gentle "thump . tap tap", the pedal's step on the beat
-// and the toes on the foot bass's upbeat and predown, leaning as the Grid Hat's 16ths do, the preup left
-// out; in jig time "thump . tap", the thump, the lilted preup left out, and
-// the upbeat.  Only ever within the beat the last pedal hit started, so
-// they stop with the kicks.  Blowing fills in the one left out, from nothing
-// at FEET_FILL_FROM to as loud as the rest by FEET_FILL_FULL, and has every
-// one hit harder the harder it's blown, until by FEET_FULL they're stomps.
-// Their sound's the Mac's own, through feet_hook (macapi.h); on the Pi,
-// nothing.  With the drum on and the Feet its kit; the drum's other keys --
-// DOWNBEAT, UPBEAT and the rest -- are for fluidsynth's kits, and the Feet
-// leave them be.
-#define FEET_FILL_FROM 0.15
-#define FEET_FILL_FULL 0.5
-#define FEET_FULL 0.9
-
+// thump, with DOWNBEAT on, the hihat a tap, the snare a lower one and the
+// ride lower still.  And while the pedals are keeping a beat, the grid
+// fills in as the modifier keys say, as they do for every kit (see
+// DRUM_FILL_FROM): toes on the foot bass's preup, upbeat and predown with
+// DOUBLED, UPBEAT and PRE UNIQ, leaning as the Grid Hat's 16ths do -- in
+// jig time the lilted preup and the upbeat, and no predown.  The drum
+// starts on UPBEAT and PRE UNIQ, so at rest a gentle "thump . tap tap", or
+// in jig time "thump . tap".  Only ever within the beat the last pedal hit
+// started, so they stop with the kicks.  Blowing fills in those left out,
+// and has every step hit harder, until by DRUM_FULL they're stomps.  Their
+// sound's the Mac's own, through feet_hook (macapi.h); on the Pi, nothing.
+// With the drum on and the Feet its kit; UP HIGH, CLIPPED, SHORTER and VEL
+// are for fluidsynth's kits, and the Feet leave them be.
 bool feet_live;
 int feet_jig;
 uint64_t feet_last_step_ns;  // when the last step it played was due
@@ -3326,13 +3423,13 @@ static bool feet_playing(void) {
 }
 
 static double feet_hard(void) {
-  return hat_ramp(breath_blown(breath), BREATH_GATE_SHUT, FEET_FULL);
+  return drum_breath();
 }
 
 // A drum pedal: its own step, whether or not there's a beat -- the kick
-// (pedal 2) the thump, the hihat (4) a tap, the snare (1) a lower one and
-// the ride (3) a lower one still.  Heard when it's hit, as a drum is, and as hard: its
-// velocity sets how loud, a firm 100 at the level the rest are set at,
+// (pedal 2) the thump, with DOWNBEAT on, the hihat (4) a tap, the snare (1)
+// a lower one and the ride (3) a lower one still.  Heard when it's hit, as a
+// drum is, and as hard: its velocity sets how loud, a firm 100 at the level the rest are set at,
 // softer quieter and harder louder, by FEET_VEL_CURVE; and over 100, hit
 // harder too, towards a stomp, by up to FEET_VEL_HARD at 127, on top of the
 // breath's.  The grid's taps go by the last FEET_KICKS kicks' velocities,
@@ -3371,6 +3468,7 @@ void feet_pedal(int note_in, int velocity, uint64_t current_time) {
   if (kind < 0 || velocity <= 0) return;
   if (kind == FEET_THUMP) {
     feet_kick_vels[feet_kicks++ % FEET_KICKS] = velocity;
+    if (!c->downbeat[ENDPOINT_DRUM]) return;
   }
   feet_hook(kind, fmin(1, feet_hard() + feet_vel_hard(velocity)),
             feet_vel_level(velocity), false);
@@ -3415,13 +3513,13 @@ void feet_tick(void) {
   // The downbeat's the pedal's own, feet_pedal: a late one comes after the
   // grid's got there, and its step waits for it.
   if (k == 0) return;
-  // The upbeat's a toe's bright tap; the predown, and the fill, duller.
-  double level = 1;
-  if (k == 2) {
-    level = hat_ramp(breath_blown(breath), FEET_FILL_FROM, FEET_FILL_FULL);
-    if (level <= 0) return;
-  }
+  // The upbeat's a toe's bright tap; the preup and predown duller.
   bool upbeat = at[k] == upbeat_subbeat();
+  double level = drum_step_level(
+    upbeat ? c->upbeat[ENDPOINT_DRUM] :
+    at[k] == preup_subbeat() ? c->doubled[ENDPOINT_DRUM] :
+    c->pre_unique[ENDPOINT_DRUM]);
+  if (level <= 0) return;
   double velocity = feet_kick_velocity();
   feet_hook(upbeat ? FEET_TAP : FEET_TAP_SOFT,
             fmin(1, feet_hard() + feet_vel_hard(velocity)),

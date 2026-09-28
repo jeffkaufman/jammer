@@ -184,7 +184,7 @@ static void test_voices() {
   // voice on a channel that's playing a percussion set.
   // S is the Feet, but only with the Mac's sound for them, and there's none
   // here.
-  const char* blank[] = {"S", "D", "F", "G", "H", "B", "N", "M"};
+  const char* blank[] = {"S", "F", "G", "H", "B", "N"};
   for (int i = 0; i < (int)(sizeof(blank) / sizeof(blank[0])); i++) {
     int was_kit = c->drum_voice;
     int was_voice = c->voices[ENDPOINT_DRUM];
@@ -285,8 +285,9 @@ static void test_ignored_flags_are_dead() {
           KEYS[i].cap);
   }
 
-  select_ep("tab");  // the drum: no pitch to move
-  CHECK(key_is_dead(key_for_cap(",")), "CHORD should be dead on the drum");
+  select_ep("tab");  // the drum: no pitch to move, and CHORD's BREATH FILL
+  CHECK(!key_is_dead(key_for_cap(",")), "BREATH FILL should be live on the "
+        "drum");
   CHECK(key_is_dead(key_for_cap("]")) && key_is_dead(key_for_cap("\\")),
         "OCT should be dead on the drum");
   CHECK(!key_is_dead(key_for_cap("P")), "II should be live on the drum");
@@ -3501,25 +3502,24 @@ static void test_jawharp_voices() {
   full_reset();
 }
 
-// The shakers on the Breath Gate's J, K and L: the Brushes, the Tamb Shake
-// and the Grid Hat.
+// The shakers on the Breath Gate's J and K: the Brushes and the Tamb Shake.
+// And the Grid Hat, which was on its L and is now a drum kit, on D.
 static void test_tambourines() {
   full_reset();
   midi_tap = tap_midi;
   breath_hook = record_breath;
   press("`");  // starting with the Brushes on
-  const char* caps[] = {"J", "K", "L"};
-  const char* labels[] = {"Brushes", "Tamb\nShake", "Grid\nHat"};
-  for (int i = 0; i < 3; i++) {
+  const char* caps[] = {"J", "K"};
+  const char* labels[] = {"Brushes", "Tamb\nShake"};
+  for (int i = 0; i < 2; i++) {
     const Key* k = key_for_cap(caps[i]);
     CHECK(!key_is_dead(k) && strcmp(key_current_label(k), labels[i]) == 0,
           "%s should be %s on the Breath Gate", caps[i], labels[i]);
   }
+  CHECK(key_is_dead(key_for_cap("L")), "L should be nothing on the Breath "
+        "Gate, the Grid Hat being the drum's now");
   const char* spoken[] = {"press", "brushes"};
   CHECK(strcmp(phrase(spoken, 2, true), "press J") == 0, "'press brushes'");
-  const char* spoken_hat[] = {"press", "grid", "hat"};
-  CHECK(strcmp(phrase(spoken_hat, 3, true), "press L") == 0,
-        "'press grid hat'");
 
   // J: brushes.  Blowing stirs them, which is the Mac's own sound (see
   // test_brush_swish) and no notes at all, however hard.
@@ -3554,11 +3554,28 @@ static void test_tambourines() {
   press("K");
   CHECK(!(told_fx & BREATH_FX_TAMB), "K again should switch it off");
 
-  // L: the Grid Hat.  At rest, nothing; blowing, 16ths at 116 BPM with no
-  // pedals, one every 129ms, soft blowing gently and hard blowing medium;
-  // blowing hard, 32nds; three a beat in jig time, and six blowing hard; and
-  // it stops with the breath.
+  // The Grid Hat, the drum's D.  At rest, nothing; blowing, 16ths at 116
+  // BPM with no pedals, one every 129ms, soft blowing gently and hard
+  // blowing medium; blowing hard, 32nds; three a beat in jig time, and six
+  // blowing hard; and it stops with the breath.
+  press("`");  // the Breath Gate off: it's the drum's now
   press("L");
+  handle_cc(CC_BREATH, 60);
+  n_tapped = 0;
+  hat_for(300);
+  CHECK(hat_taps(0, 127) == 0, "L on the Breath Gate shouldn't play it");
+  handle_cc(CC_BREATH, 0);
+  press("tab");
+  select_ep("tab");
+  const Key* d = key_for_cap("D");
+  CHECK(strcmp(key_current_label(d), "Grid\nHat") == 0,
+        "D should be the Grid Hat on the drum");
+  const char* spoken_hat[] = {"press", "grid", "hat"};
+  CHECK(strcmp(phrase(spoken_hat, 3, true), "press D") == 0,
+        "'press grid hat'");
+  press("D");
+  CHECK(c->drum_grid_hat && lit("D") && c->drum_voice == KIT_RIM &&
+        lit("A"), "D should switch the Grid Hat on, over the kit");
   handle_cc(CC_BREATH, 0);
   n_tapped = 0;
   hat_for(150);
@@ -3608,10 +3625,29 @@ static void test_tambourines() {
   n_tapped = 0;
   hat_for(300);
   CHECK(hat_taps(0, 127) == 0, "it should stop with the breath");
-  press("L");
+  // A layer, over whichever kit: picking another leaves it on, and the kit
+  // plays as ever under it.
   handle_cc(CC_BREATH, 60);
+  press("Z");
+  CHECK(c->drum_voice == KIT_808_A && lit("Z") && lit("D"),
+        "picking a kit should leave the Grid Hat on");
+  n_tapped = 0;
   hat_for(300);
-  CHECK(hat_taps(0, 127) == 0, "L again should stop it");
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  CHECK(hat_taps(0, 127) > 0 &&
+        count_tapped(MIDI_ON, MIDI_DRUM_OUT_RIM, CHANNEL_DRUM) == 1,
+        "the Grid Hat and the kit should play together");
+  // D again, or the drum off, stops it.
+  press("D");
+  CHECK(!c->drum_grid_hat && !lit("D"), "D again should switch it off");
+  n_tapped = 0;
+  hat_for(300);
+  CHECK(hat_taps(0, 127) == 0, "D again should stop it");
+  press("D");
+  press("tab");
+  n_tapped = 0;
+  hat_for(300);
+  CHECK(hat_taps(0, 127) == 0, "the drum off should stop it");
   handle_cc(CC_BREATH, 0);
 
   // Away from the Breath Gate, J and K are DOWNBEAT and UPBEAT as ever.
@@ -3681,9 +3717,9 @@ static bool subbeats_match(const char* got, const int* want, int n) {
 static void test_grid_hat_on_the_pedals() {
   full_reset();
   midi_tap = tap_midi;
-  press("`");
-  press("J");  // the Brushes it starts with, off
-  press("L");
+  press("tab");
+  select_ep("tab");
+  press("D");
   char got[256];
   hat_subbeats(BREATH_FLOOR + 20, false, 0, got);
   const int straight[] = {0, 18, 35, 54};
@@ -3898,6 +3934,235 @@ static void test_feet() {
   n_feet_heard = 0;
   handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
   CHECK(n_feet_heard == 0, "with the drum off, a pedal shouldn't step");
+  memset(kick_times, 0, sizeof(kick_times));
+  current_beat_ns = 0;
+  last_downbeat_ns = 0;
+  feet_hook = NULL;
+  full_reset();
+}
+
+// The last velocity sent for `note` on `channel`, or 0.
+static int tapped_velocity(int note, int channel) {
+  int v = 0;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].action == MIDI_ON && tapped[i].channel == channel &&
+        tapped[i].note == note) {
+      v = tapped[i].velocity;
+    }
+  }
+  return v;
+}
+
+// fluidsynth's kits, as the Feet: each pedal its own sound, beat or no beat;
+// the modifier keys the pattern, starting on "kick . hat hat"; and blowing
+// filling in what they leave out and hitting everything harder.
+static void test_kits_and_the_breath() {
+  full_reset();
+  midi_tap = tap_midi;
+  CHECK(c->downbeat[ENDPOINT_DRUM] && c->upbeat[ENDPOINT_DRUM] &&
+        c->pre_unique[ENDPOINT_DRUM] && !c->doubled[ENDPOINT_DRUM] &&
+        !c->upbeat_high[ENDPOINT_DRUM],
+        "the drum should start on DOWNBEAT, UPBEAT and PRE UNIQ");
+  press("tab");
+  select_ep("tab");
+  press("A");  // Rim
+  const DrumKit* kit = &KITS[KIT_RIM];
+
+  // Each pedal, with no beat: the kick 2, the rim 1, the hat 4, the ride 3.
+  current_beat_ns = 0;
+  const int pedals[4] = {MIDI_DRUM_IN_KICK, MIDI_DRUM_IN_SNARE,
+                         MIDI_DRUM_IN_HIHAT, MIDI_DRUM_IN_CRASH};
+  const int notes[4] = {kit->kick, MIDI_DRUM_OUT_RIM, kit->hihat,
+                        MIDI_DRUM_OUT_RIDE};
+  const int channels[4] = {CHANNEL_KICK, CHANNEL_DRUM, CHANNEL_DRUM,
+                           CHANNEL_DRUM};
+  for (int p = 0; p < 4; p++) {
+    memset(kick_times, 0, sizeof(kick_times));
+    n_tapped = 0;
+    handle_feet(MIDI_ON, pedals[p], 100);
+    CHECK(count_tapped(MIDI_ON, notes[p], channels[p]) == 1 &&
+          count_tapped(MIDI_ON, -1, CHANNEL_DRUM) +
+          count_tapped(MIDI_ON, -1, CHANNEL_KICK) == 1,
+          "pedal %d should play note %d and nothing else", p, notes[p]);
+  }
+  // At the kit's levels: the rim and ride pedals at 90 without VEL.
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 40);
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_CRASH, 40);
+  CHECK(tapped_velocity(MIDI_DRUM_OUT_RIM, CHANNEL_DRUM) ==
+        (int)(90 * kit->rim_vel) &&
+        tapped_velocity(MIDI_DRUM_OUT_RIDE, CHANNEL_DRUM) ==
+        (int)(90 * kit->ride_vel),
+        "without VEL the pedals should be at 90 by the kit's scales");
+  // And with VEL, as hard as they're hit.
+  c->vel[ENDPOINT_DRUM] = true;
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 40);
+  CHECK(tapped_velocity(MIDI_DRUM_OUT_RIM, CHANNEL_DRUM) ==
+        (int)(40 * kit->rim_vel), "with VEL the rim should follow the pedal");
+  c->vel[ENDPOINT_DRUM] = false;
+  // Harder the harder it's blown.
+  handle_cc(CC_BREATH, BREATH_FULL);
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  CHECK(tapped_velocity(MIDI_DRUM_OUT_RIM, CHANNEL_DRUM) >
+        (int)(90 * kit->rim_vel * 1.3),
+        "blowing should have the rim hit harder, not %d",
+        tapped_velocity(MIDI_DRUM_OUT_RIM, CHANNEL_DRUM));
+  handle_cc(CC_BREATH, 0);
+  // Without DOWNBEAT, the kick pedal's the pedal's alone; the rest still
+  // play.
+  press("J");
+  CHECK(!c->downbeat[ENDPOINT_DRUM], "J should switch DOWNBEAT off");
+  memset(kick_times, 0, sizeof(kick_times));
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_HIHAT, 100);
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_KICK) == 0 &&
+        count_tapped(MIDI_ON, kit->hihat, CHANNEL_DRUM) == 1,
+        "without DOWNBEAT the kick pedal shouldn't play the kick");
+  press("J");
+  // With the drum off, nothing.
+  press("tab");
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_DRUM) == 0,
+        "with the drum off a pedal shouldn't play the kit");
+  press("tab");
+
+  // The grid: at rest the upbeat's and predown's hats, and no preup's.
+  const int subbeats[3] = {preup_subbeat(), upbeat_subbeat(), 3 * 72 / 4};
+  int rest[3], blown[3], filled[3];
+  for (int i = 0; i < 3; i++) {
+    n_tapped = 0;
+    arpeggiate_drum(subbeats[i], now());
+    rest[i] = tapped_velocity(kit->hihat, CHANNEL_DRUM);
+  }
+  CHECK(rest[0] == 0 && rest[1] > 0 && rest[2] > 0,
+        "at rest the kit should play . hat hat (%d %d %d)", rest[0], rest[1],
+        rest[2]);
+  // Blowing fills the preup in, and hits them all harder.
+  handle_cc(CC_BREATH, BREATH_FULL);
+  for (int i = 0; i < 3; i++) {
+    n_tapped = 0;
+    arpeggiate_drum(subbeats[i], now());
+    blown[i] = tapped_velocity(kit->hihat, CHANNEL_DRUM);
+  }
+  CHECK(blown[0] > 0 && blown[1] > rest[1] * 1.3 && blown[2] > rest[2] * 1.3,
+        "blowing should fill in the preup and play them all harder "
+        "(%d %d %d)", blown[0], blown[1], blown[2]);
+  // Half way to full, a little: the fill fades in.
+  handle_cc(CC_BREATH, BREATH_FLOOR + 30);
+  n_tapped = 0;
+  arpeggiate_drum(subbeats[0], now());
+  filled[0] = tapped_velocity(kit->hihat, CHANNEL_DRUM);
+  CHECK(filled[0] > 0 && filled[0] < blown[0],
+        "a middling breath should fill the preup in a little, not %d",
+        filled[0]);
+  // BREATH FILL, the drum's CHORD, on to start with: off, blowing fills
+  // nothing in, but still hits harder.
+  const Key* comma = key_for_cap(",");
+  CHECK(lit(",") && !key_is_dead(comma) &&
+        strcmp(key_current_label(comma), "BREATH\nFILL") == 0,
+        "comma should be BREATH FILL on the drum, and start on");
+  press(",");
+  CHECK(!lit(","), "comma should switch BREATH FILL off");
+  handle_cc(CC_BREATH, BREATH_FULL);
+  n_tapped = 0;
+  arpeggiate_drum(subbeats[0], now());
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_DRUM) == 0,
+        "without BREATH FILL blowing shouldn't fill in the preup");
+  n_tapped = 0;
+  arpeggiate_drum(subbeats[1], now());
+  CHECK(tapped_velocity(kit->hihat, CHANNEL_DRUM) == blown[1],
+        "without BREATH FILL blowing should still hit harder");
+  press(",");
+  // BREATH HARD, on M next to it, on to start with: off, blowing still
+  // fills in, but hits no harder.
+  const Key* m = key_for_cap("M");
+  CHECK(lit("M") && strcmp(key_current_label(m), "BREATH\nHARD") == 0,
+        "M should be BREATH HARD on the drum, and start on");
+  press("M");
+  CHECK(!lit("M") && c->drum_voice == KIT_RIM,
+        "M should switch BREATH HARD off, and leave the kit be");
+  n_tapped = 0;
+  arpeggiate_drum(subbeats[1], now());
+  CHECK(tapped_velocity(kit->hihat, CHANNEL_DRUM) == rest[1],
+        "without BREATH HARD blowing shouldn't hit harder, not %d",
+        tapped_velocity(kit->hihat, CHANNEL_DRUM));
+  n_tapped = 0;
+  arpeggiate_drum(subbeats[0], now());
+  CHECK(tapped_velocity(kit->hihat, CHANNEL_DRUM) > 0 &&
+        tapped_velocity(kit->hihat, CHANNEL_DRUM) < blown[0],
+        "without BREATH HARD blowing should still fill in, softer");
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  CHECK(tapped_velocity(MIDI_DRUM_OUT_RIM, CHANNEL_DRUM) ==
+        (int)(90 * kit->rim_vel),
+        "without BREATH HARD blowing shouldn't have the pedals hit harder");
+  press("M");
+  handle_cc(CC_BREATH, 0);
+  // The keys set it: UPBEAT off leaves the upbeat for the breath to fill,
+  // and DOUBLED puts the preup in without it.
+  press("K");
+  press("P");
+  n_tapped = 0;
+  arpeggiate_drum(subbeats[0], now());
+  arpeggiate_drum(subbeats[1], now());
+  CHECK(count_tapped(MIDI_ON, kit->hihat, CHANNEL_DRUM) == 1 &&
+        tapped_velocity(kit->hihat, CHANNEL_DRUM) > 0,
+        "DOUBLED on and UPBEAT off should be the preup's hat alone");
+  press("K");
+  press("P");
+  midi_tap = NULL;
+  memset(kick_times, 0, sizeof(kick_times));
+  current_beat_ns = 0;
+  last_downbeat_ns = 0;
+  full_reset();
+
+  // The Feet follow the keys too.
+  feet_hook = feet_record;
+  full_reset();
+  press("tab");
+  select_ep("tab");
+  char got[256];
+  press("K");  // UPBEAT off: at rest, "thump . . tap"
+  feet_subbeats(0, false, 0, true, got);
+  CHECK(strcmp(got, "T 54") == 0 || strcmp(got, "T 55") == 0,
+        "without UPBEAT the Feet at rest should be T 54, not %s", got);
+  feet_subbeats(104, false, 0, true, got);
+  CHECK(strncmp(got, "T 18", 4) == 0 || strncmp(got, "T 19", 4) == 0,
+        "blowing should fill both in, T 18 35 54, not %s", got);
+  press(",");  // BREATH FILL off: blowing fills in neither
+  feet_subbeats(104, false, 0, true, got);
+  CHECK(strcmp(got, "T 54") == 0 || strcmp(got, "T 55") == 0,
+        "without BREATH FILL blowing shouldn't fill the Feet in, not %s",
+        got);
+  press(",");
+  press("M");  // BREATH HARD off: blowing fills in, but no stomps
+  feet_subbeats(BREATH_FULL, false, 0, true, got);
+  bool gentle = n_feet_heard > 0;
+  for (int i = 0; i < n_feet_heard; i++) {
+    if (feet_heard[i].hard > 0.01) gentle = false;
+  }
+  CHECK(gentle && (strncmp(got, "T 18", 4) == 0 ||
+                   strncmp(got, "T 19", 4) == 0),
+        "without BREATH HARD blowing should fill the Feet in gently, not %s",
+        got);
+  press("M");
+  press("K");
+  press("P");  // DOUBLED: the preup at rest
+  feet_subbeats(0, false, 0, true, got);
+  CHECK(strncmp(got, "T 18", 4) == 0 || strncmp(got, "T 19", 4) == 0,
+        "with DOUBLED the Feet at rest should be T 18 35 54, not %s", got);
+  press("P");
+  press("J");  // DOWNBEAT off: no thump
+  feet_subbeats(0, false, 0, true, got);
+  CHECK(got[0] != 'T' && !strchr(got, 'T'),
+        "without DOWNBEAT the kick shouldn't thump, not %s", got);
+  n_feet_heard = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_HIHAT, 100);
+  CHECK(n_feet_heard == 1, "without DOWNBEAT the other pedals should step");
   memset(kick_times, 0, sizeof(kick_times));
   current_beat_ns = 0;
   last_downbeat_ns = 0;
@@ -4304,6 +4569,7 @@ int main() {
   test_breath_sounds_follow_ch();
   test_grid_hat_on_the_pedals();
   test_feet();
+  test_kits_and_the_breath();
   test_feet_sound();
   test_tamb_shake();
   test_jawharp_voices();
