@@ -20,21 +20,32 @@
 //   A  Bass        the whistle's Bass voice, following the mandolin down to
 //                  190Hz, just under its G, two octaves under it
 //   S  Synth       a synth pedal: jammer's chord, in saws through a filter,
-//                  played by the mandolin -- each strum is a stab, each
-//                  chop a blip, as loud and as open as it's played
-//   D  Oct Down    the whole chord an octave down, beside it
+//                  played by the mandolin -- each strum is a stab, as loud
+//                  and as open as it's played -- but only by what's
+//                  pitched, so chops and scratches leave it silent
+//   D  Drone       sympathetic strings: three octaves of them, one on every
+//                  note, but only the chord's root and fifth let ring -- no
+//                  third -- so what
+//                  the mandolin plays in the chord rings on for seconds
+//                  after, and the rest die away; a chord change damps the
+//                  old chord's and lets the new one's ring
 //   F  Shimmer     a reverb that climbs an octave as it rings, fed only the
 //                  pitched part of what's played, so scratches stay dry
 //   C  Breath FX   not a sound but a setting: the breath controller brings
 //                  the effects in, from none at all at rest -- the plain
-//                  mandolin, dry -- to 300% at full: the voices, and Drive
-//                  crossfaded in over the first third of the breath and
-//                  louder after.  The Bass it switches instead: no breath,
-//                  no bass, and any breath, all of it.  And the Leslie it
-//                  spins: see below
+//                  mandolin, dry -- to 300% at full: the voices, and the
+//                  Resonator crossfaded in
+//                  over the first third of the breath and louder after.
+//                  Drive it pushes instead: a light edge at rest, a fuzz
+//                  at full.
+//                  The tremolos it deepens, from none to all of it over
+//                  that first third.  The Bass it switches instead: no
+//                  breath, no bass, and any breath, all of it.  And the
+//                  Leslie it spins: see below
 //
-// And on the bottom row, effects on the mandolin itself rather than voices
-// beside it, in a chain in the order a pedalboard would have them:
+// And on the bottom row, and H, effects on the mandolin itself rather
+// than voices beside it, in a chain in the order a pedalboard would have
+// them:
 //
 //   B  Talkbox     the mandolin through a mouth the breath opens: at rest a
 //                  closed "oo", opening to "ah" and then "ae" at full, so a
@@ -42,6 +53,15 @@
 //                  FX leaves it be, since the breath is already playing it
 //   V  Drive       an overdrive, a Tube Screamer's shape: the mids pushed
 //                  into a soft, uneven clip, and the top taken off, 6dB up
+//   H  Resonator   the mandolin through a string tuned to each note of the
+//                  chord, in the octave under its G, ringing for about a
+//                  second, and not much of it straight: a metallic halo
+//                  that follows the changes
+//   ,  Harm Trem   a harmonic tremolo, a brownface Fender's: the lows and
+//                  the highs swelling in turn, once a beat, split at the
+//                  chord's root
+//   .  Tremolo     a tremolo in time: twice a beat, three times in jig
+//                  time, loudest on each 8th, the pedals' beat followed
 //   N  Leslie      a Leslie at fast: the horn and the drum each spinning,
 //                  pitch and level both, at their own speeds.  With Breath
 //                  FX, the breath is its motor instead: at rest it turns
@@ -53,10 +73,12 @@
 // by itself, any of them at once, like the whistle's vocal effects.  The
 // mandolin itself plays under all of them but the Tuner, which mutes the lot.
 //
-// The voices -- the Vocoder, the Bass, Synth, Oct Down and Shimmer -- go to
-// the left, where fluidsynth's endpoints are, since the mandolin itself is
-// still heard under them on the right.  The Talkbox, Drive and Leslie are
-// the mandolin itself, so they're on the right with it.
+// The chain's order: Talkbox, Drive, Resonator, Harm Trem, Tremolo, Leslie.
+//
+// The voices -- the Vocoder, the Bass, Synth, Drone and Shimmer --
+// go to the left, where fluidsynth's endpoints are, since the mandolin
+// itself is still heard under them on the right.  The chain is the mandolin
+// itself, so it's on the right with it.
 //
 // The Bass and the Vocoder are instances of their own, apart from the
 // whistle's, so the two can run at once on their two inputs.  They
@@ -76,13 +98,16 @@ enum {
   MANDO_BOOST,
   MANDO_VOCODER,
   MANDO_BASS,
-  MANDO_OCTAVE,
+  MANDO_DRONE,
   MANDO_SHIMMER,
   MANDO_SYNTH,
   MANDO_BREATH,  // not a sound: see the top
   // The rest are the mandolin itself, through them, rather than voices.
   MANDO_TALKBOX,
   MANDO_DRIVE,
+  MANDO_RESONATOR,
+  MANDO_HARM_TREM,
+  MANDO_TREMOLO,
   MANDO_LESLIE,
   N_MANDO_VOICES,
 };
@@ -98,12 +123,15 @@ static const MandoVoice MANDO_VOICES[N_MANDO_VOICES] = {
   [MANDO_BOOST] = {'X', "Boost", "boost"},
   [MANDO_VOCODER] = {'J', "Vocoder", "voc"},
   [MANDO_BASS] = {'A', "Bass", "bass"},
-  [MANDO_OCTAVE] = {'D', "Oct\nDown", "octdown"},
+  [MANDO_DRONE] = {'D', "Drone", "drone"},
   [MANDO_SHIMMER] = {'F', "Shimmer", "shimmer"},
   [MANDO_SYNTH] = {'S', "Synth", "synth"},
   [MANDO_BREATH] = {'C', "Breath\nFX", "breath"},
   [MANDO_TALKBOX] = {'B', "Talk\nbox", "talkbox"},
   [MANDO_DRIVE] = {'V', "Drive", "drive"},
+  [MANDO_RESONATOR] = {'H', "Reso\nnator", "resonator"},
+  [MANDO_HARM_TREM] = {',', "Harm\nTrem", "harmtrem"},
+  [MANDO_TREMOLO] = {'.', "Tremolo", "tremolo"},
   [MANDO_LESLIE] = {'N', "Leslie", "leslie"},
 };
 
@@ -382,6 +410,23 @@ static double biquad_run(Biquad* f, double x) {
   return y;
 }
 
+// A state-variable filter's bandpass, 0dB and in phase at `hz`, which can
+// move sample by sample: for the Talkbox's formants.
+typedef struct {
+  double ic1, ic2;
+} MandoBand;
+
+static double mando_band(MandoBand* b, double x, double hz, double q,
+                         double rate) {
+  double g = tan(M_PI * fmin(hz, 0.45 * rate) / rate), k = 1 / q;
+  double a1 = 1 / (1 + g * (g + k)), a2 = g * a1;
+  double v1 = a1 * b->ic1 + a2 * (x - b->ic2);
+  double v2 = b->ic2 + g * v1;
+  b->ic1 = 2 * v1 - b->ic1;
+  b->ic2 = 2 * v2 - b->ic2;
+  return k * v1;
+}
+
 // Talkbox: three formants, in parallel bandpasses, moving from one vowel to
 // the next as the breath comes -- "oo" at rest, "ah" at half, "ae" at full --
 // each between two by its frequencies' logs.  The breath is followed over
@@ -402,7 +447,7 @@ static const double TALKBOX_HZ[TALKBOX_VOWELS][TALKBOX_FORMANTS] = {
 static const double TALKBOX_GAIN[TALKBOX_FORMANTS] = {1, 0.7, 0.35};
 
 typedef struct {
-  double ic1[TALKBOX_FORMANTS], ic2[TALKBOX_FORMANTS];
+  MandoBand formant[TALKBOX_FORMANTS];
   double open, smooth;  // the breath, followed, 0 to 1
 } Talkbox;
 
@@ -415,18 +460,12 @@ static double talkbox_run(Talkbox* t, double x, double blown, double rate) {
   t->open += (blown - t->open) * t->smooth;
   double at = t->open * (TALKBOX_VOWELS - 1);
   int from = (int)fmin(at, TALKBOX_VOWELS - 2);
-  double frac = at - from, k = 1 / TALKBOX_Q, y = 0;
+  double frac = at - from, y = 0;
   for (int f = 0; f < TALKBOX_FORMANTS; f++) {
     double hz = TALKBOX_HZ[from][f] *
       pow(TALKBOX_HZ[from + 1][f] / TALKBOX_HZ[from][f], frac);
-    // A state-variable filter's bandpass, 0dB at the centre.
-    double g = tan(M_PI * fmin(hz, 0.45 * rate) / rate);
-    double a1 = 1 / (1 + g * (g + k)), a2 = g * a1;
-    double v1 = a1 * t->ic1[f] + a2 * (x - t->ic2[f]);
-    double v2 = t->ic2[f] + g * v1;
-    t->ic1[f] = 2 * v1 - t->ic1[f];
-    t->ic2[f] = 2 * v2 - t->ic2[f];
-    y += TALKBOX_GAIN[f] * k * v1;
+    y += TALKBOX_GAIN[f] *
+      mando_band(&t->formant[f], x, hz, TALKBOX_Q, rate);
   }
   return TALKBOX_LEVEL * y;
 }
@@ -440,6 +479,16 @@ static double talkbox_run(Talkbox* t, double x, double blown, double rate) {
 // only just.
 #define DRIVE_HIGHPASS_HZ 450
 #define DRIVE_GAIN 60.0
+// With Breath FX the breath sets how hard it's pushed instead: from a light
+// edge at rest to a fuzz at full, the gain swept between these by its log.
+// Its level made up to about where it is at DRIVE_GAIN all the way: under
+// it, less clipped is a lot quieter, so brought up, by more the gentler it
+// is; over it, clipping hard is only a little louder, so brought down a
+// little, about 0.8dB an octave of gain.
+#define DRIVE_GAIN_REST 3.0
+#define DRIVE_GAIN_FULL 400.0
+#define DRIVE_MAKEUP_GAIN 15.5  // where the making up is 3dB
+#define DRIVE_EVEN 0.128        // the level's fall against the gain's rise
 #define DRIVE_BIAS 0.15
 #define DRIVE_TONE_HZ 3200
 #define DRIVE_LEVEL 0.12  // 6dB over the mandolin as it comes in
@@ -454,12 +503,24 @@ static void drive_prepare(Drive* d, double rate) {
   biquad_set(&d->tone2, BQ_LOWPASS, DRIVE_TONE_HZ * 1.6, 0.7, 0, rate);
 }
 
-static double drive_run(Drive* d, double x) {
+// How hard to push it, for Breath FX's `push`, 0 to 1; and how loud, to keep
+// it about where it is at DRIVE_GAIN.
+static double drive_gain(double push) {
+  return DRIVE_GAIN_REST * pow(DRIVE_GAIN_FULL / DRIVE_GAIN_REST, push);
+}
+
+static double drive_level(double gain) {
+  double at = DRIVE_MAKEUP_GAIN / gain, unit = DRIVE_MAKEUP_GAIN / DRIVE_GAIN;
+  return DRIVE_LEVEL * sqrt((1 + at * at) / (1 + unit * unit)) *
+         pow(DRIVE_GAIN / gain, DRIVE_EVEN);
+}
+
+static double drive_run(Drive* d, double x, double gain) {
   // What the Tube Screamer does: the clipped mids on top of the clean signal.
-  double mids = biquad_run(&d->in_hp, x) * DRIVE_GAIN;
+  double mids = biquad_run(&d->in_hp, x) * gain;
   double clipped = tanh(mids + DRIVE_BIAS) - tanh(DRIVE_BIAS);
   double y = x + clipped;
-  return DRIVE_LEVEL * biquad_run(&d->tone2, biquad_run(&d->tone, y));
+  return drive_level(gain) * biquad_run(&d->tone2, biquad_run(&d->tone, y));
 }
 
 // Leslie, fast: the treble and the bass split at 800Hz, as the cabinet
@@ -550,12 +611,13 @@ static double leslie_run(Leslie* l, double x, double motor, double rate) {
 }
 
 // Synth: a synth pedal.  jammer's chord -- its root under C3 and again an
-// octave up, its third and its fifth -- in pairs of saws a few cents apart,
-// through a resonant lowpass.  The mandolin plays it: how loud it is, and
+// octave up and another, and its fifth, never its third -- in pairs of saws
+// a few cents apart, through a resonant lowpass.  The mandolin plays it: how loud it is, and
 // how far the filter opens, both follow how hard it's played, quick to
-// come and a tenth of a second or so to go, so each strum is a stab and
-// each chop a blip.  In the chord the feet or a voice have chosen, so it's
-// in tune whatever the mandolin's voicing.
+// come and a tenth of a second or so to go, so each strum is a stab.  Only
+// as much as it's pitched (tonal_run, as Shimmer's send), so a chop or a
+// scratch plays nothing.  In the chord the feet or a voice have chosen, so
+// it's in tune whatever the mandolin's voicing.
 #define SYNTH_VOICES 4
 #define SYNTH_DETUNE 1.004
 #define SYNTH_LOW_HZ 200
@@ -579,7 +641,8 @@ static void synth_prepare(SynthPedal* p, double rate) {
 }
 
 // `hz` the chord's notes, from synth_chord; `gate` the mandolin gate's, since
-// it makes a chord out of whatever comes in, the room included.
+// it makes a chord out of whatever comes in, the room included, times how
+// pitched it is.
 static double synth_run(SynthPedal* p, double x, const double* hz,
                         double gate, int gate_db, double rate) {
   double level = fabs(x) * gate;
@@ -606,79 +669,224 @@ static double synth_run(SynthPedal* p, double x, const double* hz,
 // The chord for the Synth, from what jammermidilib.h publishes.
 static void synth_chord(double* hz) {
   int root = atomic_load_explicit(&audio_chord_root, memory_order_relaxed);
-  int third = atomic_load_explicit(&audio_chord_third, memory_order_relaxed);
   int fifth = atomic_load_explicit(&audio_chord_fifth, memory_order_relaxed);
   int base = 36 + root % 12;  // C2 to B2
   hz[0] = midi_hz(base);
   hz[1] = midi_hz(base + 12);
-  // Until the feet or a voice have said which third, an octave instead.
-  hz[2] = midi_hz(base + 12 + (third ? third : 12));
+  // Never the third, whatever's said it: an octave up instead.
+  hz[2] = midi_hz(base + 24);
   hz[3] = midi_hz(base + 12 + fifth);
 }
 
-// Oct Down: every note of the chord an octave down at once, with no pitch to
-// find.  The mandolin is split into narrow bands, a sixth of an octave apart,
-// each a complex resonator, so each band is a turning phasor; a second phasor
-// per band turns at half the speed, sample by sample, at the band's own
-// level.  One note in a band comes out exactly an octave under it.
-//
-// A grain shifter, like Voice Bass's, can't do this for a chord: with grains
-// that aren't a whole number of the note's periods -- and for a chord they
-// can't be -- it lands anywhere up to a semitone and a half off.
-#define OCTAVE_BANDS 36
-#define OCTAVE_LOW_HZ 80
-#define OCTAVE_PER_OCTAVE 6
-#define OCTAVE_Q 7
-#define OCTAVE_LOWPASS_HZ 2500
-#define OCTAVE_GAIN 1.0
+// ---------------------------------------------------------------------------
+// What knows the chord and the beat
+// ---------------------------------------------------------------------------
+
+// The chord's notes as pitch classes, 0-11: the root, the fifth, and the
+// third once the feet or a voice have said which.  Returns how many.
+static int mando_chord_pcs(int* pc) {
+  int root = atomic_load_explicit(&audio_chord_root, memory_order_relaxed);
+  int third = atomic_load_explicit(&audio_chord_third, memory_order_relaxed);
+  int fifth = atomic_load_explicit(&audio_chord_fifth, memory_order_relaxed);
+  int n = 0;
+  pc[n++] = root % 12;
+  pc[n++] = (root + fifth) % 12;
+  if (third) pc[n++] = (root + third) % 12;
+  return n;
+}
+
+static bool mando_in_chord(int note, const int* pc, int n) {
+  for (int i = 0; i < n; i++) {
+    if (note % 12 == pc[i]) return true;
+  }
+  return false;
+}
+
+// The beat, sample by sample, for what goes in time with it: the tremolos.  A count of its own, going at the pedals' tempo and pulled
+// into step with their beat while they keep it.  The pull is spread over
+// each block as going a little faster or slower -- never more than a
+// quarter -- so it never jumps, and a tremolo only leans into place.  When
+// the feet stop it goes on at their last tempo, or 116 BPM if there's been
+// none.
+#define MANDO_CLOCK_PULL 0.3   // of how far out it is, each block
+#define MANDO_CLOCK_LEAN 0.25  // the most faster or slower it goes for it
 
 typedef struct {
-  double pole_re[OCTAVE_BANDS], pole_im[OCTAVE_BANDS], in_gain[OCTAVE_BANDS];
-  double z_re[OCTAVE_BANDS], z_im[OCTAVE_BANDS];  // each band, as a phasor
-  double u_re[OCTAVE_BANDS], u_im[OCTAVE_BANDS];  // and at half its speed
-  int bands;
-  VfxSvf lowpass;
-} OctaveDown;
+  double beats;      // since it started
+  double beat_ns;    // the tempo it's at
+  double per_frame;  // beats a frame, this block
+  bool jig;
+} MandoClock;
 
-static void octave_prepare(OctaveDown* o, double rate) {
-  memset(o, 0, sizeof(*o));
-  for (int b = 0; b < OCTAVE_BANDS; b++) {
-    double hz = OCTAVE_LOW_HZ * pow(2, (double)b / OCTAVE_PER_OCTAVE);
-    if (hz > 0.4 * rate) break;
-    double r = exp(-M_PI * (hz / OCTAVE_Q) / rate);
-    o->pole_re[b] = r * cos(2 * M_PI * hz / rate);
-    o->pole_im[b] = r * sin(2 * M_PI * hz / rate);
-    o->in_gain[b] = 1 - r;  // 1 at the band's centre
-    o->u_re[b] = 1;
-    o->bands = b + 1;
+static void mando_clock_block(MandoClock* c, int len, double rate) {
+  uint64_t beat = atomic_load_explicit(&audio_beat_ns, memory_order_relaxed);
+  if (beat > 0) c->beat_ns = (double)beat;
+  if (c->beat_ns <= 0) c->beat_ns = AUDIO_DEFAULT_BEAT_NS;
+  double base = 1e9 / (c->beat_ns * rate);
+  double pull = 0;
+  double phase = audio_beat_phase(audio_block_ns);
+  if (phase >= 0) {
+    double off = phase - (c->beats - floor(c->beats));
+    off -= round(off);  // the shorter way round, -0.5 to 0.5
+    pull = fmax(-MANDO_CLOCK_LEAN * base,
+                fmin(MANDO_CLOCK_LEAN * base, MANDO_CLOCK_PULL * off / len));
+  }
+  c->per_frame = base + pull;
+  c->jig = atomic_load_explicit(&audio_jig, memory_order_relaxed);
+}
+
+// ---------------------------------------------------------------------------
+// Strings tuned to the chord: the Drone and the Resonator
+//
+// A string on every note from `low` up, each a delay a period long fed back
+// through a gentle lowpass -- a Karplus-Strong string, excited by the
+// mandolin rather than plucked -- so it rings at its note and the note's
+// harmonics.  Only the chord's are fed, and only they ring long; the rest
+// are damped, so on a change the old chord's fade quickly and the new one's
+// start ringing, in tune from the first moment rather than gliding there.
+// Each string's feed is (1 - its feedback), so a steady note on it comes out
+// at about its own level.
+// ---------------------------------------------------------------------------
+
+#define STRINGS_MAX 36
+#define STRINGS_LINE 2048     // a period at C3 up to 192kHz
+#define STRINGS_FEED_S 0.010  // how quickly a string's feed comes and goes
+
+typedef struct {
+  float line[STRINGS_MAX][STRINGS_LINE];
+  int pos, low, n;
+  double ring_s, stop_s, damp;
+  double delay[STRINGS_MAX];
+  double store[STRINGS_MAX];  // the lowpass in each loop
+  double feedback[STRINGS_MAX];
+  double feed[STRINGS_MAX], feed_to[STRINGS_MAX];
+  double feed_smooth;
+  // What the feedback is for a string that rings, and one that doesn't.
+  double ring_feedback[STRINGS_MAX], stop_feedback[STRINGS_MAX];
+} ChordStrings;
+
+static void strings_prepare(ChordStrings* s, int low, int n, double ring_s,
+                            double stop_s, double damp, double rate) {
+  memset(s, 0, sizeof(*s));
+  s->low = low;
+  s->n = n > STRINGS_MAX ? STRINGS_MAX : n;
+  s->ring_s = ring_s;
+  s->stop_s = stop_s;
+  s->damp = damp;
+  s->feed_smooth = 1 - exp(-1 / (rate * STRINGS_FEED_S));
+  for (int i = 0; i < s->n; i++) {
+    double hz = midi_hz(low + i), w = 2 * M_PI * hz / rate;
+    // The loop's lowpass delays it a little, and takes a little off even at
+    // the fundamental: both made up, so it's in tune and rings as long as
+    // it says there.
+    double lag = damp / (1 - damp);
+    s->delay[i] = fmin(STRINGS_LINE - 2, fmax(1, rate / hz - lag));
+    double loss = (1 - damp) / sqrt(1 - 2 * damp * cos(w) + damp * damp);
+    s->ring_feedback[i] = fmin(0.9999, pow(10, -3 / (ring_s * hz)) / loss);
+    s->stop_feedback[i] = fmin(0.9999, pow(10, -3 / (stop_s * hz)) / loss);
+    s->feedback[i] = s->stop_feedback[i];
   }
 }
 
-static double octave_run(OctaveDown* o, float x, double rate) {
-  double out = 0;
-  for (int b = 0; b < o->bands; b++) {
-    double zr = o->z_re[b], zi = o->z_im[b];
-    double nr = zr * o->pole_re[b] - zi * o->pole_im[b] + o->in_gain[b] * x;
-    double ni = zr * o->pole_im[b] + zi * o->pole_re[b];
-    o->z_re[b] = nr;
-    o->z_im[b] = ni;
-    // How far the band turned this sample, as cos and sin, and half that:
-    // the half-angle formulas, since the turn is always under half a turn.
-    double dr = nr * zr + ni * zi, di = ni * zr - nr * zi;
-    double mag = sqrt(dr * dr + di * di);
-    if (mag > 1e-20) {
-      double c = dr / mag, s = di / mag;
-      double hc = sqrt(0.5 * (1 + c));
-      double hs = hc > 1e-9 ? s / (2 * hc) : 1;
-      double ur = o->u_re[b] * hc - o->u_im[b] * hs;
-      double ui = o->u_re[b] * hs + o->u_im[b] * hc;
-      double norm = 1 / sqrt(ur * ur + ui * ui);
-      o->u_re[b] = ur * norm;
-      o->u_im[b] = ui * norm;
-    }
-    out += sqrt(nr * nr + ni * ni) * o->u_re[b];
+// Once a block: which ring, from the chord.
+static void strings_chord(ChordStrings* s, const int* pc, int n) {
+  for (int i = 0; i < s->n; i++) {
+    bool ring = mando_in_chord(s->low + i, pc, n);
+    s->feedback[i] = ring ? s->ring_feedback[i] : s->stop_feedback[i];
+    s->feed_to[i] = ring ? 1 - s->ring_feedback[i] : 0;
   }
-  return vfx_lowpass(&o->lowpass, out, OCTAVE_LOWPASS_HZ, 0.7, rate);
+}
+
+static double strings_run(ChordStrings* s, double x) {
+  double out = 0;
+  for (int i = 0; i < s->n; i++) {
+    s->feed[i] += (s->feed_to[i] - s->feed[i]) * s->feed_smooth;
+    double back = vfx_read(s->line[i], STRINGS_LINE, s->pos, s->delay[i]);
+    s->store[i] = (1 - s->damp) * back + s->damp * s->store[i];
+    double y = s->feed[i] * x + s->feedback[i] * s->store[i];
+    s->line[i][s->pos] = (float)y;
+    out += y;
+  }
+  s->pos = (s->pos + 1) % STRINGS_LINE;
+  return out;
+}
+
+// Drone: three octaves of sympathetic strings, C3 to B5, the chord's root and
+// fifth ringing for four seconds -- never its third -- and the rest for a
+// fifth of one.
+#define DRONE_LOW 48
+#define DRONE_STRINGS 36
+#define DRONE_RING_S 4.0
+#define DRONE_STOP_S 0.2
+#define DRONE_DAMP 0.3
+#define DRONE_LEVEL 1.6
+
+// Resonator: an octave of them, C3 to B3, whose harmonics cover the rest,
+// ringing for most of a second, with only a little of the mandolin straight.
+#define RESONATOR_LOW 48
+#define RESONATOR_STRINGS 12
+#define RESONATOR_RING_S 0.8
+#define RESONATOR_STOP_S 0.05
+#define RESONATOR_DAMP 0.15
+#define RESONATOR_DRY 0.3
+#define RESONATOR_WET 1.3
+
+// ---------------------------------------------------------------------------
+// The tremolos
+//
+// Harm Trem: a brownface Fender's harmonic tremolo, the mandolin split in
+// two and each half swelling while the other ebbs, once a beat, the lows
+// loudest on it.  Split at the chord's root, put between 350Hz and an octave
+// up, gliding there on a change.
+//
+// Tremolo: the level, twice a beat, or three times in jig time, full on each
+// 8th and down to a sixth between.
+//
+// `depth` is Breath FX's, 0 to 1, or 1 without it.
+// ---------------------------------------------------------------------------
+
+#define HTREM_DEPTH 0.85
+#define HTREM_LOW_HZ 350
+#define HTREM_GLIDE_S 0.050
+#define HTREM_LEVEL 1.2
+
+typedef struct {
+  VfxSvf a, b;
+  double hz, glide;
+} HarmTrem;
+
+static void htrem_prepare(HarmTrem* h, double rate) {
+  memset(h, 0, sizeof(*h));
+  h->hz = HTREM_LOW_HZ;
+  h->glide = 1 - exp(-1 / (rate * HTREM_GLIDE_S));
+}
+
+// Where to split for the root, pitch class `pc`.
+static double htrem_split(int pc) {
+  double hz = midi_hz(60 + pc);  // C4 to B4
+  while (hz < HTREM_LOW_HZ) hz *= 2;
+  while (hz >= 2 * HTREM_LOW_HZ) hz /= 2;
+  return hz;
+}
+
+static double htrem_run(HarmTrem* h, double x, double split, double beats,
+                        double depth, double rate) {
+  h->hz += (split - h->hz) * h->glide;
+  double low = vfx_lowpass(&h->b, vfx_lowpass(&h->a, x, h->hz, 0.7, rate),
+                           h->hz, 0.7, rate);
+  double high = x - low;
+  double s = cos(2 * M_PI * beats), d = HTREM_DEPTH * depth;
+  return HTREM_LEVEL * (low * (1 - d * 0.5 * (1 - s)) +
+                        high * (1 - d * 0.5 * (1 + s)));
+}
+
+#define TREM_DEPTH 0.85
+#define TREM_LEVEL 1.45
+
+static double trem_run(double x, const MandoClock* c, double depth) {
+  double p = c->beats * (c->jig ? 3 : 2);
+  return TREM_LEVEL * x *
+    (1 - TREM_DEPTH * depth * 0.5 * (1 - cos(2 * M_PI * p)));
 }
 
 // Shimmer: a mono Freeverb, eight combs and four allpasses, with its own
@@ -766,14 +974,17 @@ static struct {
   WhistleRamp dry, voice[N_MANDO_VOICES];
   WhistleRamp heard;  // Shimmer's tail, which rings on after its send stops
   WhistleRamp boost;
-  // Breath FX's level for the voices, and for Drive and Leslie, following
-  // the breath smoothly; and the Bass's switch.
+  // Breath FX's level for the voices, and for the Resonator, following the
+  // breath smoothly; and the Bass's switch.
   double breath, chain_breath, breath_smooth;
   WhistleRamp bass_breath;
-  OctaveDown octave;
+  MandoClock clock;
+  ChordStrings drone;
   SynthPedal synth;
   Talkbox talkbox;
   Drive drive;
+  ChordStrings resonator;
+  HarmTrem harm_trem;
   Leslie leslie;
   // Shimmer
   Shimmer shimmer;
@@ -836,7 +1047,12 @@ static void mando_prepare(double rate) {
   mando.boost = mando.bass_breath = unity;
   mando.breath = mando.chain_breath = 1;
   mando.breath_smooth = 1 - exp(-1 / (rate * MANDO_BREATH_SMOOTH_S));
-  octave_prepare(&mando.octave, rate);
+  memset(&mando.clock, 0, sizeof(mando.clock));
+  strings_prepare(&mando.drone, DRONE_LOW, DRONE_STRINGS, DRONE_RING_S,
+                  DRONE_STOP_S, DRONE_DAMP, rate);
+  strings_prepare(&mando.resonator, RESONATOR_LOW, RESONATOR_STRINGS,
+                  RESONATOR_RING_S, RESONATOR_STOP_S, RESONATOR_DAMP, rate);
+  htrem_prepare(&mando.harm_trem, rate);
   synth_prepare(&mando.synth, rate);
   talkbox_prepare(&mando.talkbox, rate);
   drive_prepare(&mando.drive, rate);
@@ -886,14 +1102,13 @@ static void mando_process(const float* in, int len, double rate) {
                     ramp_frames);
   }
   // Breath FX: the effects from none at rest to 300% at full, following
-  // the breath smoothly -- the voices, and Drive and Leslie -- and the Bass
-  // on with any breath and off with none.
+  // the breath smoothly -- the voices, and the Resonator; Drive pushed by it
+  // -- and the Bass on with any breath and off with none.
   bool breathing = pub & MANDO_BIT(MANDO_BREATH);
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
   double breath_level = breathing ? MANDO_BREATH_HIGH * blown : 1;
-  bool chained = pub & MANDO_BIT(MANDO_DRIVE);
-  double chain_level = chained ? breath_level : 1;
+  double chain_level = pub & MANDO_BIT(MANDO_RESONATOR) ? breath_level : 1;
   // The Leslie's motor: flat out, or with Breath FX, the breath.
   double motor = breathing ? blown : 1;
   whistle_ramp_to(&mando.bass_breath, !breathing || blown > 0 ? 1 : 0,
@@ -901,13 +1116,23 @@ static void mando_process(const float* in, int len, double rate) {
   whistle_ramp_to(&mando.heard, heard ? 1 : 0, ramp_frames);
   bool bass = mando_ramp_live(&mando.voice[MANDO_BASS]);
   bool vocoder = mando_ramp_live(&mando.voice[MANDO_VOCODER]);
-  bool octave = mando_ramp_live(&mando.voice[MANDO_OCTAVE]);
+  bool drone = mando_ramp_live(&mando.voice[MANDO_DRONE]);
   bool synth = mando_ramp_live(&mando.voice[MANDO_SYNTH]);
   bool talkbox = mando_ramp_live(&mando.voice[MANDO_TALKBOX]);
   bool drive = mando_ramp_live(&mando.voice[MANDO_DRIVE]);
+  bool resonator = mando_ramp_live(&mando.voice[MANDO_RESONATOR]);
+  bool harm_trem = mando_ramp_live(&mando.voice[MANDO_HARM_TREM]);
+  bool tremolo = mando_ramp_live(&mando.voice[MANDO_TREMOLO]);
   bool leslie = mando_ramp_live(&mando.voice[MANDO_LESLIE]);
   double synth_hz[SYNTH_VOICES];
   if (synth) synth_chord(synth_hz);
+  // What follows the chord, told it once a block, and the beat.
+  int pc[3];
+  int pcs = mando_chord_pcs(pc);
+  if (drone) strings_chord(&mando.drone, pc, 2);  // no third
+  if (resonator) strings_chord(&mando.resonator, pc, pcs);
+  double split = htrem_split(pc[0]);
+  mando_clock_block(&mando.clock, len, rate);
   bool shimmer_in = mando_ramp_live(&mando.voice[MANDO_SHIMMER]);
   if (shimmer_in) mando.shimmer_tail = (long)(SHIMMER_TAIL_S * rate);
   bool shimmer = shimmer_in || mando.shimmer_tail > 0;
@@ -929,23 +1154,44 @@ static void mando_process(const float* in, int len, double rate) {
     mando.breath += (breath_level - mando.breath) * mando.breath_smooth;
     mando.chain_breath += (chain_level - mando.chain_breath) *
                           mando.breath_smooth;
-    // The chain: each crossfaded in and out.  With Breath FX, Drive is
-    // crossfaded in from what went into it as the breath comes, all of it by
-    // a third of the breath, and louder after that.  Not the Talkbox, which
-    // the breath already plays, nor the Leslie, which it spins.
+    mando.clock.beats += mando.clock.per_frame;
+    // The chain: each crossfaded in and out.  With Breath FX, the Resonator
+    // is crossfaded in from what went into it as the breath comes, all of it by a third of the breath, and
+    // louder after that; Drive pushed harder; and the tremolos deepened, all
+    // the way by that third.  Not the Talkbox, which the breath already
+    // plays, nor the Leslie, which it spins.
     double dry = x;
     if (talkbox) {
       double r = whistle_ramp_next(&mando.voice[MANDO_TALKBOX]);
       dry += r * (talkbox_run(&mando.talkbox, dry, blown, rate) - dry);
     }
-    double pre = dry;
     if (drive) {
       double r = whistle_ramp_next(&mando.voice[MANDO_DRIVE]);
-      dry += r * (drive_run(&mando.drive, dry) - dry);
+      // With Breath FX, the breath pushes it: followed as the voices are.
+      double gain = breathing
+        ? drive_gain(fmin(1, mando.breath / MANDO_BREATH_HIGH)) : DRIVE_GAIN;
+      dry += r * (drive_run(&mando.drive, dry, gain) - dry);
     }
-    if (drive) {
+    double pre = dry;
+    if (resonator) {
+      double r = whistle_ramp_next(&mando.voice[MANDO_RESONATOR]);
+      double wet = RESONATOR_DRY * dry +
+                   RESONATOR_WET * strings_run(&mando.resonator, dry);
+      dry += r * (wet - dry);
+    }
+    if (resonator) {
       double e = mando.chain_breath;
       dry = pre * (1 - fmin(e, 1)) + dry * e;
+    }
+    double depth = fmin(mando.breath, 1);
+    if (harm_trem) {
+      double r = whistle_ramp_next(&mando.voice[MANDO_HARM_TREM]);
+      dry += r * (htrem_run(&mando.harm_trem, dry, split, mando.clock.beats,
+                            depth, rate) - dry);
+    }
+    if (tremolo) {
+      double r = whistle_ramp_next(&mando.voice[MANDO_TREMOLO]);
+      dry += r * (trem_run(dry, &mando.clock, depth) - dry);
     }
     if (leslie) {
       double r = whistle_ramp_next(&mando.voice[MANDO_LESLIE]);
@@ -954,10 +1200,19 @@ static void mando_process(const float* in, int len, double rate) {
     float boost = whistle_ramp_next(&mando.boost);
     mando_block[i] = boost * whistle_ramp_next(&mando.dry) * (float)dry;
     float out = 0, bass_out = 0;
+    // How pitched it is, for Shimmer's send and the Synth.
+    if (shimmer || synth) {
+      double tonal = tonal_run(&mando.tonal, x);
+      if (tonal >= 0) mando.tonal_target = tonal;
+      mando.tonal_level += (mando.tonal_target - mando.tonal_level) *
+        (mando.tonal_target > mando.tonal_level ? mando.tonal_attack
+                                                : mando.tonal_release);
+    }
     double gate = bass || synth ? room_gate_run(&mando.gate, x) : 0;
     if (synth) {
       out += whistle_ramp_next(&mando.voice[MANDO_SYNTH]) *
-        (float)synth_run(&mando.synth, x, synth_hz, gate, gate_db, rate);
+        (float)synth_run(&mando.synth, x, synth_hz, gate * mando.tonal_level,
+                         gate_db, rate);
     }
     if (bass) {
       // Gated going in, so the room doesn't play it, and hotter.
@@ -972,16 +1227,11 @@ static void mando_process(const float* in, int len, double rate) {
         vocoder_process(&mando.vocoder, x * MANDO_VOCODER_INPUT_GAIN,
                         chord_hz, chord_weight, chord_notes, 1);
     }
-    if (octave) {
-      out += whistle_ramp_next(&mando.voice[MANDO_OCTAVE]) *
-        (float)(OCTAVE_GAIN * octave_run(&mando.octave, x, rate));
+    if (drone) {
+      out += whistle_ramp_next(&mando.voice[MANDO_DRONE]) *
+        (float)(DRONE_LEVEL * strings_run(&mando.drone, x));
     }
     if (shimmer) {
-      double tonal = tonal_run(&mando.tonal, x);
-      if (tonal >= 0) mando.tonal_target = tonal;
-      mando.tonal_level += (mando.tonal_target - mando.tonal_level) *
-        (mando.tonal_target > mando.tonal_level ? mando.tonal_attack
-                                                : mando.tonal_release);
       // The send switches, and the tail rings on after it.
       float send = whistle_ramp_next(&mando.voice[MANDO_SHIMMER]) *
                    (float)(x * mando.tonal_level);

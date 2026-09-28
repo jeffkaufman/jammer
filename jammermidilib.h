@@ -296,21 +296,22 @@ static int drone_voice_for_note(int note) {
   return -1;
 }
 
-// The Breath Gate's own voices, in place of a pad, on the home row: the Snare
-// Roll and the percussion the breath plays by moving (macapi.h), then the
+// The Breath Gate's own voices, in place of a pad, on the home row: the
+// percussion the breath plays by moving (macapi.h), then the
 // voices for builds and drops (see the README's "Builds and drops").  And
 // the shakers, on J, K and L: modifier keys, but DOWNBEAT, UPBEAT and UP
 // HIGH mean nothing to a drone.  Its
 // pads are on the row below (BREATH_PADS), so the two kinds are a row each
 // rather than mixed; the other drones keep all ten pads where they are.
 //
-//   Snare Roll      the kit's snare on the beat's grid, faster the harder you
-//                   blow: quarters, 8ths, 16ths, 32nds (breath_roll_tick)
+//   Feet            French Canadian foot percussion, leather shoes on a
+//                   sprung wooden floor, only while the pedals keep a beat:
+//                   "thump . tap tap", the thump on the kick, and blowing
+//                   fills in the gap and hits harder, up to stomps
+//                   (breath_feet_tick)
 //   Brushes         a jazz kit's brushes, on J: blowing stirs them round
 //                   the head, faster and louder the harder you blow
-//                   (macapi.h), and blowing up past 90% slaps them, once,
-//                   not again until you've come back under 60%
-//                   (breath_brush_slap)
+//                   (macapi.h), and nothing else: no slap or tap
 //   Tamb Shake      a tambourine, on K, jiggled in the hand on the beat's
 //                   grid, 16ths or three a beat in jig time, its jingles
 //                   shaken harder the harder you blow (macapi.h)
@@ -327,7 +328,6 @@ static int drone_voice_for_note(int note) {
 // The pad is the one voice that uses the channel, so there's only ever one;
 // its key again lets go of it, for the layers on their own.
 enum {
-  BREATH_LAYER_SNARE_ROLL = 1 << 0,
   BREATH_LAYER_RISER = 1 << 1,
   BREATH_LAYER_WOBBLE = 1 << 2,
   BREATH_LAYER_GUIRA = 1 << 3,
@@ -336,6 +336,7 @@ enum {
   BREATH_LAYER_BRUSHES = 1 << 6,
   BREATH_LAYER_TAMB_SHAKE = 1 << 7,
   BREATH_LAYER_GRID_HAT = 1 << 8,
+  BREATH_LAYER_FEET = 1 << 9,
 };
 static const struct {
   char note;
@@ -343,7 +344,7 @@ static const struct {
   const char* label;
   unsigned fx;  // what it has the Mac's audio play
 } BREATH_VOICES[] = {
-  {'A', BREATH_LAYER_SNARE_ROLL, "Snare\nRoll",  0},
+  {'A', BREATH_LAYER_FEET,       "Feet",         0},
   {'S', BREATH_LAYER_GUIRA,      "Guira",        BREATH_FX_GUIRA},
   {'D', BREATH_LAYER_GUIRO,      "Guiro",        BREATH_FX_GUIRO},
   {'F', BREATH_LAYER_WASHBOARD,  "Wash\nboard",  BREATH_FX_WASHBOARD},
@@ -1769,6 +1770,8 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
 }
 
 
+void breath_feet_kick(uint64_t current_time);  // below, with the Grid Hat
+
 void estimate_tempo(uint64_t current_time, int note_in) {
   current_beat_ns = 0;
 
@@ -1792,6 +1795,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 
   arpeggiate(0, current_time, /*drone=*/false, /*running=*/true);
   last_downbeat_ns = current_time;
+  breath_feet_kick(current_time);
 
   next_ns[0] = current_time;
   for (int i = 1; i < N_SUBBEATS; i++) {
@@ -2863,8 +2867,6 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 }
 
-void breath_brush_slap(void);  // below, with the Snare Roll
-
 void handle_cc(unsigned int cc, unsigned int val) {
   if (cc != CC_BREATH && cc != CC_11) {
     printf("Unknown Control change %d\n", cc);
@@ -2879,7 +2881,6 @@ void handle_cc(unsigned int cc, unsigned int val) {
   breath_heard = true;
   update_breath_fx();
   breath_gate_breath();
-  breath_brush_slap();
 
   // pass other control change to all synths that care about it:
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
@@ -3135,26 +3136,14 @@ void maybe_end_notes() {
   maybe_end_footbass_notes(ENDPOINT_FOOTBASS_3);
 }
 
-// The Breath Gate's Snare Roll: the kit's snare on the beat's grid for as
-// long as you blow, and faster the harder -- quarters, 8ths, 16ths, 32nds --
-// and louder too, so blowing up through it is a build.  On the pedals' grid
-// while they're going; from the start of the breath at 116 BPM when they
-// aren't.  Only ever the next hit on the grid is waited for, and a breath that
-// stops stops it.
-bool roll_open;
-uint64_t roll_origin_ns;
-int roll_division;
-int64_t roll_last_slot;
-uint64_t roll_last_hit_ns;
-
-#define ROLL_DEFAULT_BEAT_NS (60 * NS_PER_SEC / 116)
-
 // The beat, and where it started: the pedals' if they've kept time within
 // the last couple of beats, or 116 BPM's from `start`.  Whether it's the
 // pedals'.
+#define BREATH_DEFAULT_BEAT_NS (60 * NS_PER_SEC / 116)
+
 static bool breath_grid(uint64_t t, uint64_t start, uint64_t* beat,
                         uint64_t* origin) {
-  *beat = ROLL_DEFAULT_BEAT_NS;
+  *beat = BREATH_DEFAULT_BEAT_NS;
   *origin = start;
   if (current_beat_ns > 0 && t - last_downbeat_ns < 2 * current_beat_ns) {
     *beat = current_beat_ns;
@@ -3163,52 +3152,11 @@ static bool breath_grid(uint64_t t, uint64_t start, uint64_t* beat,
   }
   return false;
 }
-// The tambourine's velocity, against the roll's snare on the Standard kit:
+
+// The tambourine's velocity, against the kit's snare on the Standard kit:
 // FluidR3's tambourine is the same in every percussion set, and within half a
 // dB of that snare at the same velocity, so it takes the snare's scale.
 #define TAMB_VEL 0.81
-
-void breath_roll_tick(void) {
-  double blown = breath_blown(breath);
-  if (!c->on[ENDPOINT_BREATH] ||
-      !(c->breath_layers & BREATH_LAYER_SNARE_ROLL) ||
-      blown < BREATH_GATE_SHUT) {
-    roll_open = false;
-    return;
-  }
-  uint64_t t = now();
-  if (!roll_open) {
-    if (blown <= BREATH_GATE_OPEN) return;
-    roll_open = true;
-    roll_origin_ns = t;
-    roll_division = 0;
-  }
-
-  int division = blown < 0.3 ? 1 : blown < 0.5 ? 2 : blown < 0.75 ? 4 : 8;
-  uint64_t beat, origin;
-  breath_grid(t, roll_origin_ns, &beat, &origin);
-  int64_t since = (int64_t)(t - origin);
-  int64_t slot = since * division / (int64_t)beat;
-  if (division != roll_division) {
-    // A breath just starting, or moving to another speed.  Strike now if
-    // this slot has only just begun; otherwise wait for the next.
-    double into = (double)(since * division % (int64_t)beat) / beat;
-    roll_last_slot = into < 0.25 ? slot - 1 : slot;
-    roll_division = division;
-  }
-  if (slot == roll_last_slot) return;
-  roll_last_slot = slot;
-  // Speeding up just after a hit mustn't hit again straight away.
-  if (t - roll_last_hit_ns < beat / division / 2) return;
-  roll_last_hit_ns = t;
-
-  // A real snare out of the kit's set: the rim some kits use on the
-  // downbeat doesn't roll.
-  const DrumKit* kit = &KITS[c->drum_voice];
-  double scale = kit->snare == MIDI_DRUM_OUT_SNARE ? kit->snare_vel : 0.8;
-  psend_midi(MIDI_ON, MIDI_DRUM_OUT_SNARE,
-             normalize((int)((35 + 85 * blown) * scale)), ENDPOINT_DRUM);
-}
 
 // The Breath Gate's Grid Hat: the 808's closed hat on the beat's grid for as
 // long as you blow, as hard as you're blowing.  16ths, or three to a beat in
@@ -3219,8 +3167,8 @@ void breath_roll_tick(void) {
 // six to a beat in jig time.  On the pedals' grid while they're going, where
 // the foot bass plays -- leaning off it the way the foot bass does, its
 // upbeat a subbeat early and in jig time its lilt -- and from the start of
-// the breath at an even 116 BPM when they aren't, like the Snare Roll.  On a
-// channel of its own, set to the 808 kit, whichever kit the drum's on.
+// the breath at an even 116 BPM when they aren't.  On a channel of its own,
+// set to the 808 kit, whichever kit the drum's on.
 #define HAT_MAIN_FULL 0.8
 #define HAT_EXTRA_FROM 0.35
 #define HAT_EXTRA_FULL 0.95
@@ -3329,37 +3277,90 @@ void breath_hat_tick(void) {
   send_midi(MIDI_ON, MIDI_HAT, normalize(v), CHANNEL_HAT);
 }
 
-// The Brushes' slap: blowing hard, past BRUSH_SLAP_AT, slaps them once off
-// the Brush kit, on a channel of its own -- a good deal softer than the
-// tambourine, a brush slap being a light thing -- and not again until the
-// breath's come well back down, below BRUSH_SLAP_AT - BRUSH_REARM, so it's a
-// slap you mean over the stir rather than one you drift into.  Their stir is
-// the Mac's own (macapi.h).  Played from the breath as it comes.
-#define BRUSH_SLAP_AT 0.9
-#define BRUSH_REARM 0.3
-// The slap is about 3dB under the tambourine at the same velocity, so its
-// scale is 16% up to start from level.
-#define BRUSH_SLAP_VEL ((int)(68 * TAMB_VEL * 1.16))
+// The Breath Gate's Feet: French Canadian foot percussion -- a fiddler's
+// leather shoes on a well-sprung wooden floor -- only while the pedals are
+// keeping a beat, and nothing at all when they aren't.  The breath needn't
+// be blowing: at rest it's a gentle "thump . tap tap", the heel coming down
+// with each pedal hit that starts a beat, and the toes on the foot bass's
+// upbeat and predown, leaning as the Grid Hat's 16ths do, the preup left
+// out; in jig time "thump . tap", the thump, the lilted preup left out, and
+// the upbeat.  Only ever within the beat the last pedal hit started, so
+// they stop with the kicks.  Blowing fills in the one left out, from nothing
+// at FEET_FILL_FROM to as loud as the rest by FEET_FILL_FULL, and has every
+// one hit harder the harder it's blown, until by FEET_FULL they're stomps.
+// Their sound's the Mac's own, through feet_hook (macapi.h); on the Pi,
+// nothing.
+#define FEET_FILL_FROM 0.15
+#define FEET_FILL_FULL 0.5
+#define FEET_FULL 0.9
 
-bool brush_live, brush_armed;
+// A step: which, how hard (0 gentle to 1 a stomp), and how loud, 0-1.
+// Called with the lock held.  NULL on the Pi.
+static void (*feet_hook)(int kind, double hard, double level) = NULL;
 
-void breath_brush_slap(void) {
-  if (!c->on[ENDPOINT_BREATH] || !(c->breath_layers & BREATH_LAYER_BRUSHES)) {
-    brush_live = false;
+bool feet_live;
+int feet_jig;
+uint64_t feet_last_step_ns;  // when the last step it played was due
+
+static bool feet_playing(void) {
+  return c->on[ENDPOINT_BREATH] && (c->breath_layers & BREATH_LAYER_FEET);
+}
+
+static double feet_hard(void) {
+  return hat_ramp(breath_blown(breath), BREATH_GATE_SHUT, FEET_FULL);
+}
+
+// A pedal hit that started a beat: the thump.
+void breath_feet_kick(uint64_t current_time) {
+  if (!feet_playing() || !feet_hook) return;
+  feet_hook(FEET_THUMP, feet_hard(), 1);
+  // It's this beat's downbeat: the grid mustn't play it again.
+  feet_last_step_ns = current_time;
+}
+
+// The taps, on the grid.
+void breath_feet_tick(void) {
+  uint64_t t = now(), beat, origin;
+  if (!feet_playing() || !feet_hook ||
+      !breath_grid(t, t, &beat, &origin)) {
+    feet_live = false;
     return;
   }
-  double blown = breath_blown(breath);
-  if (!brush_live) {
-    brush_live = true;
-    brush_armed = blown < BRUSH_SLAP_AT;
-    return;
+  // Only in the beat the last pedal hit started: when the kicks stop, the
+  // last beat's taps are the last, and a kick that's late leaves a gap
+  // until it comes, rather than the grid carrying on without it.
+  if (t - origin >= beat) return;
+  int at[HAT_MAX_STEPS];
+  int n = hat_steps(true, at);
+  int64_t subbeats = (int64_t)(t - origin) * N_SUBBEATS / (int64_t)beat;
+  int into = (int)(subbeats % N_SUBBEATS);
+  int k = n - 1;
+  while (k > 0 && at[k] > into) k--;
+  k -= k % 2;  // only the main ones: the hat's between them aren't steps
+  // As the Grid Hat tells its steps apart, by when each was due.
+  uint64_t step_ns = origin + (uint64_t)(subbeats / N_SUBBEATS) * beat +
+    (uint64_t)at[k] * beat / N_SUBBEATS;
+  uint64_t gap = beat / N_SUBBEATS * 4;
+  if (!feet_live || feet_jig != jig_time) {
+    // Just started, or into or out of jig time: now if this step has only
+    // just begun, or the next.
+    if (into - at[k] >= 3 && step_ns > feet_last_step_ns) {
+      feet_last_step_ns = step_ns;
+    }
+    feet_live = true;
+    feet_jig = jig_time;
   }
-  if (brush_armed && blown >= BRUSH_SLAP_AT) {
-    brush_armed = false;
-    send_midi(MIDI_ON, MIDI_BRUSH_SLAP, normalize(BRUSH_SLAP_VEL),
-              CHANNEL_BRUSH);
+  if (step_ns < feet_last_step_ns + gap) return;
+  feet_last_step_ns = step_ns;
+  // The downbeat's the pedal's own, breath_feet_kick: a late one comes
+  // after the grid's got there, and the thump waits for it.
+  if (k == 0) return;
+  double level = 1;
+  if (k == 2) {
+    level = hat_ramp(breath_blown(breath), FEET_FILL_FROM, FEET_FILL_FULL);
+    if (level <= 0) return;
   }
-  if (blown < BRUSH_SLAP_AT - BRUSH_REARM) brush_armed = true;
+  feet_hook(FEET_TAP, feet_hard(), level);
 }
 
 // Tell the Mac's audio about the music, every tick.  NULL on the Pi.
@@ -3423,8 +3424,8 @@ void jml_tick() {
   trigger_subbeats();
   maybe_end_notes();
   maybe_end_pitched_kick();
-  breath_roll_tick();
   breath_hat_tick();
+  breath_feet_tick();
   advance_lead_schedule();
   advance_glides();
   publish_music();

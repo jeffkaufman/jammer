@@ -545,12 +545,10 @@ static void test_breath_gate() {
 
   press("G");
   press("H");
-  press("A");
   CHECK(told_fx == (BREATH_FX_RISER | BREATH_FX_WOBBLE) &&
-        lit("G") && lit("H") && lit("A") && lit("C") &&
-        c->breath_layers == (BREATH_LAYER_RISER | BREATH_LAYER_WOBBLE |
-                             BREATH_LAYER_SNARE_ROLL),
-        "the riser, wobble and snare roll should all be on, over the pad");
+        lit("G") && lit("H") && lit("C") &&
+        c->breath_layers == (BREATH_LAYER_RISER | BREATH_LAYER_WOBBLE),
+        "the riser and wobble should both be on, over the pad");
 
   // The pad's key again lets go of the pad, leaving the layers.
   press("C");
@@ -1092,7 +1090,7 @@ static void test_mandolin() {
   }
   CHECK(c->voices[ENDPOINT_FLEX] == flex_voice,
         "a mandolin voice key changed an endpoint's voice");
-  CHECK(key_is_dead(key_for_cap("G")) && key_is_dead(key_for_cap("K")) &&
+  CHECK(key_is_dead(key_for_cap("K")) && key_is_dead(key_for_cap(";")) &&
         key_is_dead(key_for_cap("]")), "keys it doesn't use should be dead");
   bool flex_downbeat = c->downbeat[ENDPOINT_FLEX];
   strike("J", false);
@@ -1231,7 +1229,7 @@ static void test_mandolin_sound() {
   // voices that make something out of nothing, and over a -40dB one plays
   // them, whatever the whistle's gate says.  The others pass what comes in,
   // gate or no gate.
-  int gated[] = {MANDO_VOCODER, MANDO_BASS, MANDO_SYNTH, MANDO_OCTAVE,
+  int gated[] = {MANDO_VOCODER, MANDO_BASS, MANDO_SYNTH, MANDO_DRONE,
                  MANDO_SHIMMER};
   for (int g = 0; g < 5; g++) {
     int v = gated[g];
@@ -1364,11 +1362,11 @@ static void test_mandolin_effects() {
   // mandolin itself left alone.
   double full, rest, dry_rest;
   mando_prepare(48000);
-  mando_voices = MANDO_BIT(MANDO_OCTAVE);
+  mando_voices = MANDO_BIT(MANDO_DRONE);
   mando_publish();
   mando_strums(2, 24000, false, 1, NULL, &full);
   mando_prepare(48000);
-  mando_voices = MANDO_BIT(MANDO_OCTAVE) | MANDO_BIT(MANDO_BREATH);
+  mando_voices = MANDO_BIT(MANDO_DRONE) | MANDO_BIT(MANDO_BREATH);
   mando_publish();
   atomic_store(&audio_breath, 0);
   mando_strums(2, 24000, false, 1, &dry_rest, &rest);
@@ -1400,25 +1398,40 @@ static void test_mandolin_effects() {
         highest);
   atomic_store(&audio_breath, 0);
 
-  // And Drive: at rest, the plain mandolin, not 6dB up; at full, three
-  // times Drive.
+  // And Drive: pushed harder the harder it's blown -- dirtier, a sine
+  // coming out with more of its harmonics -- and staying about as loud as
+  // Drive without it.
   double chain_full, chain_breath;
   mando_prepare(48000);
   mando_voices = MANDO_BIT(MANDO_DRIVE);
   mando_publish();
   mando_strums(2, 24000, false, 1, &chain_full, NULL);
-  for (int b = 0; b < 2; b++) {
+  int pushes[] = {0, (BREATH_FLOOR + BREATH_FULL) / 2, BREATH_FULL};
+  double dirt[3];
+  for (int b = 0; b < 3; b++) {
     mando_prepare(48000);
     mando_voices = MANDO_BIT(MANDO_DRIVE) | MANDO_BIT(MANDO_BREATH);
     mando_publish();
-    atomic_store(&audio_breath, b ? BREATH_FULL : 0);
+    atomic_store(&audio_breath, pushes[b]);
     mando_strums(2, 24000, false, 1, &chain_breath, NULL);
-    double ratio = chain_breath / (b ? chain_full : plain);
-    double want = b ? MANDO_BREATH_HIGH : 1;
-    CHECK(fabs(ratio - want) < 0.03 * want,
-          "Breath FX left the mandolin through Drive at %.2f of %s, not %.2f",
-          ratio, b ? "Drive" : "plain", want);
+    printf("mandolin: drive %+.1fdB against Drive at a breath of %d\n",
+           20 * log10(chain_breath / chain_full), pushes[b]);
+    CHECK(fabs(20 * log10(chain_breath / chain_full)) < 3,
+          "Breath FX left Drive %+.1fdB at a breath of %d",
+          20 * log10(chain_breath / chain_full), pushes[b]);
+    static float pushed[48000];
+    mando_run(330, 0.03, 9600, false);
+    for (int k = 0; k < 100; k++) {
+      mando_run(330, 0.03, 480, false);
+      memcpy(pushed + 480 * k, mando_block, sizeof(float) * 480);
+    }
+    dirt[b] = (goertzel(pushed, 48000, 990) + goertzel(pushed, 48000, 1650)) /
+              goertzel(pushed, 48000, 330);
   }
+  CHECK(dirt[0] < dirt[1] && dirt[1] < dirt[2] && dirt[2] > 5 * dirt[0],
+        "Breath FX should push Drive harder the harder it's blown (%.3f %.3f "
+        "%.3f)", dirt[0], dirt[1], dirt[2]);
+  atomic_store(&audio_breath, 0);
 
   // And the Bass, a switch: none with no breath, all of it with any.  On a
   // G string, since its pitch tracker follows one note, not a chord.
@@ -1444,7 +1457,7 @@ static void test_mandolin_effects() {
   // Boost: on the voices too.
   double boosted;
   mando_prepare(48000);
-  mando_voices = MANDO_BIT(MANDO_OCTAVE) | MANDO_BIT(MANDO_BOOST);
+  mando_voices = MANDO_BIT(MANDO_DRONE) | MANDO_BIT(MANDO_BOOST);
   mando_publish();
   mando_strums(2, 24000, false, 1, NULL, &boosted);
   CHECK(fabs(boosted / full - MANDO_BOOST_GAIN) < 0.02,
@@ -1516,7 +1529,7 @@ static void test_mandolin_effects() {
   // neither side goes over it; and a quiet one's left alone.
   mando_prepare(48000);
   mando_voices = MANDO_BIT(MANDO_TALKBOX) | MANDO_BIT(MANDO_BOOST) |
-                 MANDO_BIT(MANDO_OCTAVE);
+                 MANDO_BIT(MANDO_DRONE);
   mando_publish();
   set_mando_gain(MAX_MANDO_GAIN);
   atomic_store(&audio_breath, BREATH_FULL);
@@ -1645,40 +1658,19 @@ static void test_mandolin_effects() {
   CHECK(d3 > 3 * c3 && d3 > a_note,
         "the Synth should play D, not what the mandolin does (%.4f %.4f "
         "%.4f)", d3, a_note, c3);
+  // And only by what's pitched: scratches as loud as the strums play
+  // hardly any of it.
+  double scratch_in, scratch_out, strum_in, strum_out;
+  mando_prepare(48000);
+  mando_strums(3, 12000, true, 2, &scratch_in, &scratch_out);
+  mando_prepare(48000);
+  mando_strums(3, 12000, false, 2, &strum_in, &strum_out);
+  CHECK(strum_out / strum_in > 10 * (scratch_out / scratch_in),
+        "the Synth took scratches (%.4f) nearly as well as chords (%.4f)",
+        scratch_out / scratch_in, strum_out / strum_in);
   atomic_store(&audio_chord_root, 0);
   atomic_store(&audio_chord_third, 0);
   atomic_store(&audio_chord_fifth, 7);
-
-  // Oct Down: a note comes out an octave under.
-  mando_prepare(48000);
-  mando_voices = MANDO_BIT(MANDO_OCTAVE);
-  mando_publish();
-  mando_run(440, 0.1, 24000, false);
-  static float got[480 * 20];
-  for (int b = 0; b < 20; b++) {
-    mando_run(440, 0.1, 480, false);
-    memcpy(got + 480 * b, mando_voice_block, sizeof(float) * 480);
-  }
-  double under = goertzel(got, 9600, 220), same = goertzel(got, 9600, 440);
-  CHECK(under > 4 * same, "Oct Down gave %.4f at 220Hz and %.4f at 440",
-        under, same);
-  // And in tune: the loudest it is anywhere near is right on 220Hz.
-  double best = 0, at = 0;
-  for (double f = 200; f <= 240; f += 0.5) {
-    double g = goertzel(got, 9600, f);
-    if (g > best) {
-      best = g;
-      at = f;
-    }
-  }
-  CHECK(fabs(1200 * log2(at / 220)) < 10, "Oct Down played %.1fHz for 220",
-        at);
-  mando_prepare(48000);
-  mando_strums(3, 24000, false, 2, NULL, &voice);
-  printf("mandolin: oct down %+.1fdB against the mandolin\n",
-         20 * log10(voice / plain));
-  CHECK(fabs(20 * log10(voice / plain)) < 6,
-        "Oct Down is %+.1fdB against the mandolin", 20 * log10(voice / plain));
 
   // Shimmer: rings after pitched strums, hardly at all after scratches of
   // as much level, and rings on after it's switched off, until it dies.
@@ -1706,6 +1698,175 @@ static void test_mandolin_effects() {
   mando_strums(20, 0, false, 1, NULL, &tail);
   CHECK(tail < 1e-4, "Shimmer's tail should die away, not build (%.5f)",
         tail);
+  mando_reset();
+}
+
+// A sine at `hz` through the mandolin for `n` samples, keeping what came out
+// on the right (`chain`) or the left into `got`.
+static void mando_tone(double hz, double amp, int n, bool chain, float* got) {
+  for (int b = 0; b * 480 < n; b++) {
+    mando_run(hz, amp, 480, false);
+    if (got) {
+      memcpy(got + 480 * b, chain ? mando_block : mando_voice_block,
+             sizeof(float) * 480);
+    }
+  }
+}
+
+// The pedals keeping time, a beat every `beat_ms` from `from_ms` on the
+// clock the blocks are on, as the music hook would say at the block
+// starting `at_ms`.
+static void mando_pedals(double at_ms, double from_ms, double beat_ms) {
+  audio_block_ns = (uint64_t)(1e9 + at_ms * 1e6);
+  double beats = floor((at_ms - from_ms) / beat_ms);
+  atomic_store(&audio_beat_start_ns,
+               (uint64_t)(1e9 + (from_ms + beats * beat_ms) * 1e6));
+  atomic_store(&audio_beat_ns, (uint64_t)(beat_ms * 1e6));
+}
+
+// RMS over each of `n` stretches of `got`, each `each` samples.
+static void mando_levels(const float* got, int n, int each, double* rms) {
+  for (int k = 0; k < n; k++) {
+    double sum = 0;
+    for (int i = 0; i < each; i++) sum += got[k * each + i] * got[k * each + i];
+    rms[k] = sqrt(sum / each);
+  }
+}
+
+// A sine through the mandolin with the pedals keeping a 500ms beat: how loud
+// it came out over each 10ms of the last beat, which started as `rms` does.
+static void mando_in_time(double hz, double* rms) {
+  static float got[24000];
+  // Four seconds, the pedals' beats at 3ms past each half second, and the
+  // last beat kept: from 3503ms, blocks 353 to 399.
+  for (int b = 0; b < 400; b++) {
+    mando_pedals(b * 10, 3, 500);
+    mando_run(hz, 0.1, 480, false);
+    if (b >= 353) {
+      memcpy(got + 480 * (b - 353), mando_block, sizeof(float) * 480);
+    }
+  }
+  mando_levels(got, 47, 480, rms);
+}
+
+// The effects that know the chord and the beat.
+static void test_mandolin_chord_effects() {
+  mando_reset();
+  atomic_store(&audio_chord_root, 2);  // D major: D F# A
+  atomic_store(&audio_chord_third, 4);
+  atomic_store(&audio_chord_fifth, 7);
+  static float got[48000];
+  double plain, voice;
+  mando_prepare(48000);
+  mando_strums(3, 24000, false, 2, &plain, NULL);
+
+  // Drone: a note in the chord rings on after it stops; one out of it
+  // hardly rings; and on a change of chord the old one's ring dies.
+  double ring[2];
+  double notes[2] = {midi_hz(69), midi_hz(68)};  // A, in it; G#, not
+  for (int k = 0; k < 2; k++) {
+    mando_prepare(48000);
+    mando_voices = MANDO_BIT(MANDO_DRONE);
+    mando_publish();
+    mando_tone(notes[k], 0.1, 24000, false, NULL);
+    mando_tone(notes[k], 0, 24000, false, got);
+    mando_levels(got + 19200, 1, 4800, &ring[k]);  // 400-500ms after
+  }
+  CHECK(ring[0] > 0.01 && ring[0] > 20 * ring[1],
+        "the Drone should ring on for A in D (%.4f), not G# (%.4f)",
+        ring[0], ring[1]);
+  mando_prepare(48000);
+  mando_tone(notes[0], 0.1, 24000, false, NULL);
+  atomic_store(&audio_chord_root, 3);  // E flat
+  mando_tone(notes[0], 0, 24000, false, got);
+  double changed;
+  mando_levels(got + 19200, 1, 4800, &changed);
+  CHECK(changed < 0.01 * ring[0],
+        "a change should damp the old chord's strings (%.5f of %.4f)",
+        changed, ring[0]);
+  atomic_store(&audio_chord_root, 2);
+  mando_prepare(48000);
+  mando_strums(3, 24000, false, 2, NULL, &voice);
+  printf("mandolin: drone %+.1fdB against the mandolin\n",
+         20 * log10(voice / plain));
+  CHECK(fabs(20 * log10(voice / plain)) < 6,
+        "the Drone is %+.1fdB against the mandolin",
+        20 * log10(voice / plain));
+
+  // The new chain: at the mandolin's level.
+  int chain[] = {MANDO_RESONATOR, MANDO_HARM_TREM, MANDO_TREMOLO};
+  for (int c = 0; c < 3; c++) {
+    mando_prepare(48000);
+    mando_voices = MANDO_BIT(chain[c]);
+    mando_publish();
+    double through;
+    mando_strums(3, 24000, false, 2, &through, &voice);
+    printf("mandolin: %s %+.1fdB against the mandolin\n",
+           MANDO_VOICES[chain[c]].name, 20 * log10(through / plain));
+    CHECK(fabs(20 * log10(through / plain)) < 2 && voice == 0,
+          "%s is %+.1fdB against the mandolin", MANDO_VOICES[chain[c]].name,
+          20 * log10(through / plain));
+  }
+
+  // Resonator: a note in the chord through much louder than one out of it.
+  double reso[2];
+  for (int k = 0; k < 2; k++) {
+    mando_prepare(48000);
+    mando_voices = MANDO_BIT(MANDO_RESONATOR);
+    mando_publish();
+    mando_tone(notes[k], 0.1, 24000, true, NULL);
+    mando_tone(notes[k], 0.1, 4800, true, got);
+    mando_levels(got, 1, 4800, &reso[k]);
+  }
+  CHECK(reso[0] > 2 * reso[1],
+        "the Resonator should favour A in D (%.4f) over G# (%.4f)",
+        reso[0], reso[1]);
+
+  // Tremolo: in step with the pedals, full on each 8th and down between.
+  double rms[47];
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_TREMOLO);
+  mando_publish();
+  mando_in_time(2000, rms);
+  double top = 0;
+  for (int k = 0; k < 47; k++) top = fmax(top, rms[k]);
+  // 10ms each: the beat at 0, the 8th at 25, the 16ths at 12 and 37.
+  CHECK(rms[0] > 0.8 * top && rms[25] > 0.8 * top && rms[12] < 0.4 * top &&
+        rms[37] < 0.4 * top,
+        "the Tremolo should be full on the 8ths and down between "
+        "(%.3f %.3f %.3f %.3f of %.3f)", rms[0], rms[12], rms[25], rms[37],
+        top);
+  // And with Breath FX at rest, none of it.
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_TREMOLO) | MANDO_BIT(MANDO_BREATH);
+  mando_publish();
+  atomic_store(&audio_breath, 0);
+  mando_in_time(2000, rms);
+  double lo = 1, hi = 0;
+  for (int k = 0; k < 47; k++) {
+    lo = fmin(lo, rms[k]);
+    hi = fmax(hi, rms[k]);
+  }
+  CHECK(hi < 1.05 * lo, "Breath FX at rest should leave no Tremolo "
+        "(%.3f to %.3f)", lo, hi);
+
+  // Harm Trem: the lows loudest on the beat and the highs half a beat on.
+  double low[47], high[47];
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_HARM_TREM);
+  mando_publish();
+  mando_in_time(100, low);
+  mando_prepare(48000);
+  mando_in_time(4000, high);
+  CHECK(low[0] > 2 * low[25] && high[25] > 2 * high[0],
+        "Harm Trem should swell the lows on the beat (%.3f %.3f) and the "
+        "highs off it (%.3f %.3f)", low[0], low[25], high[0], high[25]);
+
+  atomic_store(&audio_beat_start_ns, 0);
+  atomic_store(&audio_beat_ns, 0);
+  atomic_store(&audio_chord_root, 0);
+  atomic_store(&audio_chord_third, 0);
+  atomic_store(&audio_chord_fifth, 7);
   mando_reset();
 }
 
@@ -3163,7 +3324,6 @@ static void test_breath_mic() {
   CHECK(bm_cc(whistled) == 0, "no whistle, no breath");
 }
 
-// The Snare Roll: starts with the breath, speeds up with it, stops with it.
 // With the kit on and playing the downbeat, every kick on the pedal plays
 // the kit's kick: one on the beat, which starts a beat, and an extra one
 // between, which doesn't fit the tempo and so starts none.
@@ -3206,43 +3366,6 @@ static void test_every_kick_plays() {
   play_kick_after(0.5);
   CHECK(count_tapped(MIDI_ON, kick, channel) == 0,
         "without DOWNBEAT the pedal shouldn't play the kit's kick");
-  midi_tap = NULL;
-  full_reset();
-}
-
-static void test_snare_roll() {
-  full_reset();
-  midi_tap = tap_midi;
-  press("`");
-  press("J");  // the Brushes it starts with, off
-  press("A");  // and the Snare Roll on
-  n_tapped = 0;
-  handle_cc(CC_BREATH, 60);
-  breath_roll_tick();
-  CHECK(count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM) == 1,
-        "a breath should start the roll at once");
-  breath_roll_tick();
-  CHECK(count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM) == 1,
-        "only one snare a slot");
-
-  // Blowing hard: 32nds, at 116 BPM with no pedals, one every 65ms.
-  handle_cc(CC_BREATH, 110);
-  uint64_t until = now() + 300 * 1000000ULL;
-  while (now() < until) {
-    breath_roll_tick();
-    usleep(1000);
-  }
-  int hits = count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM);
-  CHECK(hits >= 5 && hits <= 7, "%d snares in 300ms of 32nds", hits);
-
-  handle_cc(CC_BREATH, 0);
-  until = now() + 150 * 1000000ULL;
-  while (now() < until) {
-    breath_roll_tick();
-    usleep(1000);
-  }
-  CHECK(count_tapped(MIDI_ON, MIDI_DRUM_OUT_SNARE, CHANNEL_DRUM) == hits,
-        "the roll should stop with the breath");
   midi_tap = NULL;
   full_reset();
 }
@@ -3397,9 +3520,7 @@ static void test_tambourines() {
         "'press grid hat'");
 
   // J: brushes.  Blowing stirs them, which is the Mac's own sound (see
-  // test_brush_swish) and no notes at all; past 90% one slap off the Brush
-  // kit, on a channel of its own, and no more until the breath's come back
-  // under 60%.
+  // test_brush_swish) and no notes at all, however hard.
   CHECK(lit("J") && (c->breath_layers & BREATH_LAYER_BRUSHES) &&
         (told_fx & BREATH_FX_BRUSH), "the Brushes should start on");
   handle_cc(CC_BREATH, 20);
@@ -3408,29 +3529,12 @@ static void test_tambourines() {
     handle_cc(CC_BREATH, w % 2 ? 16 : 30);
     usleep(30000);
   }
-  handle_cc(CC_BREATH, 90);  // hard, but not enough
-  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 0,
-        "blowing below the slap should stir the brushes, not play a note");
-  handle_cc(CC_BREATH, 108);
-  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 1 &&
-        count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 1,
-        "blowing hard should be one slap");
-  usleep(100000);
-  handle_cc(CC_BREATH, 75);
+  handle_cc(CC_BREATH, 90);
   handle_cc(CC_BREATH, 127);
-  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 1,
-        "backing off a little shouldn't slap again");
   handle_cc(CC_BREATH, 60);
-  handle_cc(CC_BREATH, 108);
-  CHECK(count_tapped(MIDI_ON, MIDI_BRUSH_SLAP, CHANNEL_BRUSH) == 2,
-        "backing well off should let it slap again");
-  // Softer than the tambourine's.
-  for (int i = 0; i < n_tapped; i++) {
-    if (tapped[i].channel == CHANNEL_BRUSH) {
-      CHECK(tapped[i].velocity < 90, "a brush slap at %d is too hard",
-            tapped[i].velocity);
-    }
-  }
+  handle_cc(CC_BREATH, 127);
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 0,
+        "blowing, however hard, should stir the brushes, not play a note");
   CHECK(tamb_taps(0, 127) == 0, "the brushes shouldn't play the tambourine");
   handle_cc(CC_BREATH, 0);
   press("J");
@@ -3602,6 +3706,190 @@ static void test_grid_hat_on_the_pedals() {
         "kicks late", hats);
   midi_tap = NULL;
   full_reset();
+}
+
+// The Feet's steps, as feet_hook hears them.
+static struct {
+  int kind;
+  double hard, level;
+  int subbeat;
+} feet_heard[64];
+static int n_feet_heard;
+static uint64_t feet_beat_ns;
+
+static void feet_record(int kind, double hard, double level) {
+  if (n_feet_heard >= 64) return;
+  feet_heard[n_feet_heard].kind = kind;
+  feet_heard[n_feet_heard].hard = hard;
+  feet_heard[n_feet_heard].level = level;
+  feet_heard[n_feet_heard].subbeat =
+    (int)((now() - last_downbeat_ns) * 72 / feet_beat_ns);
+  n_feet_heard++;
+}
+
+// Three beats of the pedals at 116 BPM, `late_ms` late each, with the breath
+// at `breath`, ticked as jammer does; the subbeats of the last beat's steps,
+// the thump as "T", into `out`, and how many steps there were in all.
+static int feet_subbeats(int breath, bool jig, int late_ms, bool pedals,
+                         char* out) {
+  jig_time = jig;
+  handle_cc(CC_BREATH, breath);
+  feet_beat_ns = 60 * NS_PER_SEC / 116;
+  current_beat_ns = pedals ? feet_beat_ns : 0;
+  last_downbeat_ns = now();
+  n_feet_heard = 0;
+  if (pedals) breath_feet_kick(last_downbeat_ns);
+  int kicks = 0, from = 0;
+  while (true) {
+    uint64_t t = now();
+    if (t - last_downbeat_ns >= feet_beat_ns + late_ms * 1000000ULL) {
+      if (++kicks == 3) break;
+      last_downbeat_ns = t;  // a kick that starts a beat
+      from = n_feet_heard;
+      if (pedals) breath_feet_kick(t);
+    }
+    breath_feet_tick();
+    usleep(500);
+  }
+  out[0] = '\0';
+  for (int i = from; i < n_feet_heard; i++) {
+    if (feet_heard[i].kind == FEET_THUMP) {
+      sprintf(out + strlen(out), "%sT", out[0] ? " " : "");
+    } else {
+      sprintf(out + strlen(out), "%s%d", out[0] ? " " : "",
+              feet_heard[i].subbeat);
+    }
+  }
+  handle_cc(CC_BREATH, 0);
+  current_beat_ns = 0;
+  last_downbeat_ns = 0;
+  jig_time = false;
+  return n_feet_heard;
+}
+
+// Feet: "thump . tap tap" on the pedals, the thump the pedal's own; the gap
+// filled and every step harder the harder it's blown; and nothing at all
+// without the pedals keeping a beat.
+static void test_breath_feet() {
+  full_reset();
+  feet_hook = feet_record;
+  press("`");
+  press("J");  // the Brushes it starts with, off
+  press("A");
+  CHECK(lit("A") && (c->breath_layers & BREATH_LAYER_FEET),
+        "A should switch the Feet on");
+  char got[256];
+  feet_subbeats(0, false, 0, true, got);
+  CHECK(strncmp(got, "T 3", 3) == 0 && strstr(got, " 5") &&
+        strlen(got) <= 8, "at rest the Feet should be thump . tap tap, "
+        "T 35 54, not %s", got);
+  bool gentle = true;
+  for (int i = 0; i < n_feet_heard; i++) {
+    if (feet_heard[i].hard > 0.01) gentle = false;
+  }
+  CHECK(gentle, "at rest every step should be gentle");
+  feet_subbeats(104, false, 0, true, got);
+  CHECK(strncmp(got, "T 18", 4) == 0 || strncmp(got, "T 19", 4) == 0,
+        "blowing should fill in the gap, T 18 35 54, not %s", got);
+  feet_subbeats(0, true, 0, true, got);
+  CHECK(strncmp(got, "T 45", 4) == 0 || strncmp(got, "T 46", 4) == 0,
+        "in jig time at rest, T 45, not %s", got);
+  feet_subbeats(104, true, 0, true, got);
+  CHECK(strncmp(got, "T 21", 4) == 0 || strncmp(got, "T 22", 4) == 0,
+        "in jig time blowing, T 21 45, not %s", got);
+  feet_subbeats(BREATH_FULL, false, 0, true, got);
+  bool stomps = n_feet_heard > 0;
+  for (int i = 0; i < n_feet_heard; i++) {
+    if (feet_heard[i].hard < 0.99 || feet_heard[i].level < 0.99) {
+      stomps = false;
+    }
+  }
+  CHECK(stomps, "blowing all the way every step should be a stomp");
+  // Kicks late: one thump each, on the kick, and the grid doesn't play one.
+  feet_subbeats(0, false, 40, true, got);
+  int thumps = 0;
+  for (int i = 0; i < n_feet_heard; i++) {
+    thumps += feet_heard[i].kind == FEET_THUMP;
+  }
+  CHECK(thumps == 3, "%d thumps for three late kicks", thumps);
+  // Stopping: the last kicked beat's taps are the last.
+  feet_beat_ns = 60 * NS_PER_SEC / 116;
+  current_beat_ns = feet_beat_ns;
+  last_downbeat_ns = now();
+  breath_feet_kick(last_downbeat_ns);
+  n_feet_heard = 0;
+  uint64_t stopped = now();
+  while (now() - stopped < 3 * feet_beat_ns) {
+    breath_feet_tick();
+    usleep(500);
+  }
+  CHECK(n_feet_heard == 2, "after the last kick, its two taps and no more, "
+        "not %d steps", n_feet_heard);
+  current_beat_ns = 0;
+  last_downbeat_ns = 0;
+  CHECK(feet_subbeats(BREATH_FULL, false, 0, false, got) == 0,
+        "without the pedals the Feet should be silent, not %s", got);
+  press("A");
+  CHECK(feet_subbeats(0, false, 0, true, got) == 0,
+        "switched off the Feet should be silent");
+  feet_hook = NULL;
+  full_reset();
+}
+
+// A step through the Feet's sound, rendered: its RMS over half a second;
+// how much of it is under 200Hz and over 1kHz; and how much of it is still
+// sounding after the first 100ms, against how much there was in them.
+static double feet_render(int kind, double hard, double* low, double* high,
+                          double* after) {
+  static float l[24000], r[24000];
+  memset(l, 0, sizeof(l));
+  memset(r, 0, sizeof(r));
+  atomic_store(&audio_breath_fx, 0);
+  feet_hit(kind, hard, 1);
+  for (int b = 0; b < 50; b++) {
+    play_breath_instruments(l + 480 * b, r + 480 * b, 480, 48000);
+  }
+  double sum = 0, lo = 0, hi = 0, first = 0, rest = 0, lp1 = 0, lp2 = 0;
+  double k_lo = 1 - exp(-2 * M_PI * 200 / 48000);
+  double k_hi = 1 - exp(-2 * M_PI * 1000 / 48000);
+  for (int i = 0; i < 24000; i++) {
+    double x = l[i];
+    lp1 += (x - lp1) * k_lo;
+    lp2 += (x - lp2) * k_hi;
+    sum += x * x;
+    lo += lp1 * lp1;
+    hi += (x - lp2) * (x - lp2);
+    if (i < 4800) first += x * x; else rest += x * x;
+  }
+  *low = sqrt(lo / sum);
+  *high = sqrt(hi / sum);
+  *after = sqrt(rest / first);
+  return sqrt(sum / 24000);
+}
+
+static void test_feet_sound() {
+  double thump_low, thump_high, thump_after, tap_low, tap_high, tap_after;
+  double stomp_low, stomp_high, stomp_after;
+  double thump = feet_render(FEET_THUMP, 0, &thump_low, &thump_high,
+                             &thump_after);
+  double tap = feet_render(FEET_TAP, 0, &tap_low, &tap_high, &tap_after);
+  double stomp = feet_render(FEET_THUMP, 1, &stomp_low, &stomp_high,
+                             &stomp_after);
+  CHECK(thump > 1e-3 && tap > 1e-4, "the Feet made nothing (%.4f %.4f)",
+        thump, tap);
+  CHECK(thump_low > 2 * tap_low && tap_high > 2 * thump_high,
+        "a thump should be deeper than a tap (%.2f %.2f under 200Hz, "
+        "%.2f %.2f over 1kHz)", thump_low, tap_low, thump_high, tap_high);
+  CHECK(stomp > 2 * thump && stomp * stomp_low > 2 * thump * thump_low,
+        "a stomp should be louder and deeper than a gentle thump "
+        "(%.4f %.4f)", stomp, thump);
+  // A wooden floor doesn't ring: each step's over within 100ms or so.
+  CHECK(thump_after < 0.01 && tap_after < 0.01 && stomp_after < 0.05,
+        "the Feet shouldn't ring on (%.4f %.4f %.4f after 100ms)",
+        thump_after, tap_after, stomp_after);
+  printf("feet: gentle thump %.1fdB, tap %.1fdB, stomp %.1fdB RMS\n",
+         20 * log10(thump), 20 * log10(tap), 20 * log10(stomp));
+  memset(feet_voices, 0, sizeof(feet_voices));  // nothing left ringing
 }
 
 // The Brushes' stir, rendered: silence with the breath at rest, a soft stir
@@ -3910,12 +4198,13 @@ int main() {
   test_voice_lead_first_number();
   test_voice_channels_reach_the_synth();
   test_trance_gate();
-  test_snare_roll();
   test_every_kick_plays();
   test_tambourines();
   test_brush_swish();
   test_breath_sounds_follow_ch();
   test_grid_hat_on_the_pedals();
+  test_breath_feet();
+  test_feet_sound();
   test_tamb_shake();
   test_jawharp_voices();
   test_build_voices();
@@ -3927,6 +4216,7 @@ int main() {
   test_mandolin();
   test_mandolin_sound();
   test_mandolin_effects();
+  test_mandolin_chord_effects();
   test_mandolin_recording();
   test_vocoder_holds();
   test_voice_fx();

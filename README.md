@@ -156,16 +156,15 @@ the physical keyboard in the middle, and what it actually does underneath:
   in orange, picks from seven of the drones' pads -- Synth Strings on `Z`,
   Polysynth, Halo Pad and Sweep Pad on `X C V` as on every drone, then Synth
   Voice, Synth Brass 1 and Rock Organ on `B N M` -- and the home row, in
-  blue, is its own voices, in place of a pad: the Snare Roll on `A`,
-  percussion on `S D F` played by moving the breath rather than by how hard
+  blue, is its own voices, in place of a pad: the Feet on `A`, percussion
+  on `S D F` played by moving the breath rather than by how hard
   it is, so holding it steady is silence, and the build-and-drop voices on
   `G` and `H` (see [Builds and drops](#builds-and-drops)).  `J`, `K` and
   `L`, DOWNBEAT, UPBEAT and UP HIGH elsewhere but nothing to a drone, are
   shakers: the Brushes on `J`, the Tamb Shake on `K` and the Grid Hat on
   `L`.  Blowing stirs the brushes round the head without letting up, the
   jazz drummer's stirring the soup, faster and louder the harder you blow,
-  and blowing really hard, past 90%, slaps them once, not again until
-  you've come back under 60%.  Blowing jiggles the tambourine in the hand,
+  and nothing else: no slap or tap.  Blowing jiggles the tambourine in the hand,
   on the beat's grid -- 32nds, or six a beat in jig time, at 116 BPM
   without the pedals -- its jingles just touching each other at each turn of
   the hand just past the gate, and clashing harder, more of them, and
@@ -182,9 +181,8 @@ the physical keyboard in the middle, and what it actually does underneath:
   dozen jingles each shaking on its own, thrown against its pair a moment
   after the hand turns, its own moment, bouncing back, and rattling between,
   each noise through two bands of its own around 5kHz and 11kHz, as the
-  soundfont's tambourine is.  The brushes' slap is the
-  soundfont's Brush kit, soft, and the Grid Hat the soundfont's 808, each on
-  a channel of its own (on the Pi, the drum's, playing what that kit has on
+  soundfont's tambourine is.  The Grid Hat is the soundfont's 808, on a
+  channel of its own (on the Pi, the drum's, playing what that kit has on
   its note).
   Its own voices are layers:
   each key switches one on or off, and any of them can play together, over
@@ -532,8 +530,8 @@ on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
 
 | key | voice | |
 |---|---|---|
-| `A` | Snare Roll | the kit's snare on the beat's grid, faster and louder as you blow harder: quarters, 8ths, 16ths, 32nds.  The first hit comes with the breath. |
-| `J` | Brushes | a jazz kit's brushes: blowing stirs them round the head without letting up, from a slow, soft stir just past the gate to a quick scrub at about three quarters of the breath, louder and brighter as it speeds up, and gone when you stop; past about 90% one slap, and not another until the breath's back under about 60% |
+| `A` | Feet | French Canadian foot percussion, leather shoes on a well-sprung wooden floor, and only while the pedals keep a beat: with no pedals, nothing at all.  Without a breath, a gentle "thump . tap tap": the thump with each pedal hit that starts a beat, and toe taps on the foot bass's upbeat and predown, leaning as the Grid Hat does (in jig time "thump . tap"), and only within the beat the last kick started, so the last kick's taps are the last.  Blowing fills in the gap, the preup, from about 15% of the breath to as loud as the rest by half, and has every step hit harder, louder and deeper, until by 90% they're stomps.  The Mac's own sound: a wooden floor doesn't ring at a pitch, so each step is a short burst of noise in three broad bands -- the floor's thud, the boards' knock and the leather's click -- each gone within about 100ms, a thump mostly thud and a tap mostly knock and click |
+| `J` | Brushes | a jazz kit's brushes: blowing stirs them round the head without letting up, from a slow, soft stir just past the gate to a quick scrub at about three quarters of the breath, louder and brighter as it speeds up, and gone when you stop: only the stir, no slap or tap |
 | `K` | Tamb Shake | a tambourine jiggled in the hand for as long as you blow: 32nds on the beat's grid, or six a beat in jig time, at 116 BPM without the pedals, the stroke out a little harder than the stroke back; from the jingles just touching just past the gate to a rough, hard shake at about 90% of the breath, rattling on between the turns of the hand.  The Mac's own sound |
 | `L` | Grid Hat | the 808's closed hat on the beat's 16ths, or three a beat in jig time, at 116 BPM without the pedals, where the foot bass plays with the pedals going, every other one a little softer, from barely there just past the gate to as hard as it goes at about 80% of the breath; from about 35%, more fade in halfway between them, up to the softer ones' level at about 95%: 32nds, or six a beat in jig time |
 | `G` | Noise Riser | noise through a band that rises from 300Hz to 12kHz as you blow harder |
@@ -541,8 +539,7 @@ on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
 
 With no pedals the grid is 116 BPM, from the start of the breath; with them
 it's theirs, and carries on at their tempo if they stop while you're still
-blowing.  The Snare Roll plays the drum channel (`breath_roll_tick`), so
-it's ducked and swept with the rest.  The other two are the Mac's own sound
+blowing.  The Noise Riser and the Wobble are the Mac's own sound
 (`macapi.h`), summed in after Kick Duck and the sweeps.  They were levelled
 to sit within about 3dB of the foot bass, A-weighted, at a strong breath.
 By perceived loudness at stage volume they're 8-10dB under it -- mostly the
@@ -694,27 +691,36 @@ any of them at once, and the mandolin plays under all of them but the Tuner:
 | `X` | Boost | about 6dB louder, the mandolin and everything on it |
 | `J` | Vocoder | the whistle's, played by the mandolin, 9dB hotter than it comes in |
 | `A` | Bass | the whistle's Bass voice, following the mandolin down to 190Hz, just under its G, and two octaves under it, so the low G is a bass's G1; the mandolin goes into it 15dB hotter than it comes in |
-| `S` | Synth | a synth pedal: jammer's chord -- its root from C2 up and an octave above, its third and fifth -- in pairs of detuned saws through a resonant lowpass, played by the mandolin: as loud as it's played, the filter from 200Hz to 5kHz over the 40dB above the gate, so each strum is a stab and each chop a blip.  The chord the feet or a voice chose, so it's in tune whatever you voice |
-| `D` | Oct Down | every note of the chord an octave down at once, beside it: 36 narrow bands, each turned at half its own speed, so it's in tune for a chord where a grain shifter can't be |
+| `S` | Synth | a synth pedal: jammer's chord -- its root from C2 up and one and two octaves above, and its fifth, never its third -- in pairs of detuned saws through a resonant lowpass, played by the mandolin: as loud as it's played, the filter from 200Hz to 5kHz over the 40dB above the gate, so each strum is a stab.  Only as much as what's played is pitched -- the same test as Shimmer's -- so chops and scratches leave it silent.  The chord the feet or a voice chose, so it's in tune whatever you voice |
+| `D` | Drone | sympathetic strings: one on every note from C3 to B5, each a delay a period long fed back through a gentle lowpass, but only those on the chord's root and fifth -- never its third -- are fed and ring, for about four seconds, so what you play in the chord rings on after it; the rest die in a fifth of a second.  A chord change damps the old chord's strings and lets the new one's ring, in tune from the start |
 | `F` | Shimmer | a reverb whose tail climbs an octave each time round, fed only what's pitched -- how periodic the last 20ms has been -- so scratches stay dry; switched off, it rings on |
-| `C` | Breath FX | a setting rather than a sound: the breath controller (or the whistle's breath voices) brings the effects in.  At rest there are none, just the plain mandolin, dry; as you blow they come in, up to 300% at full.  The voices go from silent; Drive crossfades in from what goes into it, all of the way by a third of the breath and louder after that.  It follows the breath over about 40ms, so the controller's steps, and its flicker near rest, glide rather than crackle.  The Bass it switches instead: no breath, no bass, and any breath at all, all of it.  And the Leslie it spins, below |
+| `C` | Breath FX | a setting rather than a sound: the breath controller (or the whistle's breath voices) brings the effects in.  At rest there are none, just the plain mandolin, dry; as you blow they come in, up to 300% at full.  The voices go from silent; The Resonator crossfades in from what goes into it, all of the way by a third of the breath and louder after that.  Drive it pushes instead: from a light edge at rest to a fuzz at full, about as loud all the way.  The tremolos it deepens, from none at rest to all of it by a third of the breath.  It follows the breath over about 40ms, so the controller's steps, and its flicker near rest, glide rather than crackle.  The Bass it switches instead: no breath, no bass, and any breath at all, all of it.  And the Leslie it spins, below |
 
-And on the rest of the bottom row, effects on the mandolin itself rather
-than voices beside it, one after the other in a pedalboard's order, each
-crossfaded in and out:
+And effects on the mandolin itself rather than voices beside it, on the rest
+of the bottom row and on `H`, one after the other in a pedalboard's
+order, each crossfaded in and out:
 
 | key | effect | |
 |---|---|---|
 | `B` | Talkbox | the mandolin through a mouth the breath opens: three vowel formants, a closed "oo" at rest, opening to "ah" at half and "ae" at full, following the breath over about 25ms, so a breath is a "wah" and a longer one a "wow-yeah", about 3dB over the mandolin.  First in the chain, like a wah pedal.  Breath FX leaves it alone, since the breath is already playing it |
-| `V` | Drive | an overdrive, a Tube Screamer's shape: the lows kept out, the mids pushed hard into a soft clip that's a little uneven, and a lowpass after for the fizz, 6dB over the mandolin.  Set for an electric mandolin into an interface's instrument input, around -20dB peak |
+| `V` | Drive | an overdrive, a Tube Screamer's shape: the lows kept out, the mids pushed hard into a soft clip that's a little uneven, and a lowpass after for the fizz, 6dB over the mandolin.  Set for an electric mandolin into an interface's instrument input, around -20dB peak.  With Breath FX the breath sets how hard it's pushed |
+| `H` | Resonator | the mandolin through a string on each note of the chord from C3 to B3, whose harmonics cover the rest, ringing for most of a second, with only a little of the mandolin straight: a metallic halo that follows the changes |
+| `,` | Harm Trem | a harmonic tremolo, a brownface Fender's: the lows and highs swelling in turn, once a beat, the lows on it, split at the chord's root between 350 and 700Hz |
+| `.` | Tremolo | the level, twice a beat, three times in jig time, full on each 8th and down to a sixth between |
 | `N` | Leslie | a Leslie at fast: horn and drum split at 800Hz, spinning at 6.8 and 5.9 times a second, each swinging in pitch and level.  With Breath FX the breath is its motor: at rest it turns at chorale, about 0.8 and 0.7 times a second, and blowing pushes it towards fast, the harder the faster.  The rotors have their inertia: the light horn spins up in about a second and down in a little more, and the heavy drum takes four or five seconds to get up to speed and longer to coast down, so it's only fully fast once you've blown hard for a while |
 
 They're at about the mandolin's own level (Shimmer 4dB under), from
 `make test-mac`'s synthesized strums; by ear is still to do.
 
-The voices -- Vocoder, Bass, Synth, Oct Down and Shimmer -- go to the left,
-since the mandolin itself is still heard under them on the right.  The
-Talkbox, Drive and Leslie are on the mandolin itself, so they stay on the
+The two tremolos keep a beat of their own, at the pedals' tempo,
+leaning into step with the pedals' beat while they keep it -- never more
+than a quarter faster or slower, so a tremolo never jumps -- and going on at
+the last tempo when they stop, 116 BPM before there's been one.
+
+The voices -- Vocoder, Bass, Synth, Drone and Shimmer -- go to the
+left, since the mandolin itself is still heard under them on the right.  The
+chain is the mandolin itself -- Talkbox, Drive, Resonator, Harm Trem,
+Tremolo, Leslie, in that order -- so it stays on the
 right with it.  Each side, once the mandolin's on it, goes through a limiter
 that holds it under -1dBFS -- down at once on a peak and back up over 80ms --
 so the Talkbox's resonances, Boost or the volume turned up never clip, with

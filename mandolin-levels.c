@@ -33,8 +33,9 @@
 // The effects measured, and whether each is a voice beside the mandolin or
 // the mandolin itself, through it.
 static const int EFFECTS[] = {
-  MANDO_BASS, MANDO_SYNTH, MANDO_OCTAVE, MANDO_SHIMMER, MANDO_VOCODER,
-  MANDO_TALKBOX, MANDO_DRIVE, MANDO_LESLIE,
+  MANDO_BASS, MANDO_SYNTH, MANDO_DRONE, MANDO_SHIMMER, MANDO_VOCODER,
+  MANDO_TALKBOX, MANDO_DRIVE,
+  MANDO_RESONATOR, MANDO_HARM_TREM, MANDO_TREMOLO, MANDO_LESLIE,
 };
 #define N_EFFECTS ((int)(sizeof(EFFECTS) / sizeof(EFFECTS[0])))
 
@@ -162,7 +163,7 @@ int main(int argc, char** argv) {
         sum[e] += loud - plain;
         counted[e]++;
       }
-      printf("  %-8s %-8s peak %+5.1fdB, %+5.1fdB at full breath%s\n",
+      printf("  %-10s %-8s peak %+5.1fdB, %+5.1fdB at full breath%s\n",
              MANDO_VOICES[fx].name, level, db(fx_peak), db(full_peak),
              full_peak > 1 ? "  OVER" : "");
     }
@@ -173,7 +174,7 @@ int main(int argc, char** argv) {
   printf("\nagainst the mandolin, on average over the recordings it played:\n");
   for (int e = 0; e < N_EFFECTS; e++) {
     if (!counted[e]) continue;
-    printf("  %-8s %+5.1fdB\n", MANDO_VOICES[EFFECTS[e]].name,
+    printf("  %-10s %+5.1fdB\n", MANDO_VOICES[EFFECTS[e]].name,
            sum[e] / counted[e]);
   }
   return 0;

@@ -88,8 +88,7 @@ enum {
   BREATH_FX_WASHBOARD = 1 << 4,
   BREATH_FX_GUIRA = 1 << 5,
   // The Breath Gate's build-and-drop voices (macapi.h): a noise riser and a
-  // wobble bass.  Its snare roll is the drum channel's, played by
-  // jammermidilib.h, and has no bit.
+  // wobble bass.
   BREATH_FX_RISER = 1 << 6,
   BREATH_FX_WOBBLE = 1 << 7,
   // The Brushes' stir: brushes circling on a snare head, faster the harder
@@ -146,6 +145,11 @@ enum {
 // alone: on the Pi nothing switches it on.
 #define ENDPOINT_BREATH 14
 #define N_ENDPOINTS (ENDPOINT_BREATH+1)
+
+// The Breath Gate's Feet's steps (jammermidilib.h's breath_feet_tick): the
+// heel and whole foot, on the pedals' downbeat, and a toe's tap.  The Mac
+// makes their sound (macapi.h).
+enum { FEET_THUMP, FEET_TAP };
 
 // What the Mac's own sounds need to know about the music, from
 // jammermidilib.h's music_hook every tick: the Breath Gate's wobble plays the

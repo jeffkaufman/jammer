@@ -2539,6 +2539,7 @@ int main(int argc, const char** argv) {
     audio_mix_hook = whistle_mix;
     audio_after_alt_hook = mando_add;
     kick_hook = kick_duck_hit;
+    feet_hook = feet_hit;
     breath_hook = breath_set;
     music_hook = music_set;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);

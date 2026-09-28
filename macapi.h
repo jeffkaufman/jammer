@@ -782,8 +782,7 @@ static void play_scraper(Scraper* s, BreathPlayer* p, const ScraperSound* sound,
 // The Brushes' stir: brushes circling on a snare head without letting up,
 // the jazz drummer's stirring the soup, as fast as you're blowing.  Just past
 // the gate it's a slow, soft stir; blown up to BRUSH_FULL, a quick hard
-// scrub, and it holds there, under the slap past 90% (jammermidilib.h's
-// breath_brush_slap).  Noise through the head's swish and the
+// scrub, and it holds there.  Noise through the head's swish and the
 // bristles' hiss, steady for a steady breath: the faster the stir, the
 // louder and brighter, and the grittier, the wires catching on the head's
 // coating more often.  It drifts a little from side to side as it circles,
@@ -1011,6 +1010,147 @@ static void play_tamb(float* left, float* right, int len, bool playing,
 }
 
 // ---------------------------------------------------------------------------
+// The Breath Gate's Feet: French Canadian foot percussion, leather shoes on a
+// well-sprung wooden floor, each step sent by jammermidilib.h's
+// breath_feet_tick through feet_hit.  A wooden floor doesn't ring at a
+// pitch: a step is a short burst of noise in three broad bands, each dying
+// away on its own, over tens of milliseconds at most:
+//
+//   thud    the floor giving under the foot, the low end
+//   knock   the boards, the middle
+//   click   leather on wood, the top, quickest to go
+//
+// A thump, the heel and the whole foot, is mostly thud; a tap, the toe,
+// mostly knock and click.  The harder, towards a stomp, the louder, the
+// lower and the longer, the thud most of all.  Each a little different, as
+// steps are.  Handed from the tick to the audio thread through a ring, and
+// heard at the start of the next block, as MIDI is.
+// ---------------------------------------------------------------------------
+
+#define FEET_BANDS 3
+#define FEET_VOICES 8
+#define FEET_RING 32          // steps waiting for the audio thread
+#define FEET_LEVEL 8.0
+#define FEET_WOBBLE 0.08      // how far a step's bands wander, each way
+#define FEET_WAVER 0.12       // and its level
+#define FEET_ATTACK_MS 0.7    // the foot landing isn't quite a click
+
+typedef struct {
+  double hz, q, decay_s, amp;
+} FeetBand;
+
+typedef struct {
+  FeetBand band[FEET_BANDS];  // thud, knock, click
+  double level;
+} FeetSound;
+
+// Each kind gentle, and as a stomp; a step between goes between them.  Every
+// band broad, a Q of about one or less, so nothing in it rings, and each
+// filtered twice, so the thud's skirts don't reach up into the click's.  The
+// decays are time constants.
+static const FeetSound FEET_SOUNDS[2][2] = {
+  [FEET_THUMP] = {
+    {{{110, 0.6, 0.018, 1.0}, {600, 0.8, 0.008, 0.3},
+      {2200, 0.9, 0.003, 0.15}}, 0.5},
+    {{{75, 0.6, 0.030, 1.0}, {450, 0.8, 0.015, 0.45},
+      {1500, 0.9, 0.007, 0.4}}, 1.0},
+  },
+  [FEET_TAP] = {
+    {{{160, 0.6, 0.008, 0.2}, {1000, 0.9, 0.006, 0.8},
+      {3000, 1.0, 0.0025, 0.6}}, 0.3},
+    {{{110, 0.6, 0.020, 0.6}, {700, 0.9, 0.012, 0.8},
+      {2200, 1.0, 0.006, 0.6}}, 0.8},
+  },
+};
+
+typedef struct {
+  int frames;  // left to sound, or 0 when free
+  Bandpass band[FEET_BANDS][2];
+  double env[FEET_BANDS], decay[FEET_BANDS];
+  double attack, attack_step;
+} FeetVoice;
+
+typedef struct {
+  int kind;
+  float hard, level;
+} FeetStep;
+
+static FeetStep feet_ring[FEET_RING];
+static _Atomic unsigned feet_written, feet_read;
+static FeetVoice feet_voices[FEET_VOICES];
+
+// A step, from the tick: `hard` 0 gentle to 1 a stomp, `level` 0-1.  Called
+// with the lock held, so only ever one at a time.
+static void feet_hit(int kind, double hard, double level) {
+  unsigned w = atomic_load_explicit(&feet_written, memory_order_relaxed);
+  unsigned r = atomic_load_explicit(&feet_read, memory_order_acquire);
+  if (w - r >= FEET_RING) return;  // the audio's stopped: nothing to hear
+  feet_ring[w % FEET_RING] = (FeetStep){kind, (float)hard, (float)level};
+  atomic_store_explicit(&feet_written, w + 1, memory_order_release);
+}
+
+static double feet_between(double gentle, double stomp, double hard) {
+  return gentle + (stomp - gentle) * hard;
+}
+
+static void feet_start(const FeetStep* step, double sample_rate) {
+  FeetVoice* v = &feet_voices[0];
+  for (int i = 0; i < FEET_VOICES; i++) {
+    if (feet_voices[i].frames < v->frames) v = &feet_voices[i];
+  }
+  const FeetSound* g = &FEET_SOUNDS[step->kind][0];
+  const FeetSound* s = &FEET_SOUNDS[step->kind][1];
+  double hard = step->hard;
+  // Louder by its log, so gentle to a stomp is an even swell.
+  double level = FEET_LEVEL * step->level * g->level *
+    pow(s->level / g->level, hard) * (1 + FEET_WAVER * breath_noise());
+  double longest = 0;
+  for (int b = 0; b < FEET_BANDS; b++) {
+    const FeetBand* gb = &g->band[b];
+    const FeetBand* sb = &s->band[b];
+    double hz = gb->hz * pow(sb->hz / gb->hz, hard) *
+      (1 + FEET_WOBBLE * breath_noise());
+    double decay_s = feet_between(gb->decay_s, sb->decay_s, hard);
+    for (int k = 0; k < 2; k++) {
+      bandpass_set(&v->band[b][k], hz, feet_between(gb->q, sb->q, hard),
+                   sample_rate);
+      v->band[b][k].ic1 = v->band[b][k].ic2 = 0;
+    }
+    v->env[b] = feet_between(gb->amp, sb->amp, hard) * level;
+    v->decay[b] = exp(-1 / (sample_rate * decay_s));
+    longest = fmax(longest, decay_s);
+  }
+  v->attack = 0;
+  v->attack_step = 1 / fmax(1, sample_rate * FEET_ATTACK_MS / 1000);
+  v->frames = (int)(sample_rate * longest * 7);  // down about 60dB
+}
+
+static void play_feet(float* left, float* right, int len,
+                      double sample_rate) {
+  unsigned w = atomic_load_explicit(&feet_written, memory_order_acquire);
+  unsigned r = atomic_load_explicit(&feet_read, memory_order_relaxed);
+  for (; r != w; r++) feet_start(&feet_ring[r % FEET_RING], sample_rate);
+  atomic_store_explicit(&feet_read, r, memory_order_release);
+  for (int n = 0; n < FEET_VOICES; n++) {
+    FeetVoice* v = &feet_voices[n];
+    if (!v->frames) continue;
+    int run = len < v->frames ? len : v->frames;
+    for (int i = 0; i < run; i++) {
+      double noise = breath_noise() * v->attack, y = 0;
+      v->attack = fmin(1, v->attack + v->attack_step);
+      for (int b = 0; b < FEET_BANDS; b++) {
+        y += bandpass_run(&v->band[b][1],
+                          bandpass_run(&v->band[b][0], noise * v->env[b]));
+        v->env[b] *= v->decay[b];
+      }
+      left[i] += (float)y;
+      right[i] += (float)y;
+    }
+    v->frames -= run;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Builds and drops
 //
 // Two more of the Breath Gate's own voices, for getting into and out of a
@@ -1186,6 +1326,7 @@ static void render_breath_instruments(float* left, float* right, int len,
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
 
+  play_feet(left, right, len, sample_rate);
   play_riser(left, right, len, fx & BREATH_FX_RISER, blown, sample_rate);
   play_wobble(left, right, len, fx & BREATH_FX_WOBBLE, blown, sample_rate);
 
