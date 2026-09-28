@@ -229,10 +229,10 @@ the physical keyboard in the middle, and what it actually does underneath:
   breath fill and breath hard: "kick . hat hat", and the breath filling it
   out and hitting it harder.
 * **The drum's kits**: with the drum selected, `A` is Rim, `S` the Feet,
-  and `Z X C V` 808 A, 808 B, Room 2 and Room 6, and `D` switches the Grid
-  Hat on and off over whichever of them is on.  The Feet are the kit it
-  starts on, on the Mac (on the Pi, with no sound for them, Rim is, and `S`
-  does nothing).  Switch the drum on with `tab` for them.  Every kit plays
+  `D` the Stompy Feet, and `Z X C V` 808 A, 808 B, Room 2 and Room 6, and
+  `F` switches the Grid Hat on and off over whichever of them is on.  The
+  Feet are the kit it starts on, on the Mac (on the Pi, with no sound for
+  them, Rim is, and `S` and `D` do nothing).  Switch the drum on with `tab` for them.  Every kit plays
   the same way: each drum pedal is a sound of its
   own whenever it's hit, beat or no beat, and while the pedals keep a beat
   the modifier keys set the pattern -- which the breath fills out.  Blowing
@@ -284,7 +284,12 @@ the physical keyboard in the middle, and what it actually does underneath:
   player's aren't: each a little harder or softer, brighter or duller, longer
   or shorter, and a step on the grid up to 5ms behind it; a pedal's comes when
   it's hit.  Up high, clipped, shorter and vel are for fluidsynth's kits;
-  the Feet leave them be.
+  the Feet leave them be.  **Stompy Feet**: the Feet, taps and all, but the
+  kick's heel comes down on a stomp board -- a hardwood top on a hollow box
+  -- miked and EQ'd towards a bass drum: the box's short boom around 85Hz,
+  a low shelf up under 110Hz, its honk taken out around 450Hz and the
+  rumble under 45Hz cut.  As loud as the Feet's thump to the ear, and
+  deeper.
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.
 * **`1`** (pink) is the whistle bass, which is its own synthesis engine rather

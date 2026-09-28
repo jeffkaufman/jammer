@@ -672,6 +672,15 @@ static double bandpass_run(Bandpass* f, double in) {
   return f->k * v1;
 }
 
+// The same filter's lowpass, 0dB below its corner.
+static double lowpass_run(Bandpass* f, double in) {
+  double v1 = f->a1 * f->ic1 + f->a2 * (in - f->ic2);
+  double v2 = f->ic2 + f->g * v1;
+  f->ic1 = 2 * v1 - f->ic1;
+  f->ic2 = 2 * v2 - f->ic2;
+  return v2;
+}
+
 static uint32_t breath_noise_state = 22222;
 
 // White noise, -1 to 1.
@@ -1040,6 +1049,16 @@ static void play_tamb(float* left, float* right, int len, bool playing,
 //   low     the snare's: the tap, a quarter lower all through, and more of
 //           the floor
 //   lower   the ride's: lower still, nearly half, and more floor again
+//   board   the Stompy Feet's kick, in place of the thump: the same heel
+//           and ball of the foot, but on a stomp board -- a nice one, a
+//           hardwood top on a hollow box -- and miked, and EQ'd towards
+//           a bass drum.  The box gives it a short boom of its own, around
+//           85Hz, that the floor doesn't have; then the EQ, as an engineer
+//           would on a board: a low shelf up under 110Hz, the box's honk
+//           taken out around 450Hz, and the rumble under 45Hz, which the
+//           shelf would otherwise bring up with the rest, taken out
+//           altogether.  As loud as the thump, by perceived loudness, and
+//           as much louder stomped.
 //
 // The harder, towards a stomp, the louder, the heavier in the low, and the
 // longer the floor answers; and the hits closer together, the foot coming
@@ -1079,7 +1098,16 @@ typedef struct {
   double click, click_ms, body, body_ms, low, low_ms, low_swell_ms, tail;
   double level;
   double tone;  // its filters, against a tap's: lower is deeper
+  // A stomp board's: its box's boom, how much of it and how long (its Q),
+  // and the EQ on it, the low shelf's gain and how much of the honk comes
+  // out.  None of these for the floor, which is all the rest.
+  double boom_hz, boom_q, boom, shelf, honk_cut;
 } FeetSound;
+
+#define FEET_SHELF_HZ 110
+#define FEET_HONK_HZ 450
+#define FEET_HONK_Q 1.2
+#define FEET_RUMBLE_HZ 45
 
 static const FeetSound FEET_SOUNDS[N_FEET_KINDS] = {
   [FEET_THUMP] = {{{0, 0.3, 1.6, 1.6}, {16, 1, 1, 1}, {21, 0.4, 0.4, 0.3}},
@@ -1093,6 +1121,9 @@ static const FeetSound FEET_SOUNDS[N_FEET_KINDS] = {
                     1.1, 3.5, 0.45, 5, 1.8, 14, 7, 0.05, 1.05, 0.75},
   [FEET_TAP_LOWER] = {{{0, 1, 1, 1}, {8, 0.25, 0.25, 0.3}, {0, 0, 0, 0}},
                       0.9, 4, 0.5, 6, 2.0, 16, 7, 0.05, 1.3, 0.55},
+  [FEET_BOARD] = {{{0, 0.3, 1.6, 1.6}, {16, 1, 1, 1}, {21, 0.4, 0.4, 0.3}},
+                  0.55, 3, 0.75, 6, 1.3, 12, 3, 0.06, 0.65, 1,
+                  85, 6, 3, 2.2, 0.5},
 };
 
 typedef struct {
@@ -1107,6 +1138,9 @@ typedef struct {
   // band, two lowpasses less two; the low's, two less one; the tail's.
   double k_click_hp, k_click_lp, k_body_hi, k_body_lo, k_low, k_sub, k_tail;
   double c1, c2, c3, b1, b2, b3, b4, l1, l2, l3, t1, t2;
+  // A stomp board's box and EQ, or boom 0 on the floor.
+  Bandpass box, shelf_split, honk, rumble;
+  double boom, shelf, honk_cut;
 } FeetVoice;
 
 typedef struct {
@@ -1188,6 +1222,18 @@ static void feet_start(const FeetStep* step, double sample_rate) {
                    sample_rate);
   v->k_sub = feet_k(35, sample_rate);
   v->k_tail = feet_k(1500, sample_rate);
+  v->boom = s->boom;
+  if (s->boom) {
+    // A board's box sounds the same every time, near enough: only a little
+    // of the colour.
+    bandpass_set(&v->box, s->boom_hz * sqrt(colour / s->tone), s->boom_q,
+                 sample_rate);
+    bandpass_set(&v->shelf_split, FEET_SHELF_HZ, M_SQRT1_2, sample_rate);
+    bandpass_set(&v->honk, FEET_HONK_HZ, FEET_HONK_Q, sample_rate);
+    bandpass_set(&v->rumble, FEET_RUMBLE_HZ, M_SQRT1_2, sample_rate);
+    v->shelf = s->shelf;
+    v->honk_cut = s->honk_cut;
+  }
   v->frames = (int)(sample_rate * ((late + 60) / 1000 +
                                    5 * FEET_TAIL_S * lower));
 }
@@ -1235,6 +1281,14 @@ static void play_feet(float* left, float* right, int len,
       v->t1 += (t - v->t1) * v->k_tail;
       v->t2 += (v->t1 - v->t2) * v->k_tail;
       double y = v->c3 + (v->b2 - v->b4) + 2 * (v->l2 - v->l3) + v->t2;
+      if (v->boom) {
+        // The box's boom under it, then the EQ: what's under the shelf
+        // brought up, the honk taken out, and the rumble under it all.
+        y += v->boom * bandpass_run(&v->box, y);
+        y += (v->shelf - 1) * lowpass_run(&v->shelf_split, y) -
+             v->honk_cut * bandpass_run(&v->honk, y);
+        y -= lowpass_run(&v->rumble, y);
+      }
       v->click *= v->click_decay;
       v->body *= v->body_decay;
       v->low_drive *= v->low_decay;

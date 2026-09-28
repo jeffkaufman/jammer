@@ -179,12 +179,19 @@
 // The Feet: none of fluidsynth's, but French Canadian foot percussion, the
 // Mac's own sound (see feet_tick).  The default kit on the Mac.
 #define KIT_FEET   13
-#define N_KITS     14
+// The Stompy Feet: the Feet, but their kick a heel on a stomp board, miked
+// and EQ'd towards a bass drum.  The taps are the Feet's.
+#define KIT_STOMPY_FEET 14
+#define N_KITS     15
+
+static inline bool kit_is_feet(int kit) {
+  return kit == KIT_FEET || kit == KIT_STOMPY_FEET;
+}
 
 // Whether the kit is fluidsynth's percussion, which arpeggiate_drum and
 // kit_pedal play, rather than something of its own.
 static inline bool kit_plays_notes(int kit) {
-  return kit != KIT_FEET;
+  return !kit_is_feet(kit);
 }
 
 // The percussion sets, bank 128.  Everything used to come out of Standard,
@@ -277,6 +284,9 @@ static const DrumKit KITS[N_KITS] = {
   [KIT_FEET] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0,
                 NO_PITCHED_KICK, 0, 0.81, 0.59},
+  [KIT_STOMPY_FEET] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
+                       MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0,
+                       NO_PITCHED_KICK, 0, 0.81, 0.59},
 };
 
 // The Feet's steps, to the Mac's sound: which (FEET_*, common.h), how hard,
@@ -598,7 +608,7 @@ struct Configuration {
   unsigned breath_layers;
 
   // The drum's: whether blowing has everything hit harder (BREATH HARD, on
-  // M), and the Grid Hat, over whichever kit it's on (D).
+  // M), and the Grid Hat, over whichever kit it's on (F).
   bool drum_breath_hard;
   bool drum_grid_hat;
 };
@@ -2625,7 +2635,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     switch (note_in) {
     case 'A': select_drum_kit(KIT_RIM); return;
     case 'S': if (feet_hook) select_drum_kit(KIT_FEET); return;
-    case 'D': c->drum_grid_hat = !c->drum_grid_hat; return;
+    case 'D': if (feet_hook) select_drum_kit(KIT_STOMPY_FEET); return;
+    case 'F': c->drum_grid_hat = !c->drum_grid_hat; return;
     case 'M': c->drum_breath_hard = !c->drum_breath_hard; return;
     case 'Z': select_drum_kit(KIT_808_A); return;
     case 'X': select_drum_kit(KIT_808_B); return;
@@ -2634,7 +2645,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     // The rest of the voice keys do nothing with the drum selected.  They
     // must still return, or they'd fall through and pick a melodic voice
     // for a channel that's playing a percussion set.
-    case 'F': case 'G': case 'H':
+    case 'G': case 'H':
     case 'B': case 'N':
       return;
     }
@@ -3435,7 +3446,7 @@ int feet_jig;
 uint64_t feet_last_step_ns;  // when the last step it played was due
 
 static bool feet_playing(void) {
-  return c->on[ENDPOINT_DRUM] && c->drum_voice == KIT_FEET;
+  return c->on[ENDPOINT_DRUM] && kit_is_feet(c->drum_voice);
 }
 
 static double feet_hard(void) {
@@ -3485,6 +3496,7 @@ void feet_pedal(int note_in, int velocity, uint64_t current_time) {
   if (kind == FEET_THUMP) {
     feet_kick_vels[feet_kicks++ % FEET_KICKS] = velocity;
     if (!c->downbeat[ENDPOINT_DRUM]) return;
+    if (c->drum_voice == KIT_STOMPY_FEET) kind = FEET_BOARD;
   }
   feet_hook(kind, fmin(1, feet_hard() + feet_vel_hard(velocity)),
             feet_vel_level(velocity) * mac_gain(ENDPOINT_DRUM), false);
