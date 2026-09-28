@@ -146,10 +146,13 @@ enum {
 #define ENDPOINT_BREATH 14
 #define N_ENDPOINTS (ENDPOINT_BREATH+1)
 
-// The Breath Gate's Feet's steps (jammermidilib.h's breath_feet_tick): the
-// heel and whole foot, on the pedals' downbeat, and a toe's tap.  The Mac
-// makes their sound (macapi.h).
-enum { FEET_THUMP, FEET_TAP };
+// The drum's Feet kit's steps (jammermidilib.h's feet_tick and
+// feet_pedal): the heel and the whole foot, the kick's; a toe's bright tap,
+// the hihat's and the upbeat's; a duller one, the predown's and blowing's
+// fill; and a lower tap, the snare's, and a lower one still, the ride's.
+// The Mac makes their sound (macapi.h).
+enum { FEET_THUMP, FEET_TAP, FEET_TAP_SOFT, FEET_TAP_LOW, FEET_TAP_LOWER,
+       N_FEET_KINDS };
 
 // What the Mac's own sounds need to know about the music, from
 // jammermidilib.h's music_hook every tick: the Breath Gate's wobble plays the

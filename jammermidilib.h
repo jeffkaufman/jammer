@@ -176,7 +176,10 @@
 #define KIT_ROOM2  10
 #define KIT_ROOM6  11
 #define KIT_SYNTH  12
-#define N_KITS     13
+// The Feet: none of fluidsynth's, but French Canadian foot percussion, the
+// Mac's own sound (see feet_tick).  The default kit on the Mac.
+#define KIT_FEET   13
+#define N_KITS     14
 
 // The percussion sets, bank 128.  Everything used to come out of Standard,
 // because the drum channel was never sent a program change at all.
@@ -248,7 +251,26 @@ static const DrumKit KITS[N_KITS] = {
   [KIT_SYNTH] = {PERC_808, 12 /* C0 */, MIDI_DRUM_OUT_SNARE,
                  MIDI_DRUM_OUT_CLOSED_HIHAT, 0.60, 0.54, 0.82,
                  PROG_SYNTH_DRUM, 120},
+
+  // Never played: the Feet are the Mac's own.  The drum channel's left on
+  // Standard, so it's somewhere sensible if a note did reach it.
+  [KIT_FEET] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
+                MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0,
+                NO_PITCHED_KICK, 0},
 };
+
+// The Feet's steps, to the Mac's sound: which (FEET_*, common.h), how hard,
+// 0 gentle to 1 a stomp, how loud, 0-1, and whether it's on the grid, which
+// a player's a little behind or ahead of, rather than a pedal's, which is
+// when it is.  Called with the lock held.  NULL on the Pi, which has no
+// Feet, so there the kit isn't on the keys and isn't the default.
+static void (*feet_hook)(int kind, double hard, double level,
+                         bool on_grid) = NULL;
+
+// The last few kicks' velocities, for the Feet's taps (feet_pedal).
+#define FEET_KICKS 4
+int feet_kick_vels[FEET_KICKS];
+int feet_kicks;  // how many there have been, all told
 
 // What the voice keys pick while a drone is selected: Rock Organ, which is
 // what the drones have always been, and the pads picked out with pads.c.
@@ -304,11 +326,6 @@ static int drone_voice_for_note(int note) {
 // pads are on the row below (BREATH_PADS), so the two kinds are a row each
 // rather than mixed; the other drones keep all ten pads where they are.
 //
-//   Feet            French Canadian foot percussion, leather shoes on a
-//                   sprung wooden floor, only while the pedals keep a beat:
-//                   "thump . tap tap", the thump on the kick, and blowing
-//                   fills in the gap and hits harder, up to stomps
-//                   (breath_feet_tick)
 //   Brushes         a jazz kit's brushes, on J: blowing stirs them round
 //                   the head, faster and louder the harder you blow
 //                   (macapi.h), and nothing else: no slap or tap
@@ -336,7 +353,6 @@ enum {
   BREATH_LAYER_BRUSHES = 1 << 6,
   BREATH_LAYER_TAMB_SHAKE = 1 << 7,
   BREATH_LAYER_GRID_HAT = 1 << 8,
-  BREATH_LAYER_FEET = 1 << 9,
 };
 static const struct {
   char note;
@@ -344,7 +360,6 @@ static const struct {
   const char* label;
   unsigned fx;  // what it has the Mac's audio play
 } BREATH_VOICES[] = {
-  {'A', BREATH_LAYER_FEET,       "Feet",         0},
   {'S', BREATH_LAYER_GUIRA,      "Guira",        BREATH_FX_GUIRA},
   {'D', BREATH_LAYER_GUIRO,      "Guiro",        BREATH_FX_GUIRO},
   {'F', BREATH_LAYER_WASHBOARD,  "Wash\nboard",  BREATH_FX_WASHBOARD},
@@ -1238,10 +1253,11 @@ void clear_configuration() {
   // The loop above leaves the selection on whatever it cleared last, so say
   // what we actually want to start on.
   c->selected_endpoint = ENDPOINT_FOOTBASS;
-  c->drum_voice = KIT_RIM;
+  c->drum_voice = feet_hook ? KIT_FEET : KIT_RIM;
 }
 
 void clear_status() {
+  feet_kicks = 0;
   for (int i = 0; i < MIDI_MAX; i++) {
     piano_notes[i] = false;
   }
@@ -1587,6 +1603,7 @@ uint64_t kit_kick_ns;
 
 // The kit's kick, at the drum's velocity.
 void play_kit_kick(uint64_t current_time) {
+  if (c->drum_voice == KIT_FEET) return;  // the Feet make their own thump
   int vel = c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90;
   const DrumKit* kit = &KITS[c->drum_voice];
   kit_kick_ns = current_time;
@@ -1610,6 +1627,8 @@ void play_kit_kick(uint64_t current_time) {
 
 void arpeggiate_drum(int subbeat, uint64_t current_time) {
   if (!c->on[ENDPOINT_DRUM]) return;
+  // The Feet play on their own grid, feet_tick, not the kit's.
+  if (c->drum_voice == KIT_FEET) return;
 
   int vel = c->vel[ENDPOINT_DRUM] ? last_fb_vel : 90;
 
@@ -1770,8 +1789,6 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
 }
 
 
-void breath_feet_kick(uint64_t current_time);  // below, with the Grid Hat
-
 void estimate_tempo(uint64_t current_time, int note_in) {
   current_beat_ns = 0;
 
@@ -1795,7 +1812,6 @@ void estimate_tempo(uint64_t current_time, int note_in) {
 
   arpeggiate(0, current_time, /*drone=*/false, /*running=*/true);
   last_downbeat_ns = current_time;
-  breath_feet_kick(current_time);
 
   next_ns[0] = current_time;
   for (int i = 1; i < N_SUBBEATS; i++) {
@@ -2494,6 +2510,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   if (c->selected_endpoint == ENDPOINT_DRUM) {
     switch (note_in) {
     case 'A': select_drum_kit(KIT_RIM); return;
+    case 'S': if (feet_hook) select_drum_kit(KIT_FEET); return;
     case 'Z': select_drum_kit(KIT_808_A); return;
     case 'X': select_drum_kit(KIT_808_B); return;
     case 'C': select_drum_kit(KIT_ROOM2); return;
@@ -2501,7 +2518,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     // The rest of the voice keys do nothing with the drum selected.  They
     // must still return, or they'd fall through and pick a melodic voice
     // for a channel that's playing a percussion set.
-    case 'S': case 'D': case 'F': case 'G': case 'H':
+    case 'D': case 'F': case 'G': case 'H':
     case 'B': case 'N': case 'M':
       return;
     }
@@ -2841,6 +2858,8 @@ int remap(int val, int min, int max) {
   return val * range / MIDI_MAX + min;
 }
 
+void feet_pedal(int note_in, int velocity, uint64_t current_time);  // below
+
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (mode != MIDI_ON) {
     return;
@@ -2858,6 +2877,7 @@ void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
   }
 
   //printf("foot: %d %d\n", note_in, val);
+  feet_pedal(note_in, val, now());
   count_drum_hit(note_in);
   if (note_in == MIDI_DRUM_IN_KICK) kick_duck_kick(now());
   if (drum_chooses_notes ||
@@ -3277,49 +3297,89 @@ void breath_hat_tick(void) {
   send_midi(MIDI_ON, MIDI_HAT, normalize(v), CHANNEL_HAT);
 }
 
-// The Breath Gate's Feet: French Canadian foot percussion -- a fiddler's
-// leather shoes on a well-sprung wooden floor -- only while the pedals are
-// keeping a beat, and nothing at all when they aren't.  The breath needn't
-// be blowing: at rest it's a gentle "thump . tap tap", the heel coming down
-// with each pedal hit that starts a beat, and the toes on the foot bass's
-// upbeat and predown, leaning as the Grid Hat's 16ths do, the preup left
+// The drum's Feet kit: French Canadian foot percussion -- a fiddler's
+// leather shoes on a well-sprung wooden floor.  Each drum pedal is a step
+// of its own whenever it's hit, beat or no beat (feet_pedal): the kick a
+// thump, the hihat a tap, the snare a lower one and the ride lower still.  And while
+// the pedals are keeping a beat, the grid fills in, the breath needn't be
+// blowing: at rest a gentle "thump . tap tap", the pedal's step on the beat
+// and the toes on the foot bass's upbeat and predown, leaning as the Grid Hat's 16ths do, the preup left
 // out; in jig time "thump . tap", the thump, the lilted preup left out, and
 // the upbeat.  Only ever within the beat the last pedal hit started, so
 // they stop with the kicks.  Blowing fills in the one left out, from nothing
 // at FEET_FILL_FROM to as loud as the rest by FEET_FILL_FULL, and has every
 // one hit harder the harder it's blown, until by FEET_FULL they're stomps.
 // Their sound's the Mac's own, through feet_hook (macapi.h); on the Pi,
-// nothing.
+// nothing.  With the drum on and the Feet its kit; the drum's other keys --
+// DOWNBEAT, UPBEAT and the rest -- are for fluidsynth's kits, and the Feet
+// leave them be.
 #define FEET_FILL_FROM 0.15
 #define FEET_FILL_FULL 0.5
 #define FEET_FULL 0.9
-
-// A step: which, how hard (0 gentle to 1 a stomp), and how loud, 0-1.
-// Called with the lock held.  NULL on the Pi.
-static void (*feet_hook)(int kind, double hard, double level) = NULL;
 
 bool feet_live;
 int feet_jig;
 uint64_t feet_last_step_ns;  // when the last step it played was due
 
 static bool feet_playing(void) {
-  return c->on[ENDPOINT_BREATH] && (c->breath_layers & BREATH_LAYER_FEET);
+  return c->on[ENDPOINT_DRUM] && c->drum_voice == KIT_FEET;
 }
 
 static double feet_hard(void) {
   return hat_ramp(breath_blown(breath), BREATH_GATE_SHUT, FEET_FULL);
 }
 
-// A pedal hit that started a beat: the thump.
-void breath_feet_kick(uint64_t current_time) {
+// A drum pedal: its own step, whether or not there's a beat -- the kick
+// (pedal 2) the thump, the hihat (4) a tap, the snare (1) a lower one and
+// the ride (3) a lower one still.  Heard when it's hit, as a drum is, and as hard: its
+// velocity sets how loud, a firm 100 at the level the rest are set at,
+// softer quieter and harder louder, by FEET_VEL_CURVE; and over 100, hit
+// harder too, towards a stomp, by up to FEET_VEL_HARD at 127, on top of the
+// breath's.  The grid's taps go by the last FEET_KICKS kicks' velocities,
+// on average, the same way, so they follow how hard the kick's being
+// played; before there've been any, as a firm 100.
+#define FEET_VEL_FULL 100.0
+#define FEET_VEL_CURVE 1.5
+#define FEET_VEL_HARD 0.35
+
+
+// How loud and how much harder, for `velocity`.
+static double feet_vel_level(double velocity) {
+  return pow(velocity / FEET_VEL_FULL, FEET_VEL_CURVE);
+}
+
+static double feet_vel_hard(double velocity) {
+  return FEET_VEL_HARD *
+    fmax(0, (velocity - FEET_VEL_FULL) / (127 - FEET_VEL_FULL));
+}
+
+// The last few kicks' velocity, on average, or a firm 100 before any.
+static double feet_kick_velocity(void) {
+  int n = feet_kicks < FEET_KICKS ? feet_kicks : FEET_KICKS;
+  if (!n) return FEET_VEL_FULL;
+  double sum = 0;
+  for (int i = 0; i < n; i++) sum += feet_kick_vels[i];
+  return sum / n;
+}
+
+void feet_pedal(int note_in, int velocity, uint64_t current_time) {
   if (!feet_playing() || !feet_hook) return;
-  feet_hook(FEET_THUMP, feet_hard(), 1);
-  // It's this beat's downbeat: the grid mustn't play it again.
+  int kind = note_in == MIDI_DRUM_IN_KICK ? FEET_THUMP :
+             note_in == MIDI_DRUM_IN_HIHAT ? FEET_TAP :
+             note_in == MIDI_DRUM_IN_SNARE ? FEET_TAP_LOW :
+             note_in == MIDI_DRUM_IN_CRASH ? FEET_TAP_LOWER : -1;
+  if (kind < 0 || velocity <= 0) return;
+  if (kind == FEET_THUMP) {
+    feet_kick_vels[feet_kicks++ % FEET_KICKS] = velocity;
+  }
+  feet_hook(kind, fmin(1, feet_hard() + feet_vel_hard(velocity)),
+            feet_vel_level(velocity), false);
+  // The grid mustn't play a step of its own on top of it.
   feet_last_step_ns = current_time;
 }
 
 // The taps, on the grid.
-void breath_feet_tick(void) {
+void feet_tick(void) {
   uint64_t t = now(), beat, origin;
   if (!feet_playing() || !feet_hook ||
       !breath_grid(t, t, &beat, &origin)) {
@@ -3352,15 +3412,20 @@ void breath_feet_tick(void) {
   }
   if (step_ns < feet_last_step_ns + gap) return;
   feet_last_step_ns = step_ns;
-  // The downbeat's the pedal's own, breath_feet_kick: a late one comes
-  // after the grid's got there, and the thump waits for it.
+  // The downbeat's the pedal's own, feet_pedal: a late one comes after the
+  // grid's got there, and its step waits for it.
   if (k == 0) return;
+  // The upbeat's a toe's bright tap; the predown, and the fill, duller.
   double level = 1;
   if (k == 2) {
     level = hat_ramp(breath_blown(breath), FEET_FILL_FROM, FEET_FILL_FULL);
     if (level <= 0) return;
   }
-  feet_hook(FEET_TAP, feet_hard(), level);
+  bool upbeat = at[k] == upbeat_subbeat();
+  double velocity = feet_kick_velocity();
+  feet_hook(upbeat ? FEET_TAP : FEET_TAP_SOFT,
+            fmin(1, feet_hard() + feet_vel_hard(velocity)),
+            level * feet_vel_level(velocity), true);
 }
 
 // Tell the Mac's audio about the music, every tick.  NULL on the Pi.
@@ -3425,7 +3490,7 @@ void jml_tick() {
   maybe_end_notes();
   maybe_end_pitched_kick();
   breath_hat_tick();
-  breath_feet_tick();
+  feet_tick();
   advance_lead_schedule();
   advance_glides();
   publish_music();

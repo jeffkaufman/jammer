@@ -156,8 +156,7 @@ the physical keyboard in the middle, and what it actually does underneath:
   in orange, picks from seven of the drones' pads -- Synth Strings on `Z`,
   Polysynth, Halo Pad and Sweep Pad on `X C V` as on every drone, then Synth
   Voice, Synth Brass 1 and Rock Organ on `B N M` -- and the home row, in
-  blue, is its own voices, in place of a pad: the Feet on `A`, percussion
-  on `S D F` played by moving the breath rather than by how hard
+  blue, is its own voices, in place of a pad: percussion on `S D F` played by moving the breath rather than by how hard
   it is, so holding it steady is silence, and the build-and-drop voices on
   `G` and `H` (see [Builds and drops](#builds-and-drops)).  `J`, `K` and
   `L`, DOWNBEAT, UPBEAT and UP HIGH elsewhere but nothing to a drone, are
@@ -231,6 +230,36 @@ the physical keyboard in the middle, and what it actually does underneath:
   so switching endpoints switches what's lit.  On the drum kit, downbeat puts
   the kit's kick on the kick pedal: every kick, including extra ones between
   beats, which don't fit the tempo and so start no beat of their own.
+* **The drum's kits**: with the drum selected, `A` is Rim, `S` the Feet, and
+  `Z X C V` 808 A, 808 B, Room 2 and Room 6.  The Feet are the kit it starts
+  on, on the Mac (on the Pi, with no sound for them, Rim is, and `S` does
+  nothing).  Switch the drum on with `tab` for them.  **Feet**: French
+  Canadian foot percussion, leather shoes on a well-sprung wooden floor. Each
+  drum pedal is a step of its own whenever it's hit, beat or no beat: the kick
+  (2) a thump, the hihat (4) a tap, the snare (1) a lower tap, and the ride
+  (3) a lower one still.  As hard as the pedal's hit: a firm hit, velocity
+  100, as loud as the grid's steps, a softer one quieter, and one harder
+  louder and landing harder too, towards a stomp.  The grid's taps follow the
+  kick the same way, going by the last four kicks' velocity on average. And
+  while the pedals keep a beat, the grid fills in: without a breath, a gentle
+  "thump . tap tap", the pedal's step on the beat, and toe taps on the foot
+  bass's upbeat and predown, leaning as the Grid Hat does (in jig time "thump
+  . tap"), and only within the beat the last kick started, so the last kick's
+  taps are the last.  Blowing fills in the gap, the preup, from about 15% of
+  the breath to as loud as the rest by half, and has every step hit harder,
+  louder and deeper, until by 90% they're stomps.  The Mac's own sound,
+  modelled on recordings of real feet: a wooden floor doesn't ring at a pitch,
+  and a step is a few hits a few milliseconds apart, each a burst of noise in
+  three broad bands -- the leather's click, the boards' body, and the floor's
+  low answer swelling just after -- with a quiet room tail.  The thump is the
+  heel landing and the ball of the foot slapping down 16ms later; the upbeat's
+  tap one sharp, bright click; the predown's, and the fill, duller, a few
+  small hits with hardly any click.  Stomps come down flatter, the hits closer
+  together, and heavier in the low.  No two steps are quite alike, as a
+  player's aren't: each a little harder or softer, brighter or duller, longer
+  or shorter, and a step on the grid up to 5ms behind it; a pedal's comes when
+  it's hit.  The drum's modifier keys are for the other kits; the Feet leave
+  them be.
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.
 * **`1`** (pink) is the whistle bass, which is its own synthesis engine rather
@@ -530,7 +559,6 @@ on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
 
 | key | voice | |
 |---|---|---|
-| `A` | Feet | French Canadian foot percussion, leather shoes on a well-sprung wooden floor, and only while the pedals keep a beat: with no pedals, nothing at all.  Without a breath, a gentle "thump . tap tap": the thump with each pedal hit that starts a beat, and toe taps on the foot bass's upbeat and predown, leaning as the Grid Hat does (in jig time "thump . tap"), and only within the beat the last kick started, so the last kick's taps are the last.  Blowing fills in the gap, the preup, from about 15% of the breath to as loud as the rest by half, and has every step hit harder, louder and deeper, until by 90% they're stomps.  The Mac's own sound: a wooden floor doesn't ring at a pitch, so each step is a short burst of noise in three broad bands -- the floor's thud, the boards' knock and the leather's click -- each gone within about 100ms, a thump mostly thud and a tap mostly knock and click |
 | `J` | Brushes | a jazz kit's brushes: blowing stirs them round the head without letting up, from a slow, soft stir just past the gate to a quick scrub at about three quarters of the breath, louder and brighter as it speeds up, and gone when you stop: only the stir, no slap or tap |
 | `K` | Tamb Shake | a tambourine jiggled in the hand for as long as you blow: 32nds on the beat's grid, or six a beat in jig time, at 116 BPM without the pedals, the stroke out a little harder than the stroke back; from the jingles just touching just past the gate to a rough, hard shake at about 90% of the breath, rattling on between the turns of the hand.  The Mac's own sound |
 | `L` | Grid Hat | the 808's closed hat on the beat's 16ths, or three a beat in jig time, at 116 BPM without the pedals, where the foot bass plays with the pedals going, every other one a little softer, from barely there just past the gate to as hard as it goes at about 80% of the breath; from about 35%, more fade in halfway between them, up to the softer ones' level at about 95%: 32nds, or six a beat in jig time |

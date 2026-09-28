@@ -1010,87 +1010,132 @@ static void play_tamb(float* left, float* right, int len, bool playing,
 }
 
 // ---------------------------------------------------------------------------
-// The Breath Gate's Feet: French Canadian foot percussion, leather shoes on a
-// well-sprung wooden floor, each step sent by jammermidilib.h's
-// breath_feet_tick through feet_hit.  A wooden floor doesn't ring at a
-// pitch: a step is a short burst of noise in three broad bands, each dying
-// away on its own, over tens of milliseconds at most:
+// The drum's Feet kit: French Canadian foot percussion, leather shoes on a
+// well-sprung wooden floor, each step sent by jammermidilib.h's feet_tick
+// through feet_hit.  Modelled on recordings of the real
+// thing: a wooden floor doesn't ring at a pitch, and a step isn't one hit
+// but a few, a few milliseconds apart, each a burst of noise in three broad
+// bands, and the floor's low answer swelling up just after:
 //
-//   thud    the floor giving under the foot, the low end
-//   knock   the boards, the middle
-//   click   leather on wood, the top, quickest to go
+//   click   leather on wood, from 1.2kHz up, over in a few milliseconds
+//   body    the boards, 400Hz-1.5kHz, a little longer
+//   low     the floor giving, 35-180Hz, swelling over a few milliseconds
+//           after each hit and gone within a few tens
 //
-// A thump, the heel and the whole foot, is mostly thud; a tap, the toe,
-// mostly knock and click.  The harder, towards a stomp, the louder, the
-// lower and the longer, the thud most of all.  Each a little different, as
-// steps are.  Handed from the tick to the audio thread through a ring, and
-// heard at the start of the next block, as MIDI is.
+// and a quiet tail after, the room.  Three kinds:
+//
+//   thump   the heel landing, heavy in the body and low but not the click,
+//           and the ball of the foot slapping down 16ms later, and a
+//           little one after that
+//   tap     a toe on the upbeat, and the hihat's: one sharp, bright click
+//           and the floor's answer, and a small bounce
+//   soft    a toe on the predown, and blowing's fill: duller, a few small
+//           hits in the first 5ms, hardly any click
+//   low     the snare's: the tap, a quarter lower all through, and more of
+//           the floor
+//   lower   the ride's: lower still, nearly half, and more floor again
+//
+// The harder, towards a stomp, the louder, the heavier in the low, and the
+// longer the floor answers; and the hits closer together, the foot coming
+// down flatter.  And no two quite alike, as a player's aren't: each a
+// little harder or softer, brighter or duller, longer or shorter, its hits
+// a little closer or further apart, and a step on the grid a few
+// milliseconds behind it, as a player is -- but not a pedal's, which comes
+// when it's hit.  Handed from
+// the tick to the audio thread through a ring, and heard at the start of
+// the next block, as MIDI is.
 // ---------------------------------------------------------------------------
 
-#define FEET_BANDS 3
+#define FEET_IMPACTS 3
 #define FEET_VOICES 8
 #define FEET_RING 32          // steps waiting for the audio thread
-#define FEET_LEVEL 8.0
-#define FEET_WOBBLE 0.08      // how far a step's bands wander, each way
-#define FEET_WAVER 0.12       // and its level
-#define FEET_ATTACK_MS 0.7    // the foot landing isn't quite a click
+#define FEET_LEVEL 0.9
+#define FEET_WAVER 0.12       // how far a step's level wanders, each way
+#define FEET_JITTER_MS 1.5    // and its hits' timing
+#define FEET_STOMP_LOUDER 1.8 // a stomp, against a gentle step
+#define FEET_STOMP_TIGHTER 0.45  // how much closer together its hits come
+#define FEET_STOMP_LOWER 0.6  // how much more of the floor, and longer
+#define FEET_TAIL_S 0.07
+// How much no two are alike: how far each band's level, and each decay,
+// wanders, each way; the filters; how hard it lands; and how late a step on
+// the grid comes, at most.
+#define FEET_VARY 0.1
+#define FEET_COLOUR 0.06
+#define FEET_HARD_VARY 0.06
+#define FEET_LATE_MS 5.0
 
 typedef struct {
-  double hz, q, decay_s, amp;
-} FeetBand;
+  double ms, click, body, low;  // when, and how hard in each band
+} FeetImpact;
 
 typedef struct {
-  FeetBand band[FEET_BANDS];  // thud, knock, click
+  FeetImpact impact[FEET_IMPACTS];
+  double click, click_ms, body, body_ms, low, low_ms, low_swell_ms, tail;
   double level;
+  double tone;  // its filters, against a tap's: lower is deeper
 } FeetSound;
 
-// Each kind gentle, and as a stomp; a step between goes between them.  Every
-// band broad, a Q of about one or less, so nothing in it rings, and each
-// filtered twice, so the thud's skirts don't reach up into the click's.  The
-// decays are time constants.
-static const FeetSound FEET_SOUNDS[2][2] = {
-  [FEET_THUMP] = {
-    {{{110, 0.6, 0.018, 1.0}, {600, 0.8, 0.008, 0.3},
-      {2200, 0.9, 0.003, 0.15}}, 0.5},
-    {{{75, 0.6, 0.030, 1.0}, {450, 0.8, 0.015, 0.45},
-      {1500, 0.9, 0.007, 0.4}}, 1.0},
-  },
-  [FEET_TAP] = {
-    {{{160, 0.6, 0.008, 0.2}, {1000, 0.9, 0.006, 0.8},
-      {3000, 1.0, 0.0025, 0.6}}, 0.3},
-    {{{110, 0.6, 0.020, 0.6}, {700, 0.9, 0.012, 0.8},
-      {2200, 1.0, 0.006, 0.6}}, 0.8},
-  },
+static const FeetSound FEET_SOUNDS[N_FEET_KINDS] = {
+  [FEET_THUMP] = {{{0, 0.3, 1.6, 1.6}, {16, 1, 1, 1}, {21, 0.4, 0.4, 0.3}},
+                  0.55, 3, 0.75, 6, 1.3, 12, 3, 0.06, 1.3, 1},
+  [FEET_TAP] = {{{0, 1, 1, 1}, {7, 0.25, 0.25, 0.3}, {0, 0, 0, 0}},
+                1.3, 3, 0.4, 4, 1.6, 12, 7, 0.05, 1.0, 1},
+  [FEET_TAP_SOFT] = {{{0, 0.6, 0.6, 0.7}, {1, 0.4, 0.4, 0.4},
+                      {5.5, 0.5, 0.5, 0.5}},
+                     0.35, 2.5, 0.25, 4, 1.4, 11, 5, 0.04, 0.95, 1},
+  [FEET_TAP_LOW] = {{{0, 1, 1, 1}, {7, 0.25, 0.25, 0.3}, {0, 0, 0, 0}},
+                    1.1, 3.5, 0.45, 5, 1.8, 14, 7, 0.05, 1.05, 0.75},
+  [FEET_TAP_LOWER] = {{{0, 1, 1, 1}, {8, 0.25, 0.25, 0.3}, {0, 0, 0, 0}},
+                      0.9, 4, 0.5, 6, 2.0, 16, 7, 0.05, 1.3, 0.55},
 };
 
 typedef struct {
   int frames;  // left to sound, or 0 when free
-  Bandpass band[FEET_BANDS][2];
-  double env[FEET_BANDS], decay[FEET_BANDS];
-  double attack, attack_step;
+  int at;      // frames since it started
+  int impact_at[FEET_IMPACTS];
+  double impact_click[FEET_IMPACTS], impact_body[FEET_IMPACTS],
+    impact_low[FEET_IMPACTS], impact_tail[FEET_IMPACTS];
+  double click, click_decay, body, body_decay, tail, tail_decay;
+  double low_drive, low_decay, low, low_swell;
+  // One-pole filters: the click's highpass, twice, and lowpass; the body's
+  // band, two lowpasses less two; the low's, two less one; the tail's.
+  double k_click_hp, k_click_lp, k_body_hi, k_body_lo, k_low, k_sub, k_tail;
+  double c1, c2, c3, b1, b2, b3, b4, l1, l2, l3, t1, t2;
 } FeetVoice;
 
 typedef struct {
   int kind;
   float hard, level;
+  bool on_grid;
 } FeetStep;
 
 static FeetStep feet_ring[FEET_RING];
 static _Atomic unsigned feet_written, feet_read;
 static FeetVoice feet_voices[FEET_VOICES];
 
-// A step, from the tick: `hard` 0 gentle to 1 a stomp, `level` 0-1.  Called
-// with the lock held, so only ever one at a time.
-static void feet_hit(int kind, double hard, double level) {
+// A step, from the tick or a pedal: `hard` 0 gentle to 1 a stomp, `level`
+// 0-1, and whether it's on the grid.  Called with the lock held, so only
+// ever one at a time.
+static void feet_hit(int kind, double hard, double level, bool on_grid) {
   unsigned w = atomic_load_explicit(&feet_written, memory_order_relaxed);
   unsigned r = atomic_load_explicit(&feet_read, memory_order_acquire);
   if (w - r >= FEET_RING) return;  // the audio's stopped: nothing to hear
-  feet_ring[w % FEET_RING] = (FeetStep){kind, (float)hard, (float)level};
+  feet_ring[w % FEET_RING] =
+    (FeetStep){kind, (float)hard, (float)level, on_grid};
   atomic_store_explicit(&feet_written, w + 1, memory_order_release);
 }
 
-static double feet_between(double gentle, double stomp, double hard) {
-  return gentle + (stomp - gentle) * hard;
+static double feet_k(double hz, double sample_rate) {
+  return 1 - exp(-2 * M_PI * hz / sample_rate);
+}
+
+static double feet_decay(double ms, double sample_rate) {
+  return exp(-1 / (sample_rate * ms / 1000));
+}
+
+// 1, give or take `by`, for this step.
+static double feet_vary(double by) {
+  return 1 + by * breath_noise();
 }
 
 static void feet_start(const FeetStep* step, double sample_rate) {
@@ -1098,31 +1143,47 @@ static void feet_start(const FeetStep* step, double sample_rate) {
   for (int i = 0; i < FEET_VOICES; i++) {
     if (feet_voices[i].frames < v->frames) v = &feet_voices[i];
   }
-  const FeetSound* g = &FEET_SOUNDS[step->kind][0];
-  const FeetSound* s = &FEET_SOUNDS[step->kind][1];
-  double hard = step->hard;
-  // Louder by its log, so gentle to a stomp is an even swell.
-  double level = FEET_LEVEL * step->level * g->level *
-    pow(s->level / g->level, hard) * (1 + FEET_WAVER * breath_noise());
-  double longest = 0;
-  for (int b = 0; b < FEET_BANDS; b++) {
-    const FeetBand* gb = &g->band[b];
-    const FeetBand* sb = &s->band[b];
-    double hz = gb->hz * pow(sb->hz / gb->hz, hard) *
-      (1 + FEET_WOBBLE * breath_noise());
-    double decay_s = feet_between(gb->decay_s, sb->decay_s, hard);
-    for (int k = 0; k < 2; k++) {
-      bandpass_set(&v->band[b][k], hz, feet_between(gb->q, sb->q, hard),
-                   sample_rate);
-      v->band[b][k].ic1 = v->band[b][k].ic2 = 0;
-    }
-    v->env[b] = feet_between(gb->amp, sb->amp, hard) * level;
-    v->decay[b] = exp(-1 / (sample_rate * decay_s));
-    longest = fmax(longest, decay_s);
+  memset(v, 0, sizeof(*v));
+  const FeetSound* s = &FEET_SOUNDS[step->kind];
+  double hard = fmin(1, fmax(0, step->hard + FEET_HARD_VARY * breath_noise()));
+  double level = FEET_LEVEL * s->level * step->level *
+    pow(FEET_STOMP_LOUDER, hard) * feet_vary(FEET_WAVER);
+  double lower = 1 + FEET_STOMP_LOWER * hard;
+  double click = level * s->click * feet_vary(FEET_VARY);
+  double body = level * s->body * feet_vary(FEET_VARY);
+  double low = level * s->low * lower * feet_vary(FEET_VARY);
+  double spread = feet_vary(FEET_VARY);  // its hits closer or further apart
+  double late = step->on_grid ? FEET_LATE_MS * (breath_noise() + 1) / 2 : 0;
+  for (int i = 0; i < FEET_IMPACTS; i++) {
+    const FeetImpact* m = &s->impact[i];
+    double ms = m->ms * (1 - FEET_STOMP_TIGHTER * hard) * spread;
+    if (i) ms = fmax(0, ms + FEET_JITTER_MS * breath_noise());
+    v->impact_at[i] = (int)(sample_rate * (late + ms) / 1000);
+    v->impact_click[i] = click * m->click;
+    v->impact_body[i] = body * m->body;
+    v->impact_low[i] = low * m->low;
+    v->impact_tail[i] = level * s->tail * lower *
+      fmax(m->click, fmax(m->body, m->low));
   }
-  v->attack = 0;
-  v->attack_step = 1 / fmax(1, sample_rate * FEET_ATTACK_MS / 1000);
-  v->frames = (int)(sample_rate * longest * 7);  // down about 60dB
+  v->click_decay = feet_decay(s->click_ms * feet_vary(FEET_VARY),
+                              sample_rate);
+  v->body_decay = feet_decay(s->body_ms * feet_vary(FEET_VARY), sample_rate);
+  v->low_decay = feet_decay(s->low_ms * lower * feet_vary(FEET_VARY),
+                            sample_rate);
+  v->low_swell = 1 - feet_decay(s->low_swell_ms, sample_rate);
+  v->tail_decay = feet_decay(FEET_TAIL_S * 1000 * lower, sample_rate);
+  // Brighter or duller, all of it, and the lower taps lower.
+  double colour = feet_vary(FEET_COLOUR) * s->tone;
+  v->k_click_hp = feet_k(1200 * colour, sample_rate);
+  v->k_click_lp = feet_k(7000 * colour, sample_rate);
+  v->k_body_hi = feet_k(1500 * colour, sample_rate);
+  v->k_body_lo = feet_k(400 * colour, sample_rate);
+  v->k_low = feet_k(180 * feet_vary(FEET_COLOUR) * sqrt(s->tone),
+                   sample_rate);
+  v->k_sub = feet_k(35, sample_rate);
+  v->k_tail = feet_k(1500, sample_rate);
+  v->frames = (int)(sample_rate * ((late + 60) / 1000 +
+                                   5 * FEET_TAIL_S * lower));
 }
 
 static void play_feet(float* left, float* right, int len,
@@ -1135,14 +1196,43 @@ static void play_feet(float* left, float* right, int len,
     FeetVoice* v = &feet_voices[n];
     if (!v->frames) continue;
     int run = len < v->frames ? len : v->frames;
-    for (int i = 0; i < run; i++) {
-      double noise = breath_noise() * v->attack, y = 0;
-      v->attack = fmin(1, v->attack + v->attack_step);
-      for (int b = 0; b < FEET_BANDS; b++) {
-        y += bandpass_run(&v->band[b][1],
-                          bandpass_run(&v->band[b][0], noise * v->env[b]));
-        v->env[b] *= v->decay[b];
+    for (int i = 0; i < run; i++, v->at++) {
+      for (int m = 0; m < FEET_IMPACTS; m++) {
+        if (v->at != v->impact_at[m]) continue;
+        v->click += v->impact_click[m];
+        v->body += v->impact_body[m];
+        v->low_drive += v->impact_low[m];
+        v->tail += v->impact_tail[m];
       }
+      double x = breath_noise();
+      // The click: highpassed twice, and the very top taken off.
+      double c = x * v->click;
+      v->c1 += (c - v->c1) * v->k_click_hp;
+      c -= v->c1;
+      v->c2 += (c - v->c2) * v->k_click_hp;
+      c -= v->c2;
+      v->c3 += (c - v->c3) * v->k_click_lp;
+      // The body: 1.5kHz and down, less 400Hz and down.
+      double b = x * v->body;
+      v->b1 += (b - v->b1) * v->k_body_hi;
+      v->b2 += (v->b1 - v->b2) * v->k_body_hi;
+      v->b3 += (b - v->b3) * v->k_body_lo;
+      v->b4 += (v->b3 - v->b4) * v->k_body_lo;
+      // The low: swelling after each hit, 180Hz and down, less 35Hz.
+      v->low += (v->low_drive - v->low) * v->low_swell;
+      double l = x * v->low;
+      v->l1 += (l - v->l1) * v->k_low;
+      v->l2 += (v->l1 - v->l2) * v->k_low;
+      v->l3 += (v->l2 - v->l3) * v->k_sub;
+      // The room, after.
+      double t = x * v->tail;
+      v->t1 += (t - v->t1) * v->k_tail;
+      v->t2 += (v->t1 - v->t2) * v->k_tail;
+      double y = v->c3 + (v->b2 - v->b4) + 2 * (v->l2 - v->l3) + v->t2;
+      v->click *= v->click_decay;
+      v->body *= v->body_decay;
+      v->low_drive *= v->low_decay;
+      v->tail *= v->tail_decay;
       left[i] += (float)y;
       right[i] += (float)y;
     }

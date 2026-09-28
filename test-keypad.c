@@ -182,6 +182,8 @@ static void test_voices() {
   // The voice keys with no kit on them do nothing at all with the drum
   // selected -- in particular they must not fall through and set a melodic
   // voice on a channel that's playing a percussion set.
+  // S is the Feet, but only with the Mac's sound for them, and there's none
+  // here.
   const char* blank[] = {"S", "D", "F", "G", "H", "B", "N", "M"};
   for (int i = 0; i < (int)(sizeof(blank) / sizeof(blank[0])); i++) {
     int was_kit = c->drum_voice;
@@ -3717,7 +3719,8 @@ static struct {
 static int n_feet_heard;
 static uint64_t feet_beat_ns;
 
-static void feet_record(int kind, double hard, double level) {
+static void feet_record(int kind, double hard, double level, bool on_grid) {
+  (void)on_grid;
   if (n_feet_heard >= 64) return;
   feet_heard[n_feet_heard].kind = kind;
   feet_heard[n_feet_heard].hard = hard;
@@ -3738,7 +3741,7 @@ static int feet_subbeats(int breath, bool jig, int late_ms, bool pedals,
   current_beat_ns = pedals ? feet_beat_ns : 0;
   last_downbeat_ns = now();
   n_feet_heard = 0;
-  if (pedals) breath_feet_kick(last_downbeat_ns);
+  if (pedals) feet_pedal(MIDI_DRUM_IN_KICK, 100, last_downbeat_ns);
   int kicks = 0, from = 0;
   while (true) {
     uint64_t t = now();
@@ -3746,9 +3749,9 @@ static int feet_subbeats(int breath, bool jig, int late_ms, bool pedals,
       if (++kicks == 3) break;
       last_downbeat_ns = t;  // a kick that starts a beat
       from = n_feet_heard;
-      if (pedals) breath_feet_kick(t);
+      if (pedals) feet_pedal(MIDI_DRUM_IN_KICK, 100, t);
     }
-    breath_feet_tick();
+    feet_tick();
     usleep(500);
   }
   out[0] = '\0';
@@ -3770,14 +3773,14 @@ static int feet_subbeats(int breath, bool jig, int late_ms, bool pedals,
 // Feet: "thump . tap tap" on the pedals, the thump the pedal's own; the gap
 // filled and every step harder the harder it's blown; and nothing at all
 // without the pedals keeping a beat.
-static void test_breath_feet() {
-  full_reset();
+static void test_feet() {
+  // With the Mac's sound for them, the Feet are the drum's kit to start with.
   feet_hook = feet_record;
-  press("`");
-  press("J");  // the Brushes it starts with, off
-  press("A");
-  CHECK(lit("A") && (c->breath_layers & BREATH_LAYER_FEET),
-        "A should switch the Feet on");
+  full_reset();
+  CHECK(c->drum_voice == KIT_FEET, "the Feet should be the drum's first kit");
+  press("tab");
+  CHECK(c->on[ENDPOINT_DRUM] && c->selected_endpoint == ENDPOINT_DRUM &&
+        lit("S"), "tab should switch the drum on, the Feet lit on S");
   char got[256];
   feet_subbeats(0, false, 0, true, got);
   CHECK(strncmp(got, "T 3", 3) == 0 && strstr(got, " 5") &&
@@ -3788,6 +3791,12 @@ static void test_breath_feet() {
     if (feet_heard[i].hard > 0.01) gentle = false;
   }
   CHECK(gentle, "at rest every step should be gentle");
+  // The last beat's: the thump, the upbeat's bright tap, the predown's dull.
+  CHECK(n_feet_heard >= 3 &&
+        feet_heard[n_feet_heard - 3].kind == FEET_THUMP &&
+        feet_heard[n_feet_heard - 2].kind == FEET_TAP &&
+        feet_heard[n_feet_heard - 1].kind == FEET_TAP_SOFT,
+        "the Feet should be thump, bright tap, dull tap");
   feet_subbeats(104, false, 0, true, got);
   CHECK(strncmp(got, "T 18", 4) == 0 || strncmp(got, "T 19", 4) == 0,
         "blowing should fill in the gap, T 18 35 54, not %s", got);
@@ -3816,11 +3825,11 @@ static void test_breath_feet() {
   feet_beat_ns = 60 * NS_PER_SEC / 116;
   current_beat_ns = feet_beat_ns;
   last_downbeat_ns = now();
-  breath_feet_kick(last_downbeat_ns);
+  feet_pedal(MIDI_DRUM_IN_KICK, 100, last_downbeat_ns);
   n_feet_heard = 0;
   uint64_t stopped = now();
   while (now() - stopped < 3 * feet_beat_ns) {
-    breath_feet_tick();
+    feet_tick();
     usleep(500);
   }
   CHECK(n_feet_heard == 2, "after the last kick, its two taps and no more, "
@@ -3829,9 +3838,69 @@ static void test_breath_feet() {
   last_downbeat_ns = 0;
   CHECK(feet_subbeats(BREATH_FULL, false, 0, false, got) == 0,
         "without the pedals the Feet should be silent, not %s", got);
+  press("tab");
+  CHECK(feet_subbeats(0, false, 0, true, got) == 0,
+        "with the drum off the Feet should be silent");
+  // And on another kit: none of the Feet, and that kit's own sounds.
+  select_ep("tab");
+  press("tab");
   press("A");
   CHECK(feet_subbeats(0, false, 0, true, got) == 0,
-        "switched off the Feet should be silent");
+        "on the rim kit the Feet should be silent");
+  select_ep("tab");
+  press("S");
+  CHECK(c->drum_voice == KIT_FEET && lit("S"), "S should pick the Feet");
+  // Each pedal a step of its own, beat or no beat.
+  CHECK(c->on[ENDPOINT_DRUM], "the drum should still be on");
+  current_beat_ns = 0;
+  const int pedals[4] = {MIDI_DRUM_IN_KICK, MIDI_DRUM_IN_SNARE,
+                         MIDI_DRUM_IN_HIHAT, MIDI_DRUM_IN_CRASH};
+  const int kinds[4] = {FEET_THUMP, FEET_TAP_LOW, FEET_TAP, FEET_TAP_LOWER};
+  for (int p = 0; p < 4; p++) {
+    n_feet_heard = 0;
+    handle_feet(MIDI_ON, pedals[p], 100);
+    CHECK(n_feet_heard == 1 && feet_heard[0].kind == kinds[p],
+          "pedal %d should be a step of kind %d with no beat, not %d steps",
+          p, kinds[p], n_feet_heard);
+  }
+  // As hard as it's hit: soft quieter, firm at the grid's level, and
+  // hardest louder and harder.
+  const int vels[3] = {40, 100, 127};
+  double heard_level[3], heard_hard[3];
+  for (int v = 0; v < 3; v++) {
+    n_feet_heard = 0;
+    handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, vels[v]);
+    heard_level[v] = n_feet_heard ? feet_heard[0].level : -1;
+    heard_hard[v] = n_feet_heard ? feet_heard[0].hard : -1;
+  }
+  CHECK(heard_level[0] > 0 && heard_level[0] < 0.4 &&
+        fabs(heard_level[1] - 1) < 1e-9 && heard_level[2] > 1.2,
+        "a pedal's level should follow its velocity (%.2f %.2f %.2f)",
+        heard_level[0], heard_level[1], heard_level[2]);
+  CHECK(heard_hard[0] == 0 && heard_hard[1] == 0 && heard_hard[2] > 0.3,
+        "only the hardest hits should land harder (%.2f %.2f %.2f)",
+        heard_hard[0], heard_hard[1], heard_hard[2]);
+  // And the grid's taps go by the last four kicks, on average.
+  for (int k = 0; k < 4; k++) handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 60);
+  memset(kick_times, 0, sizeof(kick_times));
+  char soft_got[256];
+  feet_subbeats(0, false, 0, true, soft_got);  // its kicks at 100: see below
+  double tap_level = -1;
+  for (int i = 0; i < n_feet_heard; i++) {
+    if (feet_heard[i].kind != FEET_THUMP) tap_level = feet_heard[i].level;
+  }
+  // Four at 60, then feet_subbeats' three at 100: the last four, 60 and
+  // three 100s, average 90.
+  CHECK(fabs(tap_level - pow(0.9, 1.5)) < 1e-6,
+        "the taps should follow the last four kicks (%.3f, not %.3f)",
+        tap_level, pow(0.9, 1.5));
+  press("tab");
+  n_feet_heard = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+  CHECK(n_feet_heard == 0, "with the drum off, a pedal shouldn't step");
+  memset(kick_times, 0, sizeof(kick_times));
+  current_beat_ns = 0;
+  last_downbeat_ns = 0;
   feet_hook = NULL;
   full_reset();
 }
@@ -3845,7 +3914,7 @@ static double feet_render(int kind, double hard, double* low, double* high,
   memset(l, 0, sizeof(l));
   memset(r, 0, sizeof(r));
   atomic_store(&audio_breath_fx, 0);
-  feet_hit(kind, hard, 1);
+  feet_hit(kind, hard, 1, false);
   for (int b = 0; b < 50; b++) {
     play_breath_instruments(l + 480 * b, r + 480 * b, 480, 48000);
   }
@@ -3877,16 +3946,47 @@ static void test_feet_sound() {
                              &stomp_after);
   CHECK(thump > 1e-3 && tap > 1e-4, "the Feet made nothing (%.4f %.4f)",
         thump, tap);
-  CHECK(thump_low > 2 * tap_low && tap_high > 2 * thump_high,
+  // As recorded, a tap has nearly as much low as a thump, but a thump's much
+  // less bright for it.
+  CHECK(thump_low / thump_high > 2 * (tap_low / tap_high),
         "a thump should be deeper than a tap (%.2f %.2f under 200Hz, "
         "%.2f %.2f over 1kHz)", thump_low, tap_low, thump_high, tap_high);
   CHECK(stomp > 2 * thump && stomp * stomp_low > 2 * thump * thump_low,
         "a stomp should be louder and deeper than a gentle thump "
         "(%.4f %.4f)", stomp, thump);
-  // A wooden floor doesn't ring: each step's over within 100ms or so.
-  CHECK(thump_after < 0.01 && tap_after < 0.01 && stomp_after < 0.05,
+  // A wooden floor doesn't ring: each step's mostly over within 100ms, with
+  // only the room after, as quiet as recorded thumps' (0.09-0.11).
+  CHECK(thump_after < 0.15 && tap_after < 0.15 && stomp_after < 0.15,
         "the Feet shouldn't ring on (%.4f %.4f %.4f after 100ms)",
         thump_after, tap_after, stomp_after);
+  // The snare's tap lower than the hihat's, and the ride's lower still:
+  // less and less bright for how low they go.
+  double low_low, low_high, low_after, lower_low, lower_high, lower_after;
+  double low = feet_render(FEET_TAP_LOW, 0, &low_low, &low_high, &low_after);
+  double lower = feet_render(FEET_TAP_LOWER, 0, &lower_low, &lower_high,
+                             &lower_after);
+  CHECK(low > 1e-4 && lower > 1e-4 &&
+        tap_high / tap_low > low_high / low_low &&
+        low_high / low_low > lower_high / lower_low,
+        "each tap should be lower than the last (%.2f %.2f %.2f)",
+        tap_high / tap_low, low_high / low_low, lower_high / lower_low);
+  CHECK(low_after < 0.15 && lower_after < 0.15,
+        "the lower taps shouldn't ring on (%.3f %.3f)", low_after,
+        lower_after);
+  printf("feet: low tap %.1fdB, lower tap %.1fdB RMS\n", 20 * log10(low),
+         20 * log10(lower));
+  // No two steps quite alike, but only a little different.
+  double same[8];
+  double lo_same = 1, hi_same = 0;
+  for (int k = 0; k < 8; k++) {
+    double a, b, c2;
+    same[k] = feet_render(FEET_TAP, 0.3, &a, &b, &c2);
+    lo_same = fmin(lo_same, same[k]);
+    hi_same = fmax(hi_same, same[k]);
+  }
+  CHECK(hi_same > 1.02 * lo_same && hi_same < 1.6 * lo_same,
+        "the same step eight times should vary a little (%.4f to %.4f)",
+        lo_same, hi_same);
   printf("feet: gentle thump %.1fdB, tap %.1fdB, stomp %.1fdB RMS\n",
          20 * log10(thump), 20 * log10(tap), 20 * log10(stomp));
   memset(feet_voices, 0, sizeof(feet_voices));  // nothing left ringing
@@ -4203,7 +4303,7 @@ int main() {
   test_brush_swish();
   test_breath_sounds_follow_ch();
   test_grid_hat_on_the_pedals();
-  test_breath_feet();
+  test_feet();
   test_feet_sound();
   test_tamb_shake();
   test_jawharp_voices();

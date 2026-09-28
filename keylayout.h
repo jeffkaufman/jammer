@@ -208,7 +208,7 @@ static const Key KEYS[] = {
   {kVK_ANSI_A, 'A', 0, "A", NULL, "SynBass\n2", GROUP_VOICE, LIT_VOICE, 39,
    "Rim", LIT_DRUM_VOICE, KIT_RIM, 3, 1.75, 1},
   {kVK_ANSI_S, 'S', 0, "S", NULL, "SynBass\n1", GROUP_VOICE, LIT_VOICE, 38,
-   BLANK_ON_DRUM, 3, 2.75, 1},
+   "Feet", LIT_DRUM_VOICE, KIT_FEET, 3, 2.75, 1},
   {kVK_ANSI_D, 'D', 0, "D", NULL, "Acou\nBass", GROUP_VOICE, LIT_VOICE, 32,
    BLANK_ON_DRUM, 3, 3.75, 1},
   {kVK_ANSI_F, 'F', 0, "F", NULL, "Draw\nbar", GROUP_VOICE, LIT_VOICE, 16,
