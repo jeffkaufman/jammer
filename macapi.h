@@ -24,8 +24,8 @@
 // Past the sixteen channels the endpoints and pitched kick use, so the synth
 // has thirty-two (start_synth).
 #define CHANNEL_KICK 16
-// And the Breath Gate's brushes and Grid Hat, past the drones' voice
-// channels, below.
+// And the Breath Gate's brushes and the drum's Grid Hat, past the drones'
+// voice channels, below.
 #define CHANNEL_BRUSH 32
 #define CHANNEL_HAT 33
 
@@ -312,6 +312,36 @@ static void kick_duck_hit(uint64_t beat_ns) {
   atomic_fetch_add_explicit(&kick_duck_hits, 1, memory_order_release);
 }
 
+// How much louder the drum's kit is for the breath, from jammermidilib.h's
+// kit_gain_hook: its channels, the kicks' included, but not the Grid Hat's,
+// which follows the breath its own way.  Smoothed, since the breath comes
+// in steps.
+static _Atomic float kit_gain_target = 1.0f;
+static double kit_gain_now = 1;
+#define KIT_GAIN_SMOOTH_MS 10
+
+static void kit_gain_set(double gain) {
+  atomic_store_explicit(&kit_gain_target, (float)gain, memory_order_relaxed);
+}
+
+static void apply_kit_gain(float** bufs, int n, double sample_rate) {
+  double target = atomic_load_explicit(&kit_gain_target,
+                                       memory_order_relaxed);
+  if (target == 1 && kit_gain_now == 1) return;
+  static const int CHANNELS[] = {CHANNEL_DRUM, CHANNEL_KICK,
+                                 CHANNEL_PITCHED_KICK};
+  double k = 1 - exp(-1000 / (sample_rate * KIT_GAIN_SMOOTH_MS));
+  double g = kit_gain_now;
+  for (int i = 0; i < n; i++) {
+    g += (target - g) * k;
+    for (int c = 0; c < 3; c++) {
+      bufs[2 * CHANNELS[c]][i] *= (float)g;
+      bufs[2 * CHANNELS[c] + 1][i] *= (float)g;
+    }
+  }
+  kit_gain_now = fabs(g - target) < 1e-4 ? target : g;
+}
+
 // The audio thread's own.
 static float synth_channel_bufs[2 * SYNTH_CHANNELS][KICK_DUCK_FRAMES];
 static unsigned kick_duck_seen;
@@ -445,6 +475,7 @@ static int render_kick_ducked(fluid_synth_t* synth, int len, int nfx,
     result = fluid_synth_process(synth, n, nfx, chunk_fx,
                                  2 * SYNTH_CHANNELS, bufs);
     if (result != FLUID_OK || nout < 2) continue;
+    apply_kit_gain(bufs, n, sample_rate);
     apply_trance_gates(bufs, n,
                        audio_block_ns + (uint64_t)(done * 1e9 / sample_rate),
                        sample_rate);
@@ -1057,8 +1088,8 @@ static void play_tamb(float* left, float* right, int len, bool playing,
 //           would on a board: a low shelf up under 110Hz, the box's honk
 //           taken out around 450Hz, and the rumble under 45Hz, which the
 //           shelf would otherwise bring up with the rest, taken out
-//           altogether.  As loud as the thump, by perceived loudness, and
-//           as much louder stomped.
+//           altogether.  6dB louder than the thump, by perceived
+//           loudness, and as much louder again stomped.
 //
 // The harder, towards a stomp, the louder, the heavier in the low, and the
 // longer the floor answers; and the hits closer together, the foot coming
@@ -1072,7 +1103,7 @@ static void play_tamb(float* left, float* right, int len, bool playing,
 // ---------------------------------------------------------------------------
 
 #define FEET_IMPACTS 3
-#define FEET_VOICES 8
+#define FEET_VOICES 16  // the Grid Hat's 32nds over the Feet, and the rest
 #define FEET_RING 32          // steps waiting for the audio thread
 #define FEET_LEVEL 0.9
 #define FEET_WAVER 0.12       // how far a step's level wanders, each way
@@ -1122,7 +1153,7 @@ static const FeetSound FEET_SOUNDS[N_FEET_KINDS] = {
   [FEET_TAP_LOWER] = {{{0, 1, 1, 1}, {8, 0.25, 0.25, 0.3}, {0, 0, 0, 0}},
                       0.9, 4, 0.5, 6, 2.0, 16, 7, 0.05, 1.3, 0.55},
   [FEET_BOARD] = {{{0, 0.3, 1.6, 1.6}, {16, 1, 1, 1}, {21, 0.4, 0.4, 0.3}},
-                  0.55, 3, 0.75, 6, 1.3, 12, 3, 0.06, 0.65, 1,
+                  0.55, 3, 0.75, 6, 1.3, 12, 3, 0.06, 1.3, 1,
                   85, 6, 3, 2.2, 0.5},
 };
 
@@ -1507,13 +1538,11 @@ static void render_breath_instruments(float* left, float* right, int len,
                         len)) {
     play_tamb(left, right, len, on, blown, sample_rate);
   }
-  // All but the Feet, which are the drum's, and come with its level.
   float gain = atomic_load_explicit(&audio_breath_gain, memory_order_relaxed);
   for (int i = 0; i < len; i++) {
     left[i] *= gain;
     right[i] *= gain;
   }
-  play_feet(left, right, len, sample_rate);
 }
 
 // The right channel's level, as a proportion of the global volume.  Voices
@@ -1527,7 +1556,8 @@ static _Atomic float alt_channel_gain = 1.0f;
 // The Breath Gate's own sounds, on one channel like everything else: the
 // left, or the right if its CH is on.  They're made in stereo -- the brushes
 // circle from side to side -- so each is folded down to its middle, which is
-// what either side of it carries on average.
+// what either side of it carries on average.  And the Feet, which are the
+// drum's, on its side, and at its level (they come with it).
 #define BREATH_CHUNK 512
 static void play_breath_instruments(float* left, float* right, int len,
                                     double sample_rate) {
@@ -1540,6 +1570,14 @@ static void play_breath_instruments(float* left, float* right, int len,
     memset(r, 0, sizeof(r));
     render_breath_instruments(l, r, n, sample_rate);
     for (int i = 0; i < n; i++) out[done + i] += (l[i] + r[i]) / 2;
+  }
+  float* drum = (fx & BREATH_FX_DRUM_RIGHT) ? right : left;
+  for (int done = 0; done < len; done += BREATH_CHUNK) {
+    int n = len - done < BREATH_CHUNK ? len - done : BREATH_CHUNK;
+    memset(l, 0, sizeof(l));
+    memset(r, 0, sizeof(r));
+    play_feet(l, r, n, sample_rate);
+    for (int i = 0; i < n; i++) drum[done + i] += (l[i] + r[i]) / 2;
   }
 }
 
@@ -1757,9 +1795,10 @@ void set_alt_channel_gain(double gain) {
   atomic_store_explicit(&alt_channel_gain, (float)gain, memory_order_relaxed);
 }
 
-// The Breath Gate's brushes and Grid Hat, on their own kits' channels, go
-// where the Breath Gate does: left, or right with its CH on.  From
-// breath_set, which is often, so only when that changes.
+// The Breath Gate's brushes, on their own kit's channel, go where the
+// Breath Gate does: left, or right with its CH on.  From breath_set, which
+// is often, so only when that changes.  (The Grid Hat's is the drum's now,
+// and goes where the drum does, with the rest of its CCs.)
 static bool breath_kits_right = false;
 
 static void pan_breath_kits(bool right) {
@@ -1768,8 +1807,6 @@ static void pan_breath_kits(bool right) {
   int value = right ? 127 : 0;
   fluid_synth_cc(fl_synth, CHANNEL_BRUSH, CC_PAN, value);
   fluid_synth_cc(fl_synth, CHANNEL_BRUSH, CC_BALANCE, value);
-  fluid_synth_cc(fl_synth, CHANNEL_HAT, CC_PAN, value);
-  fluid_synth_cc(fl_synth, CHANNEL_HAT, CC_BALANCE, value);
 }
 
 // Mirrors run-fluidsynth.sh: -c 2 -z 64 -g 1.0, stereo, reverb/chorus off.
@@ -1860,13 +1897,13 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   if (action == MIDI_CC) {
     fluid_synth_cc(fl_synth, channel, note, velocity);
     // The kick's channel is the drum's, split off: same volume, pan, fade.
-    // And so are the brushes' and the Grid Hat's, on their own kits -- all
+    // And so is the Grid Hat's.  And the brushes', on their own kit -- all
     // but their pan, which is the Breath Gate's (pan_breath_kits).
     if (channel == CHANNEL_DRUM) {
       fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
+      fluid_synth_cc(fl_synth, CHANNEL_HAT, note, velocity);
       if (note != CC_PAN && note != CC_BALANCE) {
         fluid_synth_cc(fl_synth, CHANNEL_BRUSH, note, velocity);
-        fluid_synth_cc(fl_synth, CHANNEL_HAT, note, velocity);
       }
     }
     // And a drone's voice channels are the drone's.

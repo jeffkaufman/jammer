@@ -226,11 +226,22 @@ the physical keyboard in the middle, and what it actually does underneath:
   is breath fill there: whether blowing fills out the kit; and `M` next to
   it, which has no kit on it, is breath hard, in purple: whether blowing has
   everything hit harder.  The drum starts on downbeat, upbeat, pre uniq,
-  breath fill and breath hard: "kick . hat hat", and the breath filling it
-  out and hitting it harder.
+  breath fill, breath hard and vel: "kick . hat hat", the breath filling it
+  out and hitting it harder, and each pedal as hard as it's hit.  And on
+  the right, the alternate channel, with CH on -- its kits, the Feet and the
+  Grid Hat all go where the drum does.  Hit the hat pedal (4) any time
+  after the kick, and the rest of that beat's in-between steps -- the hats,
+  or the Feet's taps, whether the keys put them in or the breath fills them
+  -- are left to it, until the next kick: the kick alone gets "kick . hat
+  hat", and the hat pedal can take over from it and hand it back a beat at
+  a time.  The rim and ride pedals leave them be.  A hat pedal within 80ms
+  after the pattern's own hat or tap is taken for that one, a little late:
+  it takes over the rest of the beat, but plays nothing more.
 * **The drum's kits**: with the drum selected, `A` is Rim, `S` the Feet,
   `D` the Stompy Feet, and `Z X C V` 808 A, 808 B, Room 2 and Room 6, and
   `F` switches the Grid Hat on and off over whichever of them is on.  The
+  lit kit's key again switches the kit off altogether, leaving the pedals
+  and the pattern silent and the Grid Hat, if it's on, on its own.  The
   Feet are the kit it starts on, on the Mac (on the Pi, with no sound for
   them, Rim is, and `S` and `D` do nothing).  Switch the drum on with `tab` for them.  Every kit plays
   the same way: each drum pedal is a sound of its
@@ -246,9 +257,11 @@ the physical keyboard in the middle, and what it actually does underneath:
   kick on 2 (with downbeat), its side stick on 1, its closed hat on 4 and
   its ride on 3, each levelled against the Standard set by `kitlevels` as
   the rest of the kit is, at 90, or as hard as they're hit with vel; and
-  blowing all the way plays everything a third again as hard.
+  blowing all the way plays everything a third again as hard, and on the
+  Mac turns the kit up by as much as 6dB besides, since a kick's velocity
+  is already near the top.
   **Grid Hat**, in blue, since it isn't a kit like the others but a layer,
-  over whichever kit is on, or over a drum synth the pedals play: the 808's closed hat on the beat's 16ths, or three a beat in
+  over whichever kit is on, or over a drum synth the pedals play: the kit's own hat on the beat's 16ths, or three a beat in
   jig time, at 116 BPM without the pedals -- with the pedals going, just
   where the foot bass plays, its upbeat a subbeat early and in jig time its
   lilt -- every other one a little softer, from barely there just past the
@@ -256,9 +269,11 @@ the physical keyboard in the middle, and what it actually does underneath:
   about a third, more hats fade in halfway between, up to the softer ones'
   level at about 95%, until blowing hard it's 32nds, or six a beat in jig
   time.  Only the hat, whatever the kit under it: the pedals and the
-  modifier keys leave it be.  It's the soundfont's 808, on a channel of its
-  own that's panned with the Breath Gate (on the Pi, the drum's, playing
-  that kit's hat).  **Feet**: French
+  modifier keys leave it be.  It's the kit's hat, from the kit's own
+  percussion set, so it blends with it -- over the Feet and the Stompy
+  Feet, their hat, the toe's tap the hihat pedal plays; with no kit, the
+  Standard set's closed hat -- on a channel of its own that's panned with
+  the drum (on the Pi, the drum's).  **Feet**: French
   Canadian foot percussion, leather shoes on a well-sprung wooden floor. Each
   drum pedal is a step of its own whenever it's hit, beat or no beat: the kick
   (2) a thump (with downbeat), the hihat (4) a tap, the snare (1) a lower tap, and the ride
@@ -288,7 +303,7 @@ the physical keyboard in the middle, and what it actually does underneath:
   kick's heel comes down on a stomp board -- a hardwood top on a hollow box
   -- miked and EQ'd towards a bass drum: the box's short boom around 85Hz,
   a low shelf up under 110Hz, its honk taken out around 450Hz and the
-  rumble under 45Hz cut.  As loud as the Feet's thump to the ear, and
+  rumble under 45Hz cut.  6dB louder than the Feet's thump to the ear, and
   deeper.
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.

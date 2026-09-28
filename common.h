@@ -49,8 +49,9 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 #define MIDI_BRUSH_SLAP 39
 #define MIDI_BRUSH_SWIRL 40
 
-// And its Grid Hat: another, set to the 808's, for its closed hat.  On the Pi
-// the drum's again, playing that kit's hat.
+// And the drum's Grid Hat: another, set to whichever percussion set the
+// drum's kit is from (select_drum_kit), for that kit's hat -- the 808's until
+// then.  On the Pi the drum's again, which comes to the same thing.
 #ifndef CHANNEL_HAT
 #define CHANNEL_HAT CHANNEL_DRUM
 #endif
@@ -100,6 +101,8 @@ enum {
   // Not a sound: the Breath Gate's CH is on, so the Mac's own sounds for it
   // play on the right, the alternate channel, instead of the left.
   BREATH_FX_RIGHT = 1 << 10,
+  // And the drum's CH, for the Feet: on the right, where the drum starts.
+  BREATH_FX_DRUM_RIGHT = 1 << 11,
 };
 
 // The trance gate's patterns on a drone, from its DOUB and PRE UNIQ flags:

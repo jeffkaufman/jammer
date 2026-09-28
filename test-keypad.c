@@ -169,9 +169,16 @@ static void test_voices() {
   // With drums selected the same keys pick drum sounds instead.
   select_ep("tab");
   CHECK(c->selected_endpoint == ENDPOINT_DRUM, "shift-tab didn't select drums");
+  press("Z");
   press("A");
   CHECK(c->drum_voice == KIT_RIM, "A didn't pick the rim kit");
   CHECK(lit("A"), "A should be lit for the rim kit");
+  // The lit kit's key again: no kit at all, and nothing lit.
+  press("A");
+  CHECK(c->drum_voice == KIT_NONE && !lit("A") && !lit("Z"),
+        "A again should switch the kit off");
+  press("A");
+  CHECK(c->drum_voice == KIT_RIM && lit("A"), "and A again should pick Rim");
   CHECK(c->voices[ENDPOINT_FLEX] == 75, "picking a drum changed a voice");
 
   press("Z");
@@ -449,9 +456,12 @@ static void record_breath_gain(double gain) {
   told_breath_gain = gain;
 }
 
+// The drum's side, told alongside, is apart from the rest: told_drum_right.
+static bool told_drum_right;
 static void record_breath(int breath, unsigned fx) {
   told_breath = breath;
-  told_fx = fx;
+  told_fx = fx & ~BREATH_FX_DRUM_RIGHT;
+  told_drum_right = fx & BREATH_FX_DRUM_RIGHT;
 }
 
 static void test_breath_fx() {
@@ -3879,6 +3889,15 @@ static void test_feet() {
   last_downbeat_ns = 0;
   CHECK(feet_subbeats(BREATH_FULL, false, 0, false, got) == 0,
         "without the pedals the Feet should be silent, not %s", got);
+  // The hat pedal, since the kick, has the beat's taps: the
+  // grid leaves them to it.
+  drum_kick_pedal_ns = 1;
+  drum_pedal_ns = 2;
+  feet_subbeats(0, false, 0, true, got);
+  CHECK(strcmp(got, "T") == 0,
+        "after another pedal the Feet should leave the taps to it, not %s",
+        got);
+  drum_pedal_ns = 0;
   press("tab");
   CHECK(feet_subbeats(0, false, 0, true, got) == 0,
         "with the drum off the Feet should be silent");
@@ -3996,8 +4015,9 @@ static void test_kits_and_the_breath() {
         "the drum should start on DOWNBEAT, UPBEAT and PRE UNIQ");
   press("tab");
   select_ep("tab");
-  press("A");  // Rim
+  select_drum_kit(KIT_RIM);
   const DrumKit* kit = &KITS[KIT_RIM];
+  c->vel[ENDPOINT_DRUM] = false;  // it starts on, but first, without
 
   // Each pedal, with no beat: the kick 2, the rim 1, the hat 4, the ride 3.
   current_beat_ns = 0;
@@ -4062,6 +4082,8 @@ static void test_kits_and_the_breath() {
   press("tab");
 
   // The grid: at rest the upbeat's and predown's hats, and no preup's.
+  // (A kick after the pedals above, so the beat's the kit's.)
+  drum_kick_pedal_ns = now();
   const int subbeats[3] = {preup_subbeat(), upbeat_subbeat(), 3 * 72 / 4};
   int rest[3], blown[3], filled[3];
   for (int i = 0; i < 3; i++) {
@@ -4072,6 +4094,38 @@ static void test_kits_and_the_breath() {
   CHECK(rest[0] == 0 && rest[1] > 0 && rest[2] > 0,
         "at rest the kit should play . hat hat (%d %d %d)", rest[0], rest[1],
         rest[2]);
+  // The rim and ride pedals leave the kit's hats be.
+  usleep(1000);
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_CRASH, 100);
+  n_tapped = 0;
+  arpeggiate_drum(upbeat_subbeat(), now());
+  CHECK(tapped_velocity(kit->hihat, CHANNEL_DRUM) > 0,
+        "the rim and ride pedals shouldn't stop the kit's hats");
+  // A hat pedal just after the kit's own hat plays nothing more: it's
+  // that hat, a little late.
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_HIHAT, 100);
+  CHECK(count_tapped(MIDI_ON, kit->hihat, CHANNEL_DRUM) == 0,
+        "a hat pedal just after the kit's hat shouldn't play another");
+  usleep((AUTO_HAT_PEDAL_MS + 5) * 1000);
+  // But the hat pedal, any time after the beat's kick, has the rest of the
+  // beat's: the kit leaves the hats to it, until the next.
+  n_tapped = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_HIHAT, 100);
+  CHECK(count_tapped(MIDI_ON, kit->hihat, CHANNEL_DRUM) == 1,
+        "a hat pedal well after the kit's hat should play");
+  n_tapped = 0;
+  arpeggiate_drum(upbeat_subbeat(), now());
+  arpeggiate_drum(3 * 72 / 4, now());
+  CHECK(tapped_velocity(kit->hihat, CHANNEL_DRUM) == 0,
+        "after a hat pedal the kit shouldn't play its own hats");
+  usleep(1000);
+  drum_kick_pedal_ns = now();
+  n_tapped = 0;
+  arpeggiate_drum(upbeat_subbeat(), now());
+  CHECK(tapped_velocity(kit->hihat, CHANNEL_DRUM) > 0,
+        "the next beat's kick should hand the hats back to the kit");
   // Blowing fills the preup in, and hits them all harder.
   handle_cc(CC_BREATH, BREATH_FULL);
   for (int i = 0; i < 3; i++) {
@@ -4137,6 +4191,8 @@ static void test_kits_and_the_breath() {
   // and DOUBLED puts the preup in without it.
   press("K");
   press("P");
+  usleep(1000);
+  drum_kick_pedal_ns = now();  // past the snare pedal above
   n_tapped = 0;
   arpeggiate_drum(subbeats[0], now());
   arpeggiate_drum(subbeats[1], now());
@@ -4589,6 +4645,96 @@ static void test_vocoder() {
         sqrt(loud / 48000));
 }
 
+// The drum's defaults and its kit's reach: VEL on, on the right, the Grid
+// Hat playing the kit's own hat, or with no kit the Standard set's, and the
+// Mac turning the kit up the harder it's blown with BREATH HARD.
+static double told_kit_gain = 1;
+static void record_kit_gain(double gain) {
+  told_kit_gain = gain;
+}
+
+static void test_drum_kit_reach() {
+  full_reset();
+  midi_tap = tap_midi;
+  breath_hook = record_breath;
+  kit_gain_hook = record_kit_gain;
+  update_breath_fx();
+  CHECK(c->vel[ENDPOINT_DRUM], "the drum should start with VEL on");
+  CHECK(c->pans[ENDPOINT_DRUM] && told_drum_right,
+        "the drum, and the Feet, should start on the right");
+  select_ep("tab");
+  press("F2");
+  CHECK(!c->pans[ENDPOINT_DRUM] && !told_drum_right,
+        "CH should move the drum left");
+  press("F2");
+
+  // The Grid Hat on the kit's hat: the Ride kit's is its ride.
+  press("tab");
+  select_drum_kit(KIT_RIDE);
+  press("F");
+  handle_cc(CC_BREATH, 60);
+  n_tapped = 0;
+  hat_for(300);
+  int ride = 0, other = 0;
+  for (int i = 0; i < n_tapped; i++) {
+    if (tapped[i].action != MIDI_ON || tapped[i].channel != CHANNEL_HAT) {
+      continue;
+    }
+    if (tapped[i].note == MIDI_DRUM_OUT_RIDE) ride++; else other++;
+  }
+  CHECK(ride > 0 && other == 0,
+        "the Grid Hat should play the kit's hat (%d ride, %d other)", ride,
+        other);
+  // Over the Feet and the Stompy Feet, the Feet's hat: a toe's tap.
+  feet_hook = feet_record;
+  for (int k = 0; k < 2; k++) {
+    select_drum_kit(k ? KIT_STOMPY_FEET : KIT_FEET);
+    n_tapped = 0;
+    n_feet_heard = 0;
+    hat_for(300);
+    bool taps = n_feet_heard > 0;
+    for (int i = 0; i < n_feet_heard; i++) {
+      if (feet_heard[i].kind != FEET_TAP) taps = false;
+    }
+    CHECK(taps && hat_taps(0, 127) == 0,
+          "over the %s the Grid Hat should be their taps (%d taps, %d hats)",
+          k ? "Stompy Feet" : "Feet", n_feet_heard, hat_taps(0, 127));
+  }
+  feet_hook = NULL;
+  // With no kit, just the Grid Hat, on the Standard set's closed hat, and
+  // the pedals silent.
+  select_drum_kit(KIT_RIM);
+  press("A");
+  CHECK(c->drum_voice == KIT_NONE, "A on Rim should switch the kit off");
+  n_tapped = 0;
+  hat_for(300);
+  CHECK(hat_taps(0, 127) > 0, "with no kit the Grid Hat should still play");
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_DRUM) +
+        count_tapped(MIDI_ON, -1, CHANNEL_KICK) == 0,
+        "with no kit the pedals should play nothing");
+  CHECK(told_kit_gain == 1, "with no kit there's nothing to turn up");
+
+  // BREATH HARD turns the kit up on the Mac, blowing; not without it.
+  press("A");
+  handle_cc(CC_BREATH, BREATH_FULL);
+  CHECK(told_kit_gain > 1.8, "blowing should turn the kit up (%.2f)",
+        told_kit_gain);
+  press("M");
+  CHECK(told_kit_gain == 1, "without BREATH HARD it shouldn't (%.2f)",
+        told_kit_gain);
+  press("M");
+  handle_cc(CC_BREATH, 0);
+  CHECK(told_kit_gain == 1, "at rest the kit's as it was (%.2f)",
+        told_kit_gain);
+
+  kit_gain_hook = NULL;
+  breath_hook = NULL;
+  midi_tap = NULL;
+  full_reset();
+}
+
 int main() {
   jml_setup();
   // The whistle's key handling needs its state and its voice table, but no
@@ -4620,6 +4766,7 @@ int main() {
   test_brush_swish();
   test_breath_sounds_follow_ch();
   test_grid_hat_on_the_pedals();
+  test_drum_kit_reach();
   test_feet();
   test_kits_and_the_breath();
   test_feet_sound();

@@ -2551,6 +2551,7 @@ int main(int argc, const char** argv) {
     feet_hook = feet_hit;
     breath_hook = breath_set;
     breath_gain_hook = breath_gain_set;
+    kit_gain_hook = kit_gain_set;
     music_hook = music_set;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
     speech_start(synth_sample_rate);
