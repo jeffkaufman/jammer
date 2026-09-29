@@ -154,9 +154,13 @@ enum {
 // the hihat's and the upbeat's; a duller one, the predown's and blowing's
 // fill; and a lower tap, the snare's, and a lower one still, the ride's.
 // And the Stompy Feet's kick, in place of the thump: a heel on a stomp
-// board, EQ'd bassy.  The Mac makes their sound (macapi.h).
+// board, EQ'd bassy.  And the Bare Feet's, in place of all of them: bare
+// feet on a wooden floor, the kick's, the snare's, the hihat's and the
+// ride's, each as hard as `hard` says rather than as the Feet's stomp.  The
+// Mac makes their sound (macapi.h).
 enum { FEET_THUMP, FEET_TAP, FEET_TAP_SOFT, FEET_TAP_LOW, FEET_TAP_LOWER,
-       FEET_BOARD, N_FEET_KINDS };
+       FEET_BOARD, FEET_BARE_KICK, FEET_BARE_SNARE, FEET_BARE_HIHAT,
+       FEET_BARE_RIDE, N_FEET_KINDS };
 
 // What the Mac's own sounds need to know about the music, from
 // jammermidilib.h's music_hook every tick: the Breath Gate's wobble plays the

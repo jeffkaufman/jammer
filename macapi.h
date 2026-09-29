@@ -1110,6 +1110,8 @@ static void play_tamb(float* left, float* right, int len, bool playing,
 //           altogether.  6dB louder than the thump, by perceived
 //           loudness, and as much louder again stomped.
 //
+// And the Bare Feet's, below (bare_start), which are their own.
+//
 // The harder, towards a stomp, the louder, the heavier in the low, and the
 // longer the floor answers; and the hits closer together, the foot coming
 // down flatter.  And no two quite alike, as a player's aren't: each a
@@ -1288,12 +1290,357 @@ static void feet_start(const FeetStep* step, double sample_rate) {
                                    5 * FEET_TAIL_S * lower));
 }
 
+// ---------------------------------------------------------------------------
+// The drum's Bare Feet kit: barefoot on a wooden floor, fitted to recordings
+// of it -- each sound played eight times, some softly and some firmly, and
+// the snare harder still.  Every one of them is the same two things:
+//
+//   slap    skin on the boards: a burst of noise, over in a millisecond or
+//           two, with a quieter tail, the room; through five bands, 500Hz
+//           to 8kHz, each as loud as the recording had it.  And a softer
+//           step's foot comes down in two or three contacts a few
+//           milliseconds apart, where a harder one lands all at once.
+//   floor   the floor's own answer: its modes, at 62, 83, 125 and 153Hz,
+//           and 50Hz, which a heel's weight on it pulls the lowest down to,
+//           rung by the foot's push -- a sharp one for a slap, a slow,
+//           heavy one for a kick -- and ringing on for a few tens of
+//           milliseconds; and the push itself, the thud, under 120Hz
+//
+// and what differs is only how much of each, and how quickly:
+//
+//   kick    the heel, all floor, no slap: soft, the light kick, a little
+//           slap and a quick push; firm, a slow heavy push down to 50Hz
+//   snare   the flat of the foot slapped down: soft, duller, in contacts;
+//           firm, a sharp, bright slap, 500Hz up, and harder still more so
+//   hihat   a lighter slap, the toes', mostly the floor's upper modes
+//   ride    a slap like the snare's, lower: more floor, less bright
+//
+// Each recording's a take (BARE_TAKES), where on how hard the foot came
+// down it was played (bare_force), and a step anywhere between two takes is
+// in between them, all of it -- how loud, how bright, how sharp, how many
+// contacts -- and past the hardest or softest, carries on the way the
+// softest to the hardest go: at half the pace, and harder no more than
+// BARE_LOUDER_DB louder for each 1 harder, so the hardest aren't unbearably
+// loud, and softer at least BARE_SOFTER_DB quieter.  The hihat has only
+// the one take, firm; its soft one is it with what the ride's soft one
+// differs by.  And no two alike, as the recordings aren't: each a little
+// harder or softer than it was played, its contacts a little closer or
+// further apart, the floor a little higher or lower, and a step on the
+// grid a few milliseconds behind it, as the Feet's are.
+// ---------------------------------------------------------------------------
+
+#define BARE_BANDS 5
+#define BARE_MODES 5
+#define BARE_CONTACTS 3       // after the first
+#define BARE_VOICES 16
+#define BARE_BAND_Q 1.4
+#define BARE_FORCE_MAX 1.25
+#define BARE_BEYOND 0.5       // past the takes, how fast it carries on
+#define BARE_LOUDER_DB 12.0   // and how much louder, at most, per 1 harder
+#define BARE_SOFTER_DB 30.0   // or softer, at least, per 1 softer
+#define BARE_FORCE_VARY 0.04
+#define BARE_LEVEL_VARY 0.1
+#define BARE_TUNE_VARY 0.02
+#define BARE_JITTER_MS 1.0
+#define BARE_FLOOR_NOISE 1.2  // how rough the floor's push is
+#define BARE_FLOOR_NOISE_HZ 300
+#define BARE_RUMBLE_HZ 35     // and nothing much below the lowest mode
+#define BARE_THUD_HZ 120      // the push itself, heard, below this
+// The recordings' level to ours, and each sound's trim (BARE_TAKES) against
+// the rest: a firm kick as loud as the Feet's firm thump, and a firm snare
+// as loud as it, as a kit's are, and the hihat and ride as loud as each
+// other, 6dB under them.  As recorded, the snare was 12dB louder than
+// the kick -- but a phone's mic hears little of a heel's 50Hz, and a kit
+// wants its kick and snare about even.
+#define BARE_LEVEL 1.0
+
+static const double BARE_BAND_HZ[BARE_BANDS] = {500, 1000, 2000, 4000, 8000};
+static const double BARE_MODE_HZ[BARE_MODES] = {50, 62, 83, 125, 153};
+
+typedef struct {
+  double force;                // how hard it was played (bare_force)
+  double band[BARE_BANDS];     // the slap's bands, dB
+  // The slap's rise, its burst's decay and how loud its tail is against it,
+  // and the tail's decay, ms.
+  double s_att, s_burst, s_tail, s_tail_ms;
+  double mode[BARE_MODES];     // the floor's modes, dB
+  double thud;                 // and the push itself, under them, dB
+  // The foot's push on the floor, how quickly it comes and goes, the modes'
+  // decay, ms, and how far up or down they're pulled.
+  double f_att, f_push, f_ring, f_tune;
+  // The foot's later contacts: when, ms, and how hard against the first.
+  double at_ms[BARE_CONTACTS], contact[BARE_CONTACTS];
+} BareTake;
+
+typedef struct {
+  double trim;  // dB, against the recording: see BARE_LEVEL
+  int n;
+  BareTake take[3];
+} BareSound;
+
+static const BareSound BARE_TAKES[] = {
+  [FEET_BARE_KICK - FEET_BARE_KICK] = {4.0, 2, {
+    // light kick
+    {0.3, {-21.6, -52.5, -65.4, -60.1, -46.4},
+     0.67, 1.75, 0.05, 76.2,
+     {-69.0, -34.9, -2.07, -1.26, 12.3}, -33.4,
+     7.52, 10.5, 72.3, 0.95,
+     {3.00, 10.0, 0}, {0.80, 0.40, 0}},
+    // kick
+    {0.7, {-54.4, -50.5, -48.4, -55.2, -66.3},
+     0.10, 0.50, 0.77, 120.0,
+     {-23.0, 8.13, 24.3, 10.5, 18.0}, -7.30,
+     16.4, 7.06, 90.0, 0.80,
+     {8.00, 0, 0}, {0.60, 0, 0}}}},
+  [FEET_BARE_SNARE - FEET_BARE_KICK] = {-7.9, 3, {
+    // soft
+    {0.3, {-1.00, -4.21, -21.2, -45.1, -69.6},
+     2.08, 1.89, 0.06, 45.8,
+     {-25.6, -2.66, -2.23, 15.8, 11.4}, -29.2,
+     1.75, 3.97, 75.0, 1.00,
+     {4.00, 10.0, 14.0}, {0.90, 0.50, 0.35}},
+    // firm
+    {0.7, {9.89, -4.33, 0.27, -20.0, -42.6},
+     0.15, 1.85, 0.19, 51.8,
+     {-23.2, -0.50, 0.66, 16.4, 15.8}, -25.2,
+     2.17, 7.70, 75.0, 1.00,
+     {13.0, 0, 0}, {0.28, 0, 0}},
+    // hard
+    {0.85, {13.3, 0.18, -3.56, -24.1, -45.9},
+     0.10, 1.75, 0.12, 52.8,
+     {0.13, 18.5, 16.6, 30.8, 32.0}, -9.77,
+     2.81, 0.50, 75.0, 1.00,
+     {3.00, 13.0, 0}, {0.50, 0.28, 0}}}},
+  [FEET_BARE_HIHAT - FEET_BARE_KICK] = {0.4, 2, {
+    // not recorded: the firm one, less what the ride's soft one lacks
+    {0.3, {-43.0, -38.2, -41.9, -67.0, -91.4},
+     0.08, 5.61, 0.20, 114.1,
+     {-52.3, -19.7, -16.7, 1.87, 6.06}, -44.4,
+     12.1, 5.37, 75.0, 1.00,
+     {2.00, 5.00, 13.0}, {1.00, 0.55, 0.50}},
+    // firm
+    {0.7, {-7.28, -9.20, -23.4, -47.8, -72.4},
+     0.95, 1.89, 0.13, 59.0,
+     {-34.5, -8.69, -2.36, 8.53, 10.2}, -32.1,
+     2.26, 4.20, 75.0, 1.00,
+     {4.00, 10.0, 0}, {0.45, 0.30, 0}}}},
+  [FEET_BARE_RIDE - FEET_BARE_KICK] = {-5.9, 2, {
+    // soft
+    {0.3, {-20.5, -27.7, -25.6, -42.5, -60.4},
+     0.15, 1.94, 0.12, 68.7,
+     {-38.1, -10.9, -9.41, -0.05, 4.31}, -37.2,
+     4.30, 5.21, 75.0, 1.00,
+     {3.00, 9.00, 13.0}, {1.00, 0.50, 0.50}},
+    // firm
+    {0.7, {15.3, 1.37, -7.14, -23.3, -41.5},
+     1.80, 0.65, 0.04, 35.5,
+     {-20.4, 0.14, 4.96, 6.61, 8.48}, -24.9,
+     0.80, 4.08, 75.0, 1.00,
+     {5.00, 14.0, 0}, {0.40, 0.25, 0}}}},
+};
+
+typedef struct {
+  int frames;  // left to sound, or 0 when free
+  int at;      // frames since it started
+  int contact_at[BARE_CONTACTS + 1];
+  double contact[BARE_CONTACTS + 1];
+  // The slap: its burst's and tail's drive, decaying, and the envelope
+  // rising towards them; its bands.
+  double burst, burst_decay, tail, tail_decay, tail_amount, slap, k_att;
+  Bandpass band[BARE_BANDS];
+  double band_gain[BARE_BANDS];
+  // The floor: the push's drive, decaying, and the push rising towards it,
+  // roughened by lowpassed noise; its modes.
+  double push_drive, push_decay, push, k_push, rough, k_rough;
+  Bandpass rumble, mode[BARE_MODES], thud;
+  double mode_gain[BARE_MODES], thud_gain;
+} BareVoice;
+
+static BareVoice bare_voices[BARE_VOICES];
+
+static double bare_mix(double a, double b, double u, bool log_scale) {
+  if (log_scale) return exp(log(a) + (log(b) - log(a)) * u);
+  return a + (b - a) * u;
+}
+
+// How loud a group of bands or modes is, all together, dB.
+static double bare_sum_db(const double* db, int n) {
+  double power = 0;
+  for (int k = 0; k < n; k++) power += pow(10, db[k] / 10);
+  return 10 * log10(power);
+}
+
+// The take `force` falls on, between the two it's between, or past the
+// ends carrying on the way the softest to the hardest go.
+static void bare_take(int kind, double force, BareTake* t) {
+  const BareSound* s = &BARE_TAKES[kind - FEET_BARE_KICK];
+  const BareTake* softest = &s->take[0];
+  const BareTake* hardest = &s->take[s->n - 1];
+  const BareTake *a = softest, *b = hardest;
+  double u;
+  if (force < softest->force || force > hardest->force) {
+    u = (force - a->force) / (b->force - a->force);
+    u = u < 0 ? BARE_BEYOND * u : 1 + BARE_BEYOND * (u - 1);
+  } else {
+    int i = 0;
+    while (i + 2 < s->n && force > s->take[i + 1].force) i++;
+    a = &s->take[i];
+    b = &s->take[i + 1];
+    u = (force - a->force) / (b->force - a->force);
+  }
+  for (int k = 0; k < BARE_BANDS; k++) {
+    t->band[k] = bare_mix(a->band[k], b->band[k], u, false);
+  }
+  for (int k = 0; k < BARE_MODES; k++) {
+    t->mode[k] = bare_mix(a->mode[k], b->mode[k], u, false);
+  }
+  t->thud = bare_mix(a->thud, b->thud, u, false);
+  // Past the hardest, the slap and the floor each no more than so much
+  // louder, and past the softest, at least as much quieter.
+  if (force < softest->force) {
+    double least = BARE_SOFTER_DB * (softest->force - force);
+    double over = bare_sum_db(t->band, BARE_BANDS) -
+      bare_sum_db(softest->band, BARE_BANDS) + least;
+    for (int k = 0; over > 0 && k < BARE_BANDS; k++) t->band[k] -= over;
+    over = bare_sum_db(t->mode, BARE_MODES) -
+      bare_sum_db(softest->mode, BARE_MODES) + least;
+    for (int k = 0; over > 0 && k < BARE_MODES; k++) t->mode[k] -= over;
+    if (over > 0) t->thud -= over;
+  }
+  if (force > hardest->force) {
+    double most = BARE_LOUDER_DB * (force - hardest->force);
+    double over = bare_sum_db(t->band, BARE_BANDS) -
+      bare_sum_db(hardest->band, BARE_BANDS) - most;
+    for (int k = 0; over > 0 && k < BARE_BANDS; k++) t->band[k] -= over;
+    over = bare_sum_db(t->mode, BARE_MODES) -
+      bare_sum_db(hardest->mode, BARE_MODES) - most;
+    for (int k = 0; over > 0 && k < BARE_MODES; k++) t->mode[k] -= over;
+    if (over > 0) t->thud -= over;
+  }
+  // How quickly it comes and goes, though, only as far as the softest: any
+  // quicker, softer, and it'd ring the floor's upper modes harder, and be
+  // louder for it.
+  double ut = fmax(0, u);
+  t->s_att = bare_mix(a->s_att, b->s_att, ut, true);
+  t->s_burst = bare_mix(a->s_burst, b->s_burst, ut, true);
+  t->s_tail = fmax(0, bare_mix(a->s_tail, b->s_tail, ut, false));
+  t->s_tail_ms = bare_mix(a->s_tail_ms, b->s_tail_ms, ut, true);
+  t->f_att = bare_mix(a->f_att, b->f_att, ut, true);
+  t->f_push = bare_mix(a->f_push, b->f_push, ut, true);
+  t->f_ring = fmin(90, bare_mix(a->f_ring, b->f_ring, ut, true));
+  t->f_tune = fmin(1.2, fmax(0.8, bare_mix(a->f_tune, b->f_tune, ut, false)));
+  for (int k = 0; k < BARE_CONTACTS; k++) {
+    t->at_ms[k] = fmax(0, bare_mix(a->at_ms[k], b->at_ms[k], u, false));
+    t->contact[k] = fmin(1, fmax(0, bare_mix(a->contact[k], b->contact[k],
+                                             u, false)));
+  }
+}
+
+static double bare_db(double db) {
+  return pow(10, db / 20);
+}
+
+static void bare_start(const FeetStep* step, double sample_rate) {
+  BareVoice* v = &bare_voices[0];
+  for (int i = 0; i < BARE_VOICES; i++) {
+    if (bare_voices[i].frames < v->frames) v = &bare_voices[i];
+  }
+  memset(v, 0, sizeof(*v));
+  double force = fmin(BARE_FORCE_MAX, fmax(0, step->hard)) +
+    BARE_FORCE_VARY * breath_noise();
+  BareTake t;
+  bare_take(step->kind, force, &t);
+  double level = BARE_LEVEL * step->level * feet_vary(BARE_LEVEL_VARY) *
+    bare_db(BARE_TAKES[step->kind - FEET_BARE_KICK].trim);
+  double late = step->on_grid ? FEET_LATE_MS * (breath_noise() + 1) / 2 : 0;
+  v->contact_at[0] = (int)(sample_rate * late / 1000);
+  v->contact[0] = 1;
+  double last_ms = 0;
+  for (int k = 0; k < BARE_CONTACTS; k++) {
+    double ms = t.contact[k] > 0
+      ? fmax(0.5, t.at_ms[k] * feet_vary(FEET_VARY) +
+             BARE_JITTER_MS * breath_noise())
+      : 0;
+    v->contact_at[k + 1] = (int)(sample_rate * (late + ms) / 1000);
+    v->contact[k + 1] = t.contact[k];
+    last_ms = fmax(last_ms, ms);
+  }
+  v->k_att = feet_k(1000 / (2 * M_PI * t.s_att), sample_rate);
+  v->burst_decay = feet_decay(t.s_burst, sample_rate);
+  v->tail_decay = feet_decay(t.s_tail_ms, sample_rate);
+  v->tail_amount = t.s_tail;
+  for (int k = 0; k < BARE_BANDS; k++) {
+    bandpass_set(&v->band[k], BARE_BAND_HZ[k], BARE_BAND_Q, sample_rate);
+    v->band_gain[k] = level * bare_db(t.band[k]);
+  }
+  v->k_push = feet_k(1000 / (2 * M_PI * t.f_att), sample_rate);
+  v->push_decay = feet_decay(t.f_push, sample_rate);
+  v->k_rough = feet_k(BARE_FLOOR_NOISE_HZ, sample_rate);
+  bandpass_set(&v->rumble, BARE_RUMBLE_HZ, M_SQRT1_2, sample_rate);
+  double tune = t.f_tune * feet_vary(BARE_TUNE_VARY);
+  for (int k = 0; k < BARE_MODES; k++) {
+    // Ringing for f_ring: a Q of pi f tau.
+    double hz = BARE_MODE_HZ[k] * tune;
+    bandpass_set(&v->mode[k], hz, M_PI * hz * t.f_ring / 1000, sample_rate);
+    v->mode_gain[k] = level * bare_db(t.mode[k]);
+  }
+  bandpass_set(&v->thud, BARE_THUD_HZ, M_SQRT1_2, sample_rate);
+  v->thud_gain = level * bare_db(t.thud);
+  v->frames = (int)(sample_rate * ((late + last_ms) / 1000 +
+                                   7 * fmax(t.f_ring, t.s_tail_ms) / 1000));
+}
+
+static void play_bare(float* left, float* right, int len,
+                      double sample_rate) {
+  for (int n = 0; n < BARE_VOICES; n++) {
+    BareVoice* v = &bare_voices[n];
+    if (!v->frames) continue;
+    int run = len < v->frames ? len : v->frames;
+    for (int i = 0; i < run; i++, v->at++) {
+      for (int m = 0; m <= BARE_CONTACTS; m++) {
+        if (v->at != v->contact_at[m] || !v->contact[m]) continue;
+        v->burst += v->contact[m];
+        v->tail += v->contact[m];
+        v->push_drive += v->contact[m];
+      }
+      double x = breath_noise();
+      // The slap: noise, rising quickly to the burst and its tail.
+      v->slap += (v->burst + v->tail_amount * v->tail - v->slap) * v->k_att;
+      double slap = x * v->slap;
+      double y = 0;
+      for (int k = 0; k < BARE_BANDS; k++) {
+        y += v->band_gain[k] * bandpass_run(&v->band[k], slap);
+      }
+      // The floor: the push, a little rough, ringing its modes.
+      v->push += (v->push_drive - v->push) * v->k_push;
+      v->rough += (breath_noise() - v->rough) * v->k_rough;
+      double push = v->push * (1 + BARE_FLOOR_NOISE * v->rough);
+      push -= lowpass_run(&v->rumble, push);  // nothing the floor can't ring
+      for (int k = 0; k < BARE_MODES; k++) {
+        y += v->mode_gain[k] * bandpass_run(&v->mode[k], push);
+      }
+      y += v->thud_gain * lowpass_run(&v->thud, push);
+      v->burst *= v->burst_decay;
+      v->tail *= v->tail_decay;
+      v->push_drive *= v->push_decay;
+      left[i] += (float)y;
+      right[i] += (float)y;
+    }
+    v->frames -= run;
+  }
+}
+
 static void play_feet(float* left, float* right, int len,
                       double sample_rate) {
   unsigned w = atomic_load_explicit(&feet_written, memory_order_acquire);
   unsigned r = atomic_load_explicit(&feet_read, memory_order_relaxed);
-  for (; r != w; r++) feet_start(&feet_ring[r % FEET_RING], sample_rate);
+  for (; r != w; r++) {
+    const FeetStep* step = &feet_ring[r % FEET_RING];
+    if (step->kind >= FEET_BARE_KICK) bare_start(step, sample_rate);
+    else feet_start(step, sample_rate);
+  }
   atomic_store_explicit(&feet_read, r, memory_order_release);
+  play_bare(left, right, len, sample_rate);
   for (int n = 0; n < FEET_VOICES; n++) {
     FeetVoice* v = &feet_voices[n];
     if (!v->frames) continue;

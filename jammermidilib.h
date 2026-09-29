@@ -186,10 +186,14 @@
 // nothing, leaving the Grid Hat, if it's on, on its own, on the Standard
 // set's hat.
 #define KIT_NONE   15
-#define N_KITS     16
+// The Bare Feet: barefoot on a wooden floor, the Mac's own sound too, and
+// modelled on recordings of it -- a slap of skin over the floor's low
+// answer, played as hard as the pedals are hit (see feet_pedal).
+#define KIT_BARE_FEET 16
+#define N_KITS     17
 
 static inline bool kit_is_feet(int kit) {
-  return kit == KIT_FEET || kit == KIT_STOMPY_FEET;
+  return kit == KIT_FEET || kit == KIT_STOMPY_FEET || kit == KIT_BARE_FEET;
 }
 
 // Whether the kit is fluidsynth's percussion, which arpeggiate_drum and
@@ -291,6 +295,9 @@ static const DrumKit KITS[N_KITS] = {
   [KIT_STOMPY_FEET] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
                        MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0,
                        NO_PITCHED_KICK, 0, 0.81, 0.59},
+  [KIT_BARE_FEET] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
+                     MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0,
+                     NO_PITCHED_KICK, 0, 0.81, 0.59},
   // Never played either, but the Grid Hat's: the Standard set's hat.
   [KIT_NONE] = {PERC_STANDARD, MIDI_DRUM_OUT_KICK_2, MIDI_DRUM_OUT_RIM,
                 MIDI_DRUM_OUT_CLOSED_HIHAT, 1.41, 0.81, 1.0,
@@ -298,7 +305,8 @@ static const DrumKit KITS[N_KITS] = {
 };
 
 // The Feet's steps, to the Mac's sound: which (FEET_*, common.h), how hard,
-// 0 gentle to 1 a stomp, how loud, 0-1, and whether it's on the grid, which
+// 0 gentle to 1 a stomp -- or for the Bare Feet's, how hard the foot comes
+// down (bare_force) -- how loud, 0-1, and whether it's on the grid, which
 // a player's a little behind or ahead of, rather than a pedal's, which is
 // when it is.  Called with the lock held.  NULL on the Pi, which has no
 // Feet, so there the kit isn't on the keys and isn't the default.
@@ -624,7 +632,7 @@ struct Configuration {
   unsigned breath_layers;
 
   // The drum's: whether blowing has everything hit harder (BREATH HARD, on
-  // M), and the Grid Hat, over whichever kit it's on (F).
+  // M), and the Grid Hat, over whichever kit it's on (G).
   bool drum_breath_hard;
   bool drum_grid_hat;
 };
@@ -2713,7 +2721,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     case 'A': pick_drum_kit(KIT_RIM); return;
     case 'S': if (feet_hook) pick_drum_kit(KIT_FEET); return;
     case 'D': if (feet_hook) pick_drum_kit(KIT_STOMPY_FEET); return;
-    case 'F': c->drum_grid_hat = !c->drum_grid_hat; return;
+    case 'F': if (feet_hook) pick_drum_kit(KIT_BARE_FEET); return;
+    case 'G': c->drum_grid_hat = !c->drum_grid_hat; return;
     case 'M':
       c->drum_breath_hard = !c->drum_breath_hard;
       update_breath_fx();  // kit_gain
@@ -2725,7 +2734,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     // The rest of the voice keys do nothing with the drum selected.  They
     // must still return, or they'd fall through and pick a melodic voice
     // for a channel that's playing a percussion set.
-    case 'G': case 'H':
+    case 'H':
     case 'B': case 'N':
       return;
     }
@@ -3468,6 +3477,8 @@ static int hat_steps(bool pedals, int* at) {
 #define FEET_VEL_FULL 100.0
 static double feet_hard(void);
 static double feet_vel_level(double velocity);
+static double bare_force(double velocity);
+#define BARE_AUTO_HAT 0.5  // -6dB: see bare_force
 
 void breath_hat_tick(void) {
   double blown = breath_blown(breath);
@@ -3527,6 +3538,11 @@ void breath_hat_tick(void) {
   if (kit_is_feet(c->drum_voice) && feet_hook) {
     double as_hit = velocity * FEET_VEL_FULL / HAT_HARDEST;
     if (as_hit < 1) return;
+    if (c->drum_voice == KIT_BARE_FEET) {
+      feet_hook(FEET_BARE_HIHAT, bare_force(as_hit),
+                BARE_AUTO_HAT * mac_gain(ENDPOINT_DRUM), true);
+      return;
+    }
     feet_hook(FEET_TAP, feet_hard(),
               feet_vel_level(as_hit) * mac_gain(ENDPOINT_DRUM), true);
     return;
@@ -3578,6 +3594,36 @@ static double feet_hard(void) {
 #define FEET_VEL_HARD 0.35
 
 
+// The Bare Feet go by how hard the foot comes down, all of it, rather than
+// a level and a stomp: the recordings they're modelled on are each sound
+// played softly and firmly, and some harder still, and in between and past
+// them the sound follows along from one to the next (macapi.h's
+// bare_take).  A firm 100 is BARE_FIRM, where the firm ones were, 40 about
+// where the soft ones were, and 127 past the firm ones; and blowing, with
+// BREATH HARD on, harder again, by up to BARE_BREATH.  Their loudness is
+// the recordings', so `level` is only the drum's volume, and the grid's
+// steps' levels.  And the grid's duller steps, the preup and predown, are
+// the kick's, BARE_LIGHT lighter: a light kick, as the heel just touches.
+// The hats nobody's foot plays -- the grid's upbeat and the Grid Hat --
+// BARE_AUTO_HAT as loud as the hat pedal's, so they sit under it, and the
+// grid's predown (PRE UNIQ) as much under the rest.
+#define BARE_FIRM 0.7
+#define BARE_BREATH 0.35
+#define BARE_LIGHT 0.4
+
+static double bare_force(double velocity) {
+  return BARE_FIRM * velocity / FEET_VEL_FULL + BARE_BREATH * feet_hard();
+}
+
+static int bare_kind(int kind) {
+  switch (kind) {
+  case FEET_TAP: return FEET_BARE_HIHAT;
+  case FEET_TAP_LOW: return FEET_BARE_SNARE;
+  case FEET_TAP_LOWER: return FEET_BARE_RIDE;
+  default: return FEET_BARE_KICK;
+  }
+}
+
 // How loud and how much harder, for `velocity`.
 static double feet_vel_level(double velocity) {
   return pow(velocity / FEET_VEL_FULL, FEET_VEL_CURVE);
@@ -3609,8 +3655,13 @@ void feet_pedal(int note_in, int velocity, uint64_t current_time) {
     if (!c->downbeat[ENDPOINT_DRUM]) return;
     if (c->drum_voice == KIT_STOMPY_FEET) kind = FEET_BOARD;
   }
-  feet_hook(kind, fmin(1, feet_hard() + feet_vel_hard(velocity)),
-            feet_vel_level(velocity) * mac_gain(ENDPOINT_DRUM), false);
+  if (c->drum_voice == KIT_BARE_FEET) {
+    feet_hook(bare_kind(kind), bare_force(velocity), mac_gain(ENDPOINT_DRUM),
+              false);
+  } else {
+    feet_hook(kind, fmin(1, feet_hard() + feet_vel_hard(velocity)),
+              feet_vel_level(velocity) * mac_gain(ENDPOINT_DRUM), false);
+  }
   // The grid mustn't play a step of its own on top of it.
   feet_last_step_ns = current_time;
 }
@@ -3661,6 +3712,15 @@ void feet_tick(void) {
     c->pre_unique[ENDPOINT_DRUM]);
   if (level <= 0) return;
   double velocity = feet_kick_velocity();
+  if (c->drum_voice == KIT_BARE_FEET) {
+    bool predown = !upbeat && at[k] != preup_subbeat();
+    feet_hook(upbeat ? FEET_BARE_HIHAT : FEET_BARE_KICK,
+              bare_force(velocity) - (upbeat ? 0 : BARE_LIGHT),
+              (upbeat || predown ? BARE_AUTO_HAT : 1) * level *
+              mac_gain(ENDPOINT_DRUM), true);
+    auto_hat_ns = t;
+    return;
+  }
   feet_hook(upbeat ? FEET_TAP : FEET_TAP_SOFT,
             fmin(1, feet_hard() + feet_vel_hard(velocity)),
             level * feet_vel_level(velocity) * mac_gain(ENDPOINT_DRUM), true);

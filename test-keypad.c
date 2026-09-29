@@ -189,9 +189,9 @@ static void test_voices() {
   // The voice keys with no kit on them do nothing at all with the drum
   // selected -- in particular they must not fall through and set a melodic
   // voice on a channel that's playing a percussion set.
-  // S and D are the Feet and the Stompy Feet, but only with the Mac's sound
-  // for them, and there's none here.
-  const char* blank[] = {"S", "D", "G", "H", "B", "N"};
+  // S, D and F are the Feet, the Stompy Feet and the Bare Feet, but only
+  // with the Mac's sound for them, and there's none here.
+  const char* blank[] = {"S", "D", "F", "H", "B", "N"};
   for (int i = 0; i < (int)(sizeof(blank) / sizeof(blank[0])); i++) {
     int was_kit = c->drum_voice;
     int was_voice = c->voices[ENDPOINT_DRUM];
@@ -3518,7 +3518,7 @@ static void test_jawharp_voices() {
 }
 
 // The shakers on the Breath Gate's J and K: the Brushes and the Tamb Shake.
-// And the Grid Hat, which was on its L and is now a drum kit, on F.
+// And the Grid Hat, which was on its L and is now a drum kit's, on G.
 static void test_tambourines() {
   full_reset();
   midi_tap = tap_midi;
@@ -3569,7 +3569,7 @@ static void test_tambourines() {
   press("K");
   CHECK(!(told_fx & BREATH_FX_TAMB), "K again should switch it off");
 
-  // The Grid Hat, the drum's F.  At rest, nothing; blowing, 16ths at 116
+  // The Grid Hat, the drum's G.  At rest, nothing; blowing, 16ths at 116
   // BPM with no pedals, one every 129ms, soft blowing gently and hard
   // blowing medium; blowing hard, 32nds; three a beat in jig time, and six
   // blowing hard; and it stops with the breath.
@@ -3582,15 +3582,15 @@ static void test_tambourines() {
   handle_cc(CC_BREATH, 0);
   press("tab");
   select_ep("tab");
-  const Key* f = key_for_cap("F");
-  CHECK(strcmp(key_current_label(f), "Grid\nHat") == 0,
-        "F should be the Grid Hat on the drum");
+  const Key* g = key_for_cap("G");
+  CHECK(strcmp(key_current_label(g), "Grid\nHat") == 0,
+        "G should be the Grid Hat on the drum");
   const char* spoken_hat[] = {"press", "grid", "hat"};
-  CHECK(strcmp(phrase(spoken_hat, 3, true), "press F") == 0,
+  CHECK(strcmp(phrase(spoken_hat, 3, true), "press G") == 0,
         "'press grid hat'");
-  press("F");
-  CHECK(c->drum_grid_hat && lit("F") && c->drum_voice == KIT_RIM &&
-        lit("A"), "F should switch the Grid Hat on, over the kit");
+  press("G");
+  CHECK(c->drum_grid_hat && lit("G") && c->drum_voice == KIT_RIM &&
+        lit("A"), "G should switch the Grid Hat on, over the kit");
   handle_cc(CC_BREATH, 0);
   n_tapped = 0;
   hat_for(150);
@@ -3644,7 +3644,7 @@ static void test_tambourines() {
   // plays as ever under it.
   handle_cc(CC_BREATH, 60);
   press("Z");
-  CHECK(c->drum_voice == KIT_808_A && lit("Z") && lit("F"),
+  CHECK(c->drum_voice == KIT_808_A && lit("Z") && lit("G"),
         "picking a kit should leave the Grid Hat on");
   n_tapped = 0;
   hat_for(300);
@@ -3652,13 +3652,13 @@ static void test_tambourines() {
   CHECK(hat_taps(0, 127) > 0 &&
         count_tapped(MIDI_ON, MIDI_DRUM_OUT_RIM, CHANNEL_DRUM) == 1,
         "the Grid Hat and the kit should play together");
-  // F again, or the drum off, stops it.
-  press("F");
-  CHECK(!c->drum_grid_hat && !lit("F"), "F again should switch it off");
+  // G again, or the drum off, stops it.
+  press("G");
+  CHECK(!c->drum_grid_hat && !lit("G"), "G again should switch it off");
   n_tapped = 0;
   hat_for(300);
-  CHECK(hat_taps(0, 127) == 0, "F again should stop it");
-  press("D");
+  CHECK(hat_taps(0, 127) == 0, "G again should stop it");
+  press("G");
   press("tab");
   n_tapped = 0;
   hat_for(300);
@@ -3734,7 +3734,7 @@ static void test_grid_hat_on_the_pedals() {
   midi_tap = tap_midi;
   press("tab");
   select_ep("tab");
-  press("F");
+  press("G");
   char got[256];
   hat_subbeats(BREATH_FLOOR + 20, false, 0, got);
   const int straight[] = {0, 18, 35, 54};
@@ -3936,6 +3936,65 @@ static void test_feet() {
           "on the Stompy Feet pedal %d should be a step of kind %d",
           p, stompy_kinds[p]);
   }
+  // The Bare Feet: each pedal a sound of their own, as hard as it's hit --
+  // a firm 100 where the firm recordings were -- and at the drum's level
+  // whatever the velocity, the recordings being as loud as they were hit.
+  press("F");
+  CHECK(c->drum_voice == KIT_BARE_FEET && lit("F") && !lit("D"),
+        "F should pick the Bare Feet");
+  const int bare_kinds[4] = {FEET_BARE_KICK, FEET_BARE_SNARE,
+                             FEET_BARE_HIHAT, FEET_BARE_RIDE};
+  for (int p = 0; p < 4; p++) {
+    n_feet_heard = 0;
+    handle_feet(MIDI_ON, pedals[p], 100);
+    CHECK(n_feet_heard == 1 && feet_heard[0].kind == bare_kinds[p] &&
+          fabs(feet_heard[0].hard - BARE_FIRM) < 1e-9 &&
+          fabs(feet_heard[0].level - 1) < 1e-9,
+          "on the Bare Feet pedal %d should be a step of kind %d, firm "
+          "(%d steps, %.2f hard)", p, bare_kinds[p], n_feet_heard,
+          n_feet_heard ? feet_heard[0].hard : -1);
+  }
+  const int bare_vels[3] = {40, 100, 127};
+  double bare_hard[3], bare_level[3];
+  for (int v = 0; v < 3; v++) {
+    n_feet_heard = 0;
+    handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, bare_vels[v]);
+    bare_hard[v] = n_feet_heard ? feet_heard[0].hard : -1;
+    bare_level[v] = n_feet_heard ? feet_heard[0].level : -1;
+  }
+  CHECK(bare_hard[0] > 0.2 && bare_hard[0] < 0.35 &&
+        bare_hard[2] > BARE_FIRM + 0.1 && bare_level[0] == 1 &&
+        bare_level[2] == 1,
+        "the Bare Feet should go by how hard they're hit, not how loud "
+        "(%.2f %.2f %.2f hard, %.2f %.2f level)", bare_hard[0],
+        bare_hard[1], bare_hard[2], bare_level[0], bare_level[2]);
+  // On the grid: the kick, the upbeat the hihat's, and the predown a light
+  // kick.  (The pedals just hit mustn't have the beat's steps.)
+  drum_pedal_ns = 0;
+  feet_subbeats(0, false, 0, true, got);
+  CHECK(n_feet_heard >= 3 &&
+        feet_heard[n_feet_heard - 3].kind == FEET_BARE_KICK &&
+        fabs(feet_heard[n_feet_heard - 3].hard - BARE_FIRM) < 1e-9 &&
+        feet_heard[n_feet_heard - 2].kind == FEET_BARE_HIHAT &&
+        fabs(feet_heard[n_feet_heard - 2].hard - BARE_FIRM) < 1e-9 &&
+        feet_heard[n_feet_heard - 1].kind == FEET_BARE_KICK &&
+        fabs(feet_heard[n_feet_heard - 1].hard -
+             (BARE_FIRM - BARE_LIGHT)) < 1e-9,
+        "the Bare Feet on the grid should be kick, hihat, light kick");
+  CHECK(fabs(feet_heard[n_feet_heard - 2].level - BARE_AUTO_HAT) < 1e-9 &&
+        fabs(feet_heard[n_feet_heard - 1].level - BARE_AUTO_HAT) < 1e-9,
+        "the grid's hat and predown should be 6dB under (%.2f %.2f)",
+        feet_heard[n_feet_heard - 2].level,
+        feet_heard[n_feet_heard - 1].level);
+  // Blowing, with BREATH HARD, harder.
+  c->drum_breath_hard = true;
+  feet_subbeats(BREATH_FULL, false, 0, true, got);
+  CHECK(n_feet_heard >= 1 &&
+        fabs(feet_heard[n_feet_heard - 1].hard -
+             (BARE_FIRM + BARE_BREATH - BARE_LIGHT)) < 1e-6,
+        "blowing should have the Bare Feet land harder (%.2f)",
+        n_feet_heard ? feet_heard[n_feet_heard - 1].hard : -1);
+  c->drum_breath_hard = false;
   press("S");
   // As hard as it's hit: soft quieter, firm at the grid's level, and
   // hardest louder and harder.
@@ -4358,6 +4417,46 @@ static void test_feet_sound() {
                              &board_after);
   set_drum_gain(1);
   CHECK(muted == 0, "drum volume at 0 should silence the Feet (%.5f)", muted);
+  // The Bare Feet: each of them louder the harder, and past the takes too,
+  // either way; the kick the deepest; the snare brighter hit firmly than
+  // softly; and a firm kick about as loud as the Feet's firm thump.
+  const char* bare_names[4] = {"kick", "snare", "hihat", "ride"};
+  const double bare_forces[5] = {0.1, 0.3, 0.7, 0.85, 1.2};
+  double bare[4][5], bare_low[4][5], bare_high[4][5], bare_after;
+  for (int k = 0; k < 4; k++) {
+    for (int f = 0; f < 5; f++) {
+      bare[k][f] = 0;
+      bare_low[k][f] = 0;
+      bare_high[k][f] = 0;
+      for (int i = 0; i < 8; i++) {
+        double lo, hi;
+        memset(bare_voices, 0, sizeof(bare_voices));
+        bare[k][f] += feet_render(FEET_BARE_KICK + k, bare_forces[f], &lo,
+                                  &hi, &bare_after) / 8;
+        bare_low[k][f] += lo / 8;
+        bare_high[k][f] += hi / 8;
+      }
+    }
+    for (int f = 1; f < 5; f++) {
+      CHECK(bare[k][f] > bare[k][f - 1],
+            "the Bare Feet's %s should be louder hit harder (%.4f at %.2f, "
+            "%.4f at %.2f)", bare_names[k], bare[k][f - 1],
+            bare_forces[f - 1], bare[k][f], bare_forces[f]);
+    }
+  }
+  for (int k = 1; k < 4; k++) {
+    CHECK(bare_low[0][2] / bare_high[0][2] > 3 * bare_low[k][2] /
+          bare_high[k][2],
+          "the Bare Feet's kick should be deeper than their %s",
+          bare_names[k]);
+  }
+  CHECK(bare_high[1][2] > 1.3 * bare_high[1][1],
+        "a firm bare snare should be brighter than a soft one (%.3f %.3f)",
+        bare_high[1][2], bare_high[1][1]);
+  CHECK(bare[0][2] > 0.5 * thump && bare[0][2] < 2 * thump,
+        "a firm bare kick should be about as loud as a thump (%.4f %.4f)",
+        bare[0][2], thump);
+  memset(bare_voices, 0, sizeof(bare_voices));
   printf("feet: gentle thump %.1fdB, tap %.1fdB, stomp %.1fdB RMS\n",
          20 * log10(thump), 20 * log10(tap), 20 * log10(stomp));
   memset(feet_voices, 0, sizeof(feet_voices));  // nothing left ringing
@@ -4677,7 +4776,7 @@ static void test_drum_kit_reach() {
   // The Grid Hat on the kit's hat: the Ride kit's is its ride.
   press("tab");
   select_drum_kit(KIT_RIDE);
-  press("F");
+  press("G");
   handle_cc(CC_BREATH, 60);
   n_tapped = 0;
   hat_for(300);
@@ -4691,20 +4790,24 @@ static void test_drum_kit_reach() {
   CHECK(ride > 0 && other == 0,
         "the Grid Hat should play the kit's hat (%d ride, %d other)", ride,
         other);
-  // Over the Feet and the Stompy Feet, the Feet's hat: a toe's tap.
+  // Over the Feet and the Stompy Feet, the Feet's hat: a toe's tap.  Over
+  // the Bare Feet, theirs.
   feet_hook = feet_record;
-  for (int k = 0; k < 2; k++) {
-    select_drum_kit(k ? KIT_STOMPY_FEET : KIT_FEET);
+  const int hat_kits[3] = {KIT_FEET, KIT_STOMPY_FEET, KIT_BARE_FEET};
+  const int hat_kinds[3] = {FEET_TAP, FEET_TAP, FEET_BARE_HIHAT};
+  const char* hat_kit_names[3] = {"Feet", "Stompy Feet", "Bare Feet"};
+  for (int k = 0; k < 3; k++) {
+    select_drum_kit(hat_kits[k]);
     n_tapped = 0;
     n_feet_heard = 0;
     hat_for(300);
     bool taps = n_feet_heard > 0;
     for (int i = 0; i < n_feet_heard; i++) {
-      if (feet_heard[i].kind != FEET_TAP) taps = false;
+      if (feet_heard[i].kind != hat_kinds[k]) taps = false;
     }
     CHECK(taps && hat_taps(0, 127) == 0,
           "over the %s the Grid Hat should be their taps (%d taps, %d hats)",
-          k ? "Stompy Feet" : "Feet", n_feet_heard, hat_taps(0, 127));
+          hat_kit_names[k], n_feet_heard, hat_taps(0, 127));
   }
   feet_hook = NULL;
   // With no kit, just the Grid Hat, on the Standard set's closed hat, and
