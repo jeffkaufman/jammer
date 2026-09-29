@@ -16,6 +16,7 @@
 #include "keylayout.h"
 #include "keypad.h"
 #include "numrec.h"
+#include "loudness.h"
 
 static int failures = 0;
 
@@ -189,9 +190,10 @@ static void test_voices() {
   // The voice keys with no kit on them do nothing at all with the drum
   // selected -- in particular they must not fall through and set a melodic
   // voice on a channel that's playing a percussion set.
-  // S, D and F are the Feet, the Stompy Feet and the Bare Feet, but only
-  // with the Mac's sound for them, and there's none here.
-  const char* blank[] = {"S", "D", "F", "H", "B", "N"};
+  // S, D, F and G are the Feet, the Stompy Feet, the Bare Feet and the
+  // Hand Drums, but only with the Mac's sound for them, and there's none
+  // here.
+  const char* blank[] = {"S", "D", "F", "G", "B", "N"};
   for (int i = 0; i < (int)(sizeof(blank) / sizeof(blank[0])); i++) {
     int was_kit = c->drum_voice;
     int was_voice = c->voices[ENDPOINT_DRUM];
@@ -3518,7 +3520,7 @@ static void test_jawharp_voices() {
 }
 
 // The shakers on the Breath Gate's J and K: the Brushes and the Tamb Shake.
-// And the Grid Hat, which was on its L and is now a drum kit's, on G.
+// And the Grid Hat, which was on its L and is now a drum kit's, on H.
 static void test_tambourines() {
   full_reset();
   midi_tap = tap_midi;
@@ -3569,7 +3571,7 @@ static void test_tambourines() {
   press("K");
   CHECK(!(told_fx & BREATH_FX_TAMB), "K again should switch it off");
 
-  // The Grid Hat, the drum's G.  At rest, nothing; blowing, 16ths at 116
+  // The Grid Hat, the drum's H.  At rest, nothing; blowing, 16ths at 116
   // BPM with no pedals, one every 129ms, soft blowing gently and hard
   // blowing medium; blowing hard, 32nds; three a beat in jig time, and six
   // blowing hard; and it stops with the breath.
@@ -3582,15 +3584,15 @@ static void test_tambourines() {
   handle_cc(CC_BREATH, 0);
   press("tab");
   select_ep("tab");
-  const Key* g = key_for_cap("G");
+  const Key* g = key_for_cap("H");
   CHECK(strcmp(key_current_label(g), "Grid\nHat") == 0,
-        "G should be the Grid Hat on the drum");
+        "H should be the Grid Hat on the drum");
   const char* spoken_hat[] = {"press", "grid", "hat"};
-  CHECK(strcmp(phrase(spoken_hat, 3, true), "press G") == 0,
+  CHECK(strcmp(phrase(spoken_hat, 3, true), "press H") == 0,
         "'press grid hat'");
-  press("G");
-  CHECK(c->drum_grid_hat && lit("G") && c->drum_voice == KIT_RIM &&
-        lit("A"), "G should switch the Grid Hat on, over the kit");
+  press("H");
+  CHECK(c->drum_grid_hat && lit("H") && c->drum_voice == KIT_RIM &&
+        lit("A"), "H should switch the Grid Hat on, over the kit");
   handle_cc(CC_BREATH, 0);
   n_tapped = 0;
   hat_for(150);
@@ -3644,7 +3646,7 @@ static void test_tambourines() {
   // plays as ever under it.
   handle_cc(CC_BREATH, 60);
   press("Z");
-  CHECK(c->drum_voice == KIT_808_A && lit("Z") && lit("G"),
+  CHECK(c->drum_voice == KIT_808_A && lit("Z") && lit("H"),
         "picking a kit should leave the Grid Hat on");
   n_tapped = 0;
   hat_for(300);
@@ -3652,13 +3654,13 @@ static void test_tambourines() {
   CHECK(hat_taps(0, 127) > 0 &&
         count_tapped(MIDI_ON, MIDI_DRUM_OUT_RIM, CHANNEL_DRUM) == 1,
         "the Grid Hat and the kit should play together");
-  // G again, or the drum off, stops it.
-  press("G");
-  CHECK(!c->drum_grid_hat && !lit("G"), "G again should switch it off");
+  // H again, or the drum off, stops it.
+  press("H");
+  CHECK(!c->drum_grid_hat && !lit("H"), "H again should switch it off");
   n_tapped = 0;
   hat_for(300);
-  CHECK(hat_taps(0, 127) == 0, "G again should stop it");
-  press("G");
+  CHECK(hat_taps(0, 127) == 0, "H again should stop it");
+  press("H");
   press("tab");
   n_tapped = 0;
   hat_for(300);
@@ -3734,7 +3736,7 @@ static void test_grid_hat_on_the_pedals() {
   midi_tap = tap_midi;
   press("tab");
   select_ep("tab");
-  press("G");
+  press("H");
   char got[256];
   hat_subbeats(BREATH_FLOOR + 20, false, 0, got);
   const int straight[] = {0, 18, 35, 54};
@@ -3916,13 +3918,22 @@ static void test_feet() {
   const int pedals[4] = {MIDI_DRUM_IN_KICK, MIDI_DRUM_IN_SNARE,
                          MIDI_DRUM_IN_HIHAT, MIDI_DRUM_IN_CRASH};
   const int kinds[4] = {FEET_THUMP, FEET_TAP_LOW, FEET_TAP, FEET_TAP_LOWER};
+  // The snare, half of it the Bare Feet's slap, is two.
   for (int p = 0; p < 4; p++) {
     n_feet_heard = 0;
     handle_feet(MIDI_ON, pedals[p], 100);
-    CHECK(n_feet_heard == 1 && feet_heard[0].kind == kinds[p],
+    CHECK(n_feet_heard == (p == 1 ? 2 : 1) && feet_heard[0].kind == kinds[p] &&
+          (p != 1 || feet_heard[1].kind == FEET_BARE_SNARE),
           "pedal %d should be a step of kind %d with no beat, not %d steps",
           p, kinds[p], n_feet_heard);
   }
+  n_feet_heard = 0;
+  handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, 100);
+  CHECK(n_feet_heard == 2 &&
+        fabs(feet_heard[0].level - FEET_SNARE_OWN) < 1e-9 &&
+        fabs(feet_heard[1].level - FEET_SNARE_SLAP) < 1e-9 &&
+        fabs(feet_heard[1].hard - BARE_FIRM) < 1e-9,
+        "a firm snare should be its tap and the slap, equal to the ear");
   // The Stompy Feet: the same, but the kick on a board.
   press("D");
   CHECK(c->drum_voice == KIT_STOMPY_FEET && lit("D") && !lit("S"),
@@ -3932,7 +3943,8 @@ static void test_feet() {
   for (int p = 0; p < 4; p++) {
     n_feet_heard = 0;
     handle_feet(MIDI_ON, pedals[p], 100);
-    CHECK(n_feet_heard == 1 && feet_heard[0].kind == stompy_kinds[p],
+    CHECK(n_feet_heard == (p == 1 ? 2 : 1) &&
+          feet_heard[0].kind == stompy_kinds[p],
           "on the Stompy Feet pedal %d should be a step of kind %d",
           p, stompy_kinds[p]);
   }
@@ -3942,8 +3954,9 @@ static void test_feet() {
   press("F");
   CHECK(c->drum_voice == KIT_BARE_FEET && lit("F") && !lit("D"),
         "F should pick the Bare Feet");
+  // Their hihat and ride pedals play each other's.
   const int bare_kinds[4] = {FEET_BARE_KICK, FEET_BARE_SNARE,
-                             FEET_BARE_HIHAT, FEET_BARE_RIDE};
+                             FEET_BARE_RIDE, FEET_BARE_HIHAT};
   for (int p = 0; p < 4; p++) {
     n_feet_heard = 0;
     handle_feet(MIDI_ON, pedals[p], 100);
@@ -3954,6 +3967,21 @@ static void test_feet() {
           "(%d steps, %.2f hard)", p, bare_kinds[p], n_feet_heard,
           n_feet_heard ? feet_heard[0].hard : -1);
   }
+  // The Hand Drums: the same, their own sounds, the hihat's on the hat.
+  const int hand_kinds[4] = {FEET_HAND_KICK, FEET_HAND_SNARE,
+                             FEET_HAND_HIHAT, FEET_HAND_RIDE};
+  press("G");
+  CHECK(c->drum_voice == KIT_HAND_DRUMS && lit("G") && !lit("F"),
+        "G should pick the Hand Drums");
+  for (int p = 0; p < 4; p++) {
+    n_feet_heard = 0;
+    handle_feet(MIDI_ON, pedals[p], 100);
+    CHECK(n_feet_heard == 1 &&
+          feet_heard[0].kind == hand_kinds[p] &&
+          fabs(feet_heard[0].hard - BARE_FIRM) < 1e-9,
+          "on the Hand Drums pedal %d should be their step", p);
+  }
+  press("F");
   const int bare_vels[3] = {40, 100, 127};
   double bare_hard[3], bare_level[3];
   for (int v = 0; v < 3; v++) {
@@ -4002,7 +4030,7 @@ static void test_feet() {
   double heard_level[3], heard_hard[3];
   for (int v = 0; v < 3; v++) {
     n_feet_heard = 0;
-    handle_feet(MIDI_ON, MIDI_DRUM_IN_SNARE, vels[v]);
+    handle_feet(MIDI_ON, MIDI_DRUM_IN_HIHAT, vels[v]);
     heard_level[v] = n_feet_heard ? feet_heard[0].level : -1;
     heard_hard[v] = n_feet_heard ? feet_heard[0].hard : -1;
   }
@@ -4347,6 +4375,22 @@ static double feet_render(int kind, double hard, double* low, double* high,
   return sqrt(sum / 24000);
 }
 
+// How loud a step is to the ear, dB, over eight of them.
+static double feet_heard_loudness(int kind, double hard) {
+  static float l[24000], r[24000];
+  double sum = 0;
+  for (int i = 0; i < 8; i++) {
+    memset(l, 0, sizeof(l));
+    memset(r, 0, sizeof(r));
+    memset(feet_voices, 0, sizeof(feet_voices));
+    memset(bare_voices, 0, sizeof(bare_voices));
+    feet_hit(kind, hard, 1, false);
+    for (int b = 0; b < 50; b++) play_feet(l + 480 * b, r + 480 * b, 480, 48000);
+    sum += perceived_loudness(l, 24000, 48000);
+  }
+  return sum / 8;
+}
+
 static void test_feet_sound() {
   double thump_low, thump_high, thump_after, tap_low, tap_high, tap_after;
   double stomp_low, stomp_high, stomp_after;
@@ -4453,9 +4497,20 @@ static void test_feet_sound() {
   CHECK(bare_high[1][2] > 1.3 * bare_high[1][1],
         "a firm bare snare should be brighter than a soft one (%.3f %.3f)",
         bare_high[1][2], bare_high[1][1]);
-  CHECK(bare[0][2] > 0.5 * thump && bare[0][2] < 2 * thump,
-        "a firm bare kick should be about as loud as a thump (%.4f %.4f)",
-        bare[0][2], thump);
+  // To the ear: RMS makes much of the kick's thud, deep enough that it's
+  // heard less.
+  double thump_heard = feet_heard_loudness(FEET_THUMP, 0);
+  double bare_kick_heard = feet_heard_loudness(FEET_BARE_KICK, BARE_FIRM);
+  double bare_snare_heard = feet_heard_loudness(FEET_BARE_SNARE, BARE_FIRM);
+  CHECK(fabs(bare_kick_heard - thump_heard) < 2 &&
+        fabs(bare_snare_heard - thump_heard) < 2,
+        "a firm bare kick and snare should be as loud as a thump (%.1f %.1f "
+        "%.1fdB)", bare_kick_heard, bare_snare_heard, thump_heard);
+  // The Hand Drums near enough the same: they're as the Bare Feet were.
+  double hand_kick_heard = feet_heard_loudness(FEET_HAND_KICK, BARE_FIRM);
+  CHECK(fabs(hand_kick_heard - thump_heard) < 3,
+        "a firm hand drum kick should be as loud as a thump (%.1f %.1fdB)",
+        hand_kick_heard, thump_heard);
   memset(bare_voices, 0, sizeof(bare_voices));
   printf("feet: gentle thump %.1fdB, tap %.1fdB, stomp %.1fdB RMS\n",
          20 * log10(thump), 20 * log10(tap), 20 * log10(stomp));
@@ -4776,7 +4831,7 @@ static void test_drum_kit_reach() {
   // The Grid Hat on the kit's hat: the Ride kit's is its ride.
   press("tab");
   select_drum_kit(KIT_RIDE);
-  press("G");
+  press("H");
   handle_cc(CC_BREATH, 60);
   n_tapped = 0;
   hat_for(300);

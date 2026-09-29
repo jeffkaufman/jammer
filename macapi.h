@@ -326,20 +326,26 @@ static void kit_gain_set(double gain) {
 
 // The Audio Output menu's drum volume: everything the drum plays -- its
 // kit, the kicks, the Grid Hat and the Feet -- on top of the global volume,
-// the drum's -/+ and the rest.  Remembered, like the others.
+// the drum's -/+ and the rest.  Remembered, like the others.  Halfway, 1,
+// is DRUM_GAIN_UNITY: where it was set, and stayed, once the drum's own
+// levels had settled.  drum_gain is the slider's; drum_level what's heard.
 #define MAX_DRUM_GAIN 2.0
+#define DRUM_GAIN_UNITY 1.822
 static _Atomic float drum_gain = 1.0f;
+static _Atomic float drum_level = (float)DRUM_GAIN_UNITY;
 
 void set_drum_gain(double gain) {
   if (gain < 0) gain = 0;
   if (gain > MAX_DRUM_GAIN) gain = MAX_DRUM_GAIN;
   atomic_store_explicit(&drum_gain, (float)gain, memory_order_relaxed);
+  atomic_store_explicit(&drum_level, (float)(gain * DRUM_GAIN_UNITY),
+                        memory_order_relaxed);
 }
 
 static void apply_kit_gain(float** bufs, int n, double sample_rate) {
   double target = atomic_load_explicit(&kit_gain_target,
                                        memory_order_relaxed);
-  float drum = atomic_load_explicit(&drum_gain, memory_order_relaxed);
+  float drum = atomic_load_explicit(&drum_level, memory_order_relaxed);
   if (drum != 1.0f) {
     for (int i = 0; i < n; i++) {
       bufs[2 * CHANNEL_HAT][i] *= drum;
@@ -1293,18 +1299,26 @@ static void feet_start(const FeetStep* step, double sample_rate) {
 // ---------------------------------------------------------------------------
 // The drum's Bare Feet kit: barefoot on a wooden floor, fitted to recordings
 // of it -- each sound played eight times, some softly and some firmly, and
-// the snare harder still.  Every one of them is the same two things:
+// the snare harder still.  And the Hand Drums, what the Bare Feet first
+// were: the same, but their floor ringing at its modes' pitches, which
+// sounded like hand drums, not feet.  Every one of them is the same two
+// things:
 //
 //   slap    skin on the boards: a burst of noise, over in a millisecond or
 //           two, with a quieter tail, the room; through five bands, 500Hz
 //           to 8kHz, each as loud as the recording had it.  And a softer
 //           step's foot comes down in two or three contacts a few
 //           milliseconds apart, where a harder one lands all at once.
-//   floor   the floor's own answer: its modes, at 62, 83, 125 and 153Hz,
-//           and 50Hz, which a heel's weight on it pulls the lowest down to,
-//           rung by the foot's push -- a sharp one for a slap, a slow,
-//           heavy one for a kick -- and ringing on for a few tens of
-//           milliseconds; and the push itself, the thud, under 120Hz
+//   floor   the floor's own answer to the foot's push -- a sharp one for a
+//           slap, a slow, heavy one for a kick -- and the push itself, the
+//           thud, under 120Hz.  On the Bare Feet, noise, as loud as the
+//           push and the room after it, through broad bands from 40 to
+//           250Hz: the recordings have no pitch to them, and each hit's
+//           strongest peak is only what noise has, somewhere different
+//           every time.  On the Hand Drums, the floor's modes, rung: at 62,
+//           83, 125 and 153Hz, and 50Hz, which a heel's weight on it pulls
+//           the lowest down to, ringing on for a few tens of milliseconds
+//           -- the same few pitches, every hit
 //
 // and what differs is only how much of each, and how quickly:
 //
@@ -1338,6 +1352,7 @@ static void feet_start(const FeetStep* step, double sample_rate) {
 #define BARE_BEYOND 0.5       // past the takes, how fast it carries on
 #define BARE_LOUDER_DB 12.0   // and how much louder, at most, per 1 harder
 #define BARE_SOFTER_DB 30.0   // or softer, at least, per 1 softer
+#define BARE_FADE_DB 30.0     // a part fading out of a take, how far
 #define BARE_FORCE_VARY 0.04
 #define BARE_LEVEL_VARY 0.1
 #define BARE_TUNE_VARY 0.02
@@ -1346,6 +1361,7 @@ static void feet_start(const FeetStep* step, double sample_rate) {
 #define BARE_FLOOR_NOISE_HZ 300
 #define BARE_RUMBLE_HZ 35     // and nothing much below the lowest mode
 #define BARE_THUD_HZ 120      // the push itself, heard, below this
+#define BARE_FLOOR_Q 1.4      // the Bare Feet's floor's bands: broad
 // The recordings' level to ours, and each sound's trim (BARE_TAKES) against
 // the rest: a firm kick as loud as the Feet's firm thump, and a firm snare
 // as loud as it, as a kit's are, and the hihat and ride as loud as each
@@ -1356,6 +1372,7 @@ static void feet_start(const FeetStep* step, double sample_rate) {
 
 static const double BARE_BAND_HZ[BARE_BANDS] = {500, 1000, 2000, 4000, 8000};
 static const double BARE_MODE_HZ[BARE_MODES] = {50, 62, 83, 125, 153};
+static const double BARE_FLOOR_HZ[BARE_MODES] = {40, 63, 100, 160, 250};
 
 typedef struct {
   double force;                // how hard it was played (bare_force)
@@ -1370,6 +1387,9 @@ typedef struct {
   double f_att, f_push, f_ring, f_tune;
   // The foot's later contacts: when, ms, and how hard against the first.
   double at_ms[BARE_CONTACTS], contact[BARE_CONTACTS];
+  // The Bare Feet's floor's tail, the room, against the push: f_ring is how
+  // long it lasts.
+  double f_tail;
 } BareTake;
 
 typedef struct {
@@ -1379,7 +1399,68 @@ typedef struct {
 } BareSound;
 
 static const BareSound BARE_TAKES[] = {
-  [FEET_BARE_KICK - FEET_BARE_KICK] = {4.0, 2, {
+  [FEET_BARE_KICK - FEET_BARE_KICK] = {4.5, 2, {
+    // light kick: its fit's peak came out 7dB under the recording's, and
+    // it's brought up to it
+    {0.3, {-83.8, -85.6, -87.4, -89.2, -91.0},
+     0.82, 3.21, 0.10, 58.4,
+     {-21.5, 2.21, -22.0, -53.1, -84.6}, -101.3,
+     2.37, 5.07, 85.3, 1,
+     {3.00, 10.0, 0}, {0.80, 0.40, 0}, 0.10},
+    // kick
+    {0.7, {-33.9, -31.2, -34.6, -41.9, -52.9},
+     1.31, 0.50, 0.23, 40.4,
+     {-68.6, -71.5, -74.5, -77.4, -80.4}, 6.46,
+     25.0, 0.50, 55.5, 1,
+     {8.00, 0, 0}, {0.60, 0, 0}, 0.41}}},
+  [FEET_BARE_SNARE - FEET_BARE_KICK] = {-7.7, 3, {
+    // soft
+    {0.3, {-20.9, -10.2, -23.4, -47.4, -72.2},
+     0.92, 5.28, 0.12, 31.6,
+     {-14.3, 10.5, 3.32, -20.6, -45.5}, -94.1,
+     1.13, 2.02, 59.4, 1,
+     {4.00, 10.0, 14.0}, {0.90, 0.50, 0.35}, 0.12},
+    // firm
+    {0.7, {7.05, -5.31, -0.07, -20.1, -42.6},
+     0.16, 2.31, 0.20, 46.6,
+     {-17.8, 7.52, 13.4, -7.05, -30.1}, -95.1,
+     2.18, 1.15, 63.2, 1,
+     {13.0, 0, 0}, {0.28, 0, 0}, 0.35},
+    // hard
+    {0.85, {22.8, 11.6, 8.20, -12.5, -34.3},
+     0.62, 0.50, 0.03, 60.9,
+     {-13.6, 12.0, 8.84, -7.01, -25.7}, -111.5,
+     3.54, 3.38, 52.1, 1,
+     {3.00, 13.0, 0}, {0.50, 0.28, 0}, 0.34}}},
+  [FEET_BARE_HIHAT - FEET_BARE_KICK] = {1.9, 2, {
+    // not recorded: the firm one, less what the ride's soft one lacks
+    {0.3, {-65.4, -31.9, -28.1, -53.3, -78.0},
+     0.67, 1.16, 0.21, 72.1,
+     {-37.0, -11.9, -33.7, -63.8, -93.6}, -102.2,
+     0.38, 1.72, 76.3, 1,
+     {2.00, 5.00, 13.0}, {1.00, 0.55, 0.50}, 0.31},
+    // firm
+    {0.7, {-12.0, -2.87, -13.5, -38.5, -63.8},
+     1.20, 0.98, 0.07, 43.0,
+     {-24.2, 1.26, -6.94, -32.6, -59.3}, -91.9,
+     0.58, 3.10, 70.5, 1,
+     {4.00, 10.0, 0}, {0.45, 0.30, 0}, 0.34}}},
+  [FEET_BARE_RIDE - FEET_BARE_KICK] = {-1.9, 2, {
+    // soft
+    {0.3, {-45.0, -32.5, -23.9, -39.5, -56.8},
+     0.60, 1.97, 0.15, 51.2,
+     {-29.3, -4.03, -19.8, -45.6, -72.0}, -108.6,
+     3.04, 2.24, 47.9, 1,
+     {3.00, 9.00, 13.0}, {1.00, 0.50, 0.50}, 0.23},
+    // firm
+    {0.7, {8.45, -3.47, -9.31, -24.8, -42.6},
+     1.07, 1.66, 0, 30.5,
+     {-16.5, 9.11, 7.01, -14.5, -37.6}, -98.3,
+     4.66, 4.04, 44.3, 1,
+     {5.00, 14.0, 0}, {0.40, 0.25, 0}, 0.26}}},
+  // The Hand Drums: the same recordings, fitted with the floor ringing at
+  // its modes (bare_start).
+  [FEET_HAND_KICK - FEET_BARE_KICK] = {4.0, 2, {
     // light kick
     {0.3, {-21.6, -52.5, -65.4, -60.1, -46.4},
      0.67, 1.75, 0.05, 76.2,
@@ -1392,7 +1473,7 @@ static const BareSound BARE_TAKES[] = {
      {-23.0, 8.13, 24.3, 10.5, 18.0}, -7.30,
      16.4, 7.06, 90.0, 0.80,
      {8.00, 0, 0}, {0.60, 0, 0}}}},
-  [FEET_BARE_SNARE - FEET_BARE_KICK] = {-7.9, 3, {
+  [FEET_HAND_SNARE - FEET_BARE_KICK] = {-7.9, 3, {
     // soft
     {0.3, {-1.00, -4.21, -21.2, -45.1, -69.6},
      2.08, 1.89, 0.06, 45.8,
@@ -1411,7 +1492,7 @@ static const BareSound BARE_TAKES[] = {
      {0.13, 18.5, 16.6, 30.8, 32.0}, -9.77,
      2.81, 0.50, 75.0, 1.00,
      {3.00, 13.0, 0}, {0.50, 0.28, 0}}}},
-  [FEET_BARE_HIHAT - FEET_BARE_KICK] = {0.4, 2, {
+  [FEET_HAND_HIHAT - FEET_BARE_KICK] = {0.4, 2, {
     // not recorded: the firm one, less what the ride's soft one lacks
     {0.3, {-43.0, -38.2, -41.9, -67.0, -91.4},
      0.08, 5.61, 0.20, 114.1,
@@ -1424,7 +1505,7 @@ static const BareSound BARE_TAKES[] = {
      {-34.5, -8.69, -2.36, 8.53, 10.2}, -32.1,
      2.26, 4.20, 75.0, 1.00,
      {4.00, 10.0, 0}, {0.45, 0.30, 0}}}},
-  [FEET_BARE_RIDE - FEET_BARE_KICK] = {-5.9, 2, {
+  [FEET_HAND_RIDE - FEET_BARE_KICK] = {-5.9, 2, {
     // soft
     {0.3, {-20.5, -27.7, -25.6, -42.5, -60.4},
      0.15, 1.94, 0.12, 68.7,
@@ -1452,6 +1533,8 @@ typedef struct {
   // The floor: the push's drive, decaying, and the push rising towards it,
   // roughened by lowpassed noise; its modes.
   double push_drive, push_decay, push, k_push, rough, k_rough;
+  double floor_tail, floor_tail_decay, floor_tail_amount;
+  bool noisy;  // the Bare Feet's floor, noise, rather than ringing
   Bandpass rumble, mode[BARE_MODES], thud;
   double mode_gain[BARE_MODES], thud_gain;
 } BareVoice;
@@ -1468,6 +1551,30 @@ static double bare_sum_db(const double* db, int n) {
   double power = 0;
   for (int k = 0; k < n; k++) power += pow(10, db[k] / 10);
   return 10 * log10(power);
+}
+
+// The floor all together, its modes or bands and the thud, dB.
+static double bare_floor_db(const BareTake* t) {
+  double db[BARE_MODES + 1];
+  memcpy(db, t->mode, sizeof(t->mode));
+  db[BARE_MODES] = t->thud;
+  return bare_sum_db(db, BARE_MODES + 1);
+}
+
+// A level, dB, between two takes' or past them, each first no more than
+// BARE_FADE_DB under the loudest of its group (`a_most`, `b_most`): a part
+// one has and the other hasn't so fades across, rather than dipping out of
+// both halfway.
+static double bare_level(double a, double a_most, double b, double b_most,
+                         double u) {
+  return bare_mix(fmax(a, a_most - BARE_FADE_DB),
+                  fmax(b, b_most - BARE_FADE_DB), u, false);
+}
+
+static double bare_most(const double* db, int n) {
+  double most = db[0];
+  for (int k = 1; k < n; k++) most = fmax(most, db[k]);
+  return most;
 }
 
 // The take `force` falls on, between the two it's between, or past the
@@ -1488,39 +1595,37 @@ static void bare_take(int kind, double force, BareTake* t) {
     b = &s->take[i + 1];
     u = (force - a->force) / (b->force - a->force);
   }
+  double a_slap = bare_most(a->band, BARE_BANDS);
+  double b_slap = bare_most(b->band, BARE_BANDS);
+  double a_floor = fmax(bare_most(a->mode, BARE_MODES), a->thud);
+  double b_floor = fmax(bare_most(b->mode, BARE_MODES), b->thud);
   for (int k = 0; k < BARE_BANDS; k++) {
-    t->band[k] = bare_mix(a->band[k], b->band[k], u, false);
+    t->band[k] = bare_level(a->band[k], a_slap, b->band[k], b_slap, u);
   }
   for (int k = 0; k < BARE_MODES; k++) {
-    t->mode[k] = bare_mix(a->mode[k], b->mode[k], u, false);
+    t->mode[k] = bare_level(a->mode[k], a_floor, b->mode[k], b_floor, u);
   }
-  t->thud = bare_mix(a->thud, b->thud, u, false);
+  t->thud = bare_level(a->thud, a_floor, b->thud, b_floor, u);
   // Past the hardest, the slap and the floor each no more than so much
   // louder, and past the softest, at least as much quieter.
-  if (force < softest->force) {
-    double least = BARE_SOFTER_DB * (softest->force - force);
+  const BareTake* end = force < softest->force ? softest : hardest;
+  double most = force < softest->force
+    ? -BARE_SOFTER_DB * (softest->force - force)
+    : BARE_LOUDER_DB * (force - hardest->force);
+  if (force < softest->force || force > hardest->force) {
     double over = bare_sum_db(t->band, BARE_BANDS) -
-      bare_sum_db(softest->band, BARE_BANDS) + least;
+      bare_sum_db(end->band, BARE_BANDS) - most;
     for (int k = 0; over > 0 && k < BARE_BANDS; k++) t->band[k] -= over;
-    over = bare_sum_db(t->mode, BARE_MODES) -
-      bare_sum_db(softest->mode, BARE_MODES) + least;
-    for (int k = 0; over > 0 && k < BARE_MODES; k++) t->mode[k] -= over;
-    if (over > 0) t->thud -= over;
-  }
-  if (force > hardest->force) {
-    double most = BARE_LOUDER_DB * (force - hardest->force);
-    double over = bare_sum_db(t->band, BARE_BANDS) -
-      bare_sum_db(hardest->band, BARE_BANDS) - most;
-    for (int k = 0; over > 0 && k < BARE_BANDS; k++) t->band[k] -= over;
-    over = bare_sum_db(t->mode, BARE_MODES) -
-      bare_sum_db(hardest->mode, BARE_MODES) - most;
+    over = bare_floor_db(t) - bare_floor_db(end) - most;
     for (int k = 0; over > 0 && k < BARE_MODES; k++) t->mode[k] -= over;
     if (over > 0) t->thud -= over;
   }
   // How quickly it comes and goes, though, only as far as the softest: any
-  // quicker, softer, and it'd ring the floor's upper modes harder, and be
-  // louder for it.
+  // quicker would ring the floor's upper modes harder, and be louder for
+  // it.  And on the Bare Feet no further than the hardest either, where
+  // their snare's slap, ever shorter, would come to nothing.
   double ut = fmax(0, u);
+  if (kind < FEET_HAND_KICK) ut = fmin(1, ut);
   t->s_att = bare_mix(a->s_att, b->s_att, ut, true);
   t->s_burst = bare_mix(a->s_burst, b->s_burst, ut, true);
   t->s_tail = fmax(0, bare_mix(a->s_tail, b->s_tail, ut, false));
@@ -1529,6 +1634,7 @@ static void bare_take(int kind, double force, BareTake* t) {
   t->f_push = bare_mix(a->f_push, b->f_push, ut, true);
   t->f_ring = fmin(90, bare_mix(a->f_ring, b->f_ring, ut, true));
   t->f_tune = fmin(1.2, fmax(0.8, bare_mix(a->f_tune, b->f_tune, ut, false)));
+  t->f_tail = fmax(0, bare_mix(a->f_tail, b->f_tail, ut, false));
   for (int k = 0; k < BARE_CONTACTS; k++) {
     t->at_ms[k] = fmax(0, bare_mix(a->at_ms[k], b->at_ms[k], u, false));
     t->contact[k] = fmin(1, fmax(0, bare_mix(a->contact[k], b->contact[k],
@@ -1577,12 +1683,22 @@ static void bare_start(const FeetStep* step, double sample_rate) {
   v->push_decay = feet_decay(t.f_push, sample_rate);
   v->k_rough = feet_k(BARE_FLOOR_NOISE_HZ, sample_rate);
   bandpass_set(&v->rumble, BARE_RUMBLE_HZ, M_SQRT1_2, sample_rate);
+  v->noisy = step->kind < FEET_HAND_KICK;
   double tune = t.f_tune * feet_vary(BARE_TUNE_VARY);
   for (int k = 0; k < BARE_MODES; k++) {
-    // Ringing for f_ring: a Q of pi f tau.
-    double hz = BARE_MODE_HZ[k] * tune;
-    bandpass_set(&v->mode[k], hz, M_PI * hz * t.f_ring / 1000, sample_rate);
+    if (v->noisy) {
+      // Broad bands of noise, as loud as the push and its tail.
+      bandpass_set(&v->mode[k], BARE_FLOOR_HZ[k], BARE_FLOOR_Q, sample_rate);
+    } else {
+      // Ringing for f_ring: a Q of pi f tau.
+      double hz = BARE_MODE_HZ[k] * tune;
+      bandpass_set(&v->mode[k], hz, M_PI * hz * t.f_ring / 1000, sample_rate);
+    }
     v->mode_gain[k] = level * bare_db(t.mode[k]);
+  }
+  if (v->noisy) {
+    v->floor_tail_decay = feet_decay(t.f_ring, sample_rate);
+    v->floor_tail_amount = t.f_tail;
   }
   bandpass_set(&v->thud, BARE_THUD_HZ, M_SQRT1_2, sample_rate);
   v->thud_gain = level * bare_db(t.thud);
@@ -1602,6 +1718,7 @@ static void play_bare(float* left, float* right, int len,
         v->burst += v->contact[m];
         v->tail += v->contact[m];
         v->push_drive += v->contact[m];
+        v->floor_tail += v->contact[m];
       }
       double x = breath_noise();
       // The slap: noise, rising quickly to the burst and its tail.
@@ -1611,18 +1728,22 @@ static void play_bare(float* left, float* right, int len,
       for (int k = 0; k < BARE_BANDS; k++) {
         y += v->band_gain[k] * bandpass_run(&v->band[k], slap);
       }
-      // The floor: the push, a little rough, ringing its modes.
-      v->push += (v->push_drive - v->push) * v->k_push;
+      // The floor: the push, a little rough, ringing its modes -- or for
+      // the Bare Feet, the push and the room after it, as loud as noise.
+      v->push += (v->push_drive + v->floor_tail_amount * v->floor_tail -
+                  v->push) * v->k_push;
       v->rough += (breath_noise() - v->rough) * v->k_rough;
       double push = v->push * (1 + BARE_FLOOR_NOISE * v->rough);
       push -= lowpass_run(&v->rumble, push);  // nothing the floor can't ring
+      double floor = v->noisy ? breath_noise() * v->push : push;
       for (int k = 0; k < BARE_MODES; k++) {
-        y += v->mode_gain[k] * bandpass_run(&v->mode[k], push);
+        y += v->mode_gain[k] * bandpass_run(&v->mode[k], floor);
       }
       y += v->thud_gain * lowpass_run(&v->thud, push);
       v->burst *= v->burst_decay;
       v->tail *= v->tail_decay;
       v->push_drive *= v->push_decay;
+      v->floor_tail *= v->floor_tail_decay;
       left[i] += (float)y;
       right[i] += (float)y;
     }
@@ -1938,7 +2059,7 @@ static void play_breath_instruments(float* left, float* right, int len,
     for (int i = 0; i < n; i++) out[done + i] += (l[i] + r[i]) / 2;
   }
   float* drum = (fx & BREATH_FX_DRUM_RIGHT) ? right : left;
-  float gain = atomic_load_explicit(&drum_gain, memory_order_relaxed);
+  float gain = atomic_load_explicit(&drum_level, memory_order_relaxed);
   for (int done = 0; done < len; done += BREATH_CHUNK) {
     int n = len - done < BREATH_CHUNK ? len - done : BREATH_CHUNK;
     memset(l, 0, sizeof(l));

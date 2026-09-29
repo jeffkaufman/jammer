@@ -238,13 +238,13 @@ the physical keyboard in the middle, and what it actually does underneath:
   after the pattern's own hat or tap is taken for that one, a little late:
   it takes over the rest of the beat, but plays nothing more.
 * **The drum's kits**: with the drum selected, `A` is Rim, `S` the Feet,
-  `D` the Stompy Feet, `F` the Bare Feet, and `Z X C V` 808 A, 808 B, Room
-  2 and Room 6, and `G` switches the Grid Hat on and off over whichever of
+  `D` the Stompy Feet, `F` the Bare Feet, `G` the Hand Drums, and `Z X C V` 808 A, 808 B, Room
+  2 and Room 6, and `H` switches the Grid Hat on and off over whichever of
   them is on.  The
   lit kit's key again switches the kit off altogether, leaving the pedals
   and the pattern silent and the Grid Hat, if it's on, on its own.  The
   Feet are the kit it starts on, on the Mac (on the Pi, with no sound for
-  them, Rim is, and `S`, `D` and `F` do nothing).  Switch the drum on with `tab` for them.  Every kit plays
+  them, Rim is, and `S`, `D`, `F` and `G` do nothing).  Switch the drum on with `tab` for them.  Every kit plays
   the same way: each drum pedal is a sound of its
   own whenever it's hit, beat or no beat, and while the pedals keep a beat
   the modifier keys set the pattern -- which the breath fills out.  Blowing
@@ -273,13 +273,13 @@ the physical keyboard in the middle, and what it actually does underneath:
   modifier keys leave it be.  It's the kit's hat, from the kit's own
   percussion set, so it blends with it -- over the Feet and the Stompy
   Feet, their hat, the toe's tap the hihat pedal plays, and over the Bare
-  Feet theirs; with no kit, the
+  Feet and the Hand Drums theirs; with no kit, the
   Standard set's closed hat -- on a channel of its own that's panned with
   the drum (on the Pi, the drum's).  **Feet**: French
   Canadian foot percussion, leather shoes on a well-sprung wooden floor. Each
   drum pedal is a step of its own whenever it's hit, beat or no beat: the kick
-  (2) a thump (with downbeat), the hihat (4) a tap, the snare (1) a lower tap, and the ride
-  (3) a lower one still.  As hard as the pedal's hit: a firm hit, velocity
+  (2) a thump (with downbeat), the hihat (4) a tap, the snare (1) a lower tap, half
+  of it the Bare Feet's slap, and the ride (3) a lower one still.  As hard as the pedal's hit: a firm hit, velocity
   100, as loud as the grid's steps, a softer one quieter, and one harder
   louder and landing harder too, towards a stomp.  The grid's taps follow the
   kick the same way, going by the last four kicks' velocity on average. And
@@ -309,13 +309,15 @@ the physical keyboard in the middle, and what it actually does underneath:
   deeper.  **Bare Feet**: barefoot on a wooden floor, fitted to recordings
   of it, each sound played eight times: the kick (2, with downbeat) a heel,
   and softly a light kick; the snare (1) the flat of the foot slapped down;
-  the hihat (4) a lighter slap; and the ride (3) a slap with more floor
-  and less brightness.  On the grid, the upbeat's the hihat's and the preup
+  the ride (3) a lighter slap; and the hihat (4) a slap with more floor
+  and less brightness (the other way around from the other kits).  The
+  grid's hats and the Grid Hat are the lighter slap.  On the grid, the upbeat's the hihat's and the preup
   and predown light kicks.  Each is a slap of skin -- a burst of noise over
   in a millisecond or two, through five bands from 500Hz to 8kHz -- and
-  the floor's answer, its modes at 62, 83, 125 and 153Hz, and 50Hz that a
-  heel's weight pulls the lowest down to, rung by the foot's push; they
-  differ in how much of each and how quickly.  Where the Feet go by how
+  the floor's answer to the foot's push: noise as loud as the push and the
+  room after it, through broad bands from 40 to 250Hz, and the push itself,
+  a thud; they differ in how much of each and how quickly.  The floor has
+  no pitch, as the recordings don't.  Where the Feet go by how
   loud and how near a stomp, the Bare Feet go by how hard the foot comes
   down, all of it: the recordings were each sound played softly and
   firmly, and the snare harder still, and a pedal's velocity picks where
@@ -324,10 +326,14 @@ the physical keyboard in the middle, and what it actually does underneath:
   brightness, sharpness and how many contacts the foot makes, and carrying
   on the same way past the softest and hardest.  Blowing, with breath hard,
   has them land harder again.  A firm kick and a firm snare are as loud as
-  the Feet's firm thump, and the hihat and ride as loud as each other, 6dB
+  the Feet's firm thump, and the hihat and ride as loud as each other, 4dB
   under them; the hats no pedal plays, the grid's upbeat and the Grid Hat,
   6dB under the hihat pedal's, and the grid's predown (pre uniq) 6dB
-  under too.  No two alike, as the recordings aren't.
+  under too.  No two alike, as the recordings aren't.  **Hand Drums**:
+  what the Bare Feet first were, played the same way, but the floor rung at
+  its modes -- 62, 83, 125 and 153Hz, and 50Hz that a heel's weight pulls
+  the lowest down to -- the same few pitches every hit, which sounds more
+  like hand drums than feet.
 * **Function row and arrows** (teal) are whole-rig settings and the musical
   mode.
 * **`1`** (pink) is the whistle bass, which is its own synthesis engine rather
