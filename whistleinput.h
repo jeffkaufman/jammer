@@ -234,14 +234,21 @@ static AudioDeviceID whistle_preferred_input(char* name_out,
 
 // A UID that is no longer there falls back the same way an unset one does:
 // unplugging an interface shouldn't leave the whistle unable to make a sound.
-static AudioDeviceID whistle_device_for_uid(const char* uid) {
-  if (uid && uid[0]) {
-    WhistleInputDevice devices[WHISTLE_MAX_INPUT_DEVICES];
-    int count = whistle_list_input_devices(devices, WHISTLE_MAX_INPUT_DEVICES);
-    for (int i = 0; i < count; i++) {
-      if (strcmp(devices[i].uid, uid) == 0) return devices[i].id;
-    }
+// Exactly `uid`, or kAudioObjectUnknown if it isn't plugged in: no falling
+// back, for asking whether a device that went away has come back.
+static AudioDeviceID whistle_device_present(const char* uid) {
+  if (!uid || !uid[0]) return kAudioObjectUnknown;
+  WhistleInputDevice devices[WHISTLE_MAX_INPUT_DEVICES];
+  int count = whistle_list_input_devices(devices, WHISTLE_MAX_INPUT_DEVICES);
+  for (int i = 0; i < count; i++) {
+    if (strcmp(devices[i].uid, uid) == 0) return devices[i].id;
   }
+  return kAudioObjectUnknown;
+}
+
+static AudioDeviceID whistle_device_for_uid(const char* uid) {
+  AudioDeviceID exact = whistle_device_present(uid);
+  if (exact != kAudioObjectUnknown) return exact;
   AudioDeviceID preferred = whistle_preferred_input(NULL, 0);
   return preferred != kAudioObjectUnknown ? preferred
                                           : whistle_default_input();

@@ -303,6 +303,10 @@ static _Atomic int whistle_pub_vocoder_gain = 0;
 
 // Counters and meters, written by the audio thread and read by the UI.
 static _Atomic int whistle_dropouts;
+// Every block the microphone hands us.  Nothing reads the number itself: a
+// count that has stopped moving is how the main thread tells a microphone
+// that has quietly died from one that is merely quiet.
+static _Atomic unsigned whistle_input_blocks;
 static _Atomic int whistle_meter_level;   // playing level, x10000
 static _Atomic int whistle_meter_freq;    // last detected pitch in Hz, x100
 static _Atomic int whistle_meter_voiced;
@@ -483,6 +487,7 @@ static void (*whistle_input_tap)(const float* samples, int frames) = NULL;
 // input, or NULL if it has none.
 static void whistle_push_input(const float* samples, const float* second,
                                int frames) {
+  atomic_fetch_add_explicit(&whistle_input_blocks, 1, memory_order_relaxed);
   if (whistle_input_tap) whistle_input_tap(samples, frames);
   unsigned write = atomic_load_explicit(&whistle_ring_write,
                                         memory_order_relaxed);

@@ -123,6 +123,7 @@ typedef struct {
   bool whistle_voiced;
   int whistle_breath;  // what the breath voices are sending, or -1
   int whistle_dropouts;
+  int whistle_reopens;
   double whistle_latency_ms;
   char whistle_device[WHISTLE_DEVICE_NAME_MAX];
   char whistle_error[256];
@@ -147,6 +148,10 @@ typedef struct {
   double speech_gate_db;
   bool speech_gate_open;
 } Snapshot;
+
+// How many times the watchdog (see "Keeping the audio open") has had to bring
+// the microphone back, shown on the whistle row so it isn't a secret.
+static int whistle_reopens;
 
 static void take_snapshot(Snapshot* s) {
   LOCK();
@@ -219,6 +224,7 @@ static void take_snapshot(Snapshot* s) {
     atomic_load_explicit(&whistle_meter_voiced, memory_order_relaxed) != 0;
   s->whistle_dropouts =
     atomic_load_explicit(&whistle_dropouts, memory_order_relaxed);
+  s->whistle_reopens = whistle_reopens;
   s->whistle_breath =
     atomic_load_explicit(&whistle_breath_cc, memory_order_relaxed);
   s->whistle_latency_ms = whistle_latency_ms;
@@ -1023,6 +1029,9 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   if (snapshot.whistle_dropouts > 0) {
     [text appendFormat:@"   %d dropouts", snapshot.whistle_dropouts];
   }
+  if (snapshot.whistle_reopens > 0) {
+    [text appendFormat:@"   reopened %d×", snapshot.whistle_reopens];
+  }
 
   [self drawString:text
             inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
@@ -1439,6 +1448,57 @@ static void check_output_device(const char* resolved) {
   set_audio_device(resolved);
 }
 
+// What the output was asked to be, as asked -- "Scarlett", say, not what it
+// resolved to -- so that if the device goes away and the synth ends up on the
+// default, the watchdog below knows what to go back to when it returns.
+static char wanted_output[256] = "default";
+
+// Open `wanted` for the synth, and give back the block size of the device it
+// leaves.  Main thread only, and not under the lock: checking that the new
+// device is pulling samples sleeps, and every MIDI message would wait behind
+// it.  Nothing here needs the lock -- fluidsynth is thread-safe and fl_driver
+// is only ever touched from the main thread.
+static void open_output(const char* wanted) {
+  snprintf(wanted_output, sizeof(wanted_output), "%s", wanted);
+  AudioDeviceID previous = whistle_output_device;
+  char resolved[256];
+  prepare_output_device(wanted, resolved, sizeof(resolved));
+  set_audio_device(resolved);
+  check_output_device(resolved);
+  // The old device is no longer ours, so its block size goes back -- unless
+  // the microphone is still on it.
+  if (previous != kAudioObjectUnknown && previous != whistle_output_device &&
+      previous != whistle_input_device) {
+    whistle_restore_buffer_frames(previous);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Keeping the audio open
+//
+// A device can stop without anyone closing it.  Waking from sleep is the
+// usual way: a USB interface re-enumerates, CoreAudio's IO for it comes back
+// broken ("received an out of order message" in the system log), and the
+// units on it simply stop calling us -- no error, and nothing to listen for
+// that reliably means it.  The output going quiet you'd hear.  The
+// microphone going quiet you wouldn't: the synth keeps asking the ring for
+// input that never comes, which reads as dropouts at the output's block rate,
+// hundreds a second, and a whistle that has stopped listening.
+//
+// So once a second the main thread checks that both are still moving and
+// reopens whichever isn't -- at 1, 2, 4, 8... seconds of silence, then every
+// 32, so a device that won't come back isn't hammered at, and the UI isn't
+// stalled by reopening it every second.  And when the list of devices
+// changes, one that was asked for and has come back is taken up again,
+// since a device that vanished will have left us on the default.
+// ---------------------------------------------------------------------------
+
+static bool watchdog_due(int quiet_seconds) {
+  if (quiet_seconds <= 0) return false;
+  if (quiet_seconds > 32) return quiet_seconds % 32 == 0;
+  return (quiet_seconds & (quiet_seconds - 1)) == 0;
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -1559,6 +1619,93 @@ static void flash_from_speech(int key) {
                                     block:^(NSTimer* t) {
     [self.view setNeedsDisplay:YES];
   }];
+
+  [NSTimer scheduledTimerWithTimeInterval:1.0
+                                  repeats:YES
+                                    block:^(NSTimer* t) {
+    [self checkAudioIsMoving];
+  }];
+  // Plugging and unplugging arrives as a burst of changes, so wait for it to
+  // settle and look once.
+  AudioObjectPropertyAddress devices = {
+    kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyElementMain };
+  AudioObjectAddPropertyListenerBlock(
+    kAudioObjectSystemObject, &devices, dispatch_get_main_queue(),
+    ^(UInt32 count, const AudioObjectPropertyAddress* addresses) {
+      [NSObject cancelPreviousPerformRequestsWithTarget:self
+                                               selector:@selector(devicesChanged)
+                                                 object:nil];
+      [self performSelector:@selector(devicesChanged) withObject:nil
+                 afterDelay:0.5];
+    });
+}
+
+- (void)reopenWhistle {
+  whistle_reopens++;
+  NSString* uid =
+    [NSUserDefaults.standardUserDefaults stringForKey:@"whistleInput"] ?: @"";
+  whistle_input_start(uid.UTF8String, synth_sample_rate);
+  [self rebuildWhistleMenu];
+}
+
+- (void)reopenOutput {
+  char wanted[256];
+  snprintf(wanted, sizeof(wanted), "%s", wanted_output);
+  open_output(wanted);
+  [self rebuildAudioMenu];
+}
+
+// Once a second, from the timer above.
+- (void)checkAudioIsMoving {
+  static unsigned last_blocks;
+  static int input_quiet;
+  unsigned blocks =
+    atomic_load_explicit(&whistle_input_blocks, memory_order_relaxed);
+  // A microphone that failed to open isn't stalled, it's off, and the status
+  // line already says why; devicesChanged is what tries it again.
+  input_quiet = (whistle_available && blocks == last_blocks)
+    ? input_quiet + 1 : 0;
+  last_blocks = blocks;
+  if (watchdog_due(input_quiet)) {
+    printf("whistle: no input for %ds; reopening the microphone\n",
+           input_quiet);
+    [self reopenWhistle];
+    last_blocks =
+      atomic_load_explicit(&whistle_input_blocks, memory_order_relaxed);
+  }
+
+  static uint64_t last_frames;
+  static int output_quiet;
+  uint64_t frames = audio_frames_rendered;
+  output_quiet = (fl_driver && frames == last_frames) ? output_quiet + 1 : 0;
+  last_frames = frames;
+  if (watchdog_due(output_quiet)) {
+    printf("audio output: silent for %ds; reopening %s\n", output_quiet,
+           wanted_output);
+    [self reopenOutput];
+    last_frames = audio_frames_rendered;
+  }
+}
+
+// Something was plugged in or taken out.  Only acts on what we were asked
+// for coming back; one going away is the watchdog's to notice.
+- (void)devicesChanged {
+  NSString* uid =
+    [NSUserDefaults.standardUserDefaults stringForKey:@"whistleInput"] ?: @"";
+  AudioDeviceID mic = whistle_device_present(uid.UTF8String);
+  if (mic != kAudioObjectUnknown &&
+      (!whistle_available || mic != whistle_input_device)) {
+    printf("whistle: %s is back; listening to it again\n", uid.UTF8String);
+    [self reopenWhistle];
+  }
+
+  char resolved[256];
+  resolve_audio_device(wanted_output, resolved, sizeof(resolved));
+  if (strcmp(resolved, "default") != 0 && strcmp(resolved, audio_device) != 0) {
+    printf("audio output: %s is back; playing through it again\n", resolved);
+    [self reopenOutput];
+  }
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)app {
@@ -1568,23 +1715,8 @@ static void flash_from_speech(int key) {
 // Remembers the chosen output across launches, so a rig that's set up once
 // stays set up.
 - (void)chooseAudioDevice:(NSMenuItem*)item {
-  const char* wanted = item.representedObject
-    ? [item.representedObject UTF8String] : "default";
-  // Not under the lock, for the reason in chooseWhistleDevice: checking that
-  // the new device is pulling samples sleeps, and every MIDI message would
-  // wait behind it.  Nothing here needs the lock -- fluidsynth is thread-safe
-  // and fl_driver is only ever touched from the main thread.
-  AudioDeviceID previous = whistle_output_device;
-  char resolved[256];
-  prepare_output_device(wanted, resolved, sizeof(resolved));
-  set_audio_device(resolved);
-  check_output_device(resolved);
-  // The old device is no longer ours, so its block size goes back -- unless
-  // the microphone is still on it.
-  if (previous != kAudioObjectUnknown && previous != whistle_output_device &&
-      previous != whistle_input_device) {
-    whistle_restore_buffer_frames(previous);
-  }
+  open_output(item.representedObject
+                ? [item.representedObject UTF8String] : "default");
   [NSUserDefaults.standardUserDefaults setObject:item.representedObject
                                           forKey:@"audioDevice"];
   [self rebuildAudioMenu];
@@ -2156,9 +2288,10 @@ static void flash_from_speech(int key) {
 }
 
 // ---------------------------------------------------------------------------
-// The Vocal FX menu: the vocoder and its alternatives, apart from the
-// whistle they sit over.  The keys choose them too, while the whistle's
-// selected, so this is rebuilt each time it opens rather than kept in step.
+// The Vocal FX menu: what the vocoder and its alternatives listen to, apart
+// from the whistle they sit over.  F2 picks the input too, while the
+// whistle's selected, so this is rebuilt each time it opens rather than kept
+// in step.
 // ---------------------------------------------------------------------------
 
 - (void)menuNeedsUpdate:(NSMenu*)menu {
@@ -2167,8 +2300,8 @@ static void flash_from_speech(int key) {
 }
 
 // ---------------------------------------------------------------------------
-// The Mandolin menu: recording it, for trying the effects against later.
-// See mandolin.h.
+// The Mandolin menu: recording it, for trying the effects against later, and
+// its gate.  See mandolin.h.
 // ---------------------------------------------------------------------------
 
 // Where the recordings go, made if it isn't there.
@@ -2208,6 +2341,26 @@ static NSURL* mando_recordings_dir(void) {
            action:@selector(showMandolinRecordings:) keyEquivalent:@""];
   show.target = self;
   [menu addItem:show];
+
+  // The mandolin's voices have their own gate, apart from the Vocal FX one,
+  // since its input is its own.
+  LOCK();
+  int gate_db = mando_gate_db;
+  UNLOCK();
+  [menu addItem:[NSMenuItem separatorItem]];
+  NSTextField* caption;
+  [menu addItem:[self gateItem:[NSString stringWithFormat:@"Gate: %d dB",
+                                gate_db]
+                         value:gate_db
+                        action:@selector(mandoGateChanged:)
+                        holder:&caption]];
+  self.mandoGateCaption = caption;
+  NSMenuItem* note = [[NSMenuItem alloc]
+    initWithTitle:@"Set it above the mandolin's in level the audio row "
+                   "shows between tunes"
+           action:nil keyEquivalent:@""];
+  note.enabled = NO;
+  [menu addItem:note];
   menu.autoenablesItems = NO;
 }
 
@@ -2239,19 +2392,6 @@ static NSURL* mando_recordings_dir(void) {
   [NSWorkspace.sharedWorkspace openURL:mando_recordings_dir()];
 }
 
-// An effect's item switches it on or off beside the rest; None, all of them
-// off.
-- (void)chooseFx:(NSMenuItem*)item {
-  LOCK();
-  if (item.tag == VFX_NONE) {
-    whistle_choose_fx(0);
-  } else {
-    whistle_set_fx((int)item.tag);
-  }
-  UNLOCK();
-  [self.view setNeedsDisplay:YES];
-}
-
 - (void)chooseFxMic:(NSMenuItem*)item {
   LOCK();
   whistle_choose_fx_mic((int)item.tag);
@@ -2277,7 +2417,7 @@ static NSURL* mando_recordings_dir(void) {
   mando_set_gate(db);
   UNLOCK();
   self.mandoGateCaption.stringValue =
-    [NSString stringWithFormat:@"Mandolin gate: %d dB", db];
+    [NSString stringWithFormat:@"Gate: %d dB", db];
   [NSUserDefaults.standardUserDefaults setInteger:db forKey:@"mandoGate"];
   [self.view setNeedsDisplay:YES];
 }
@@ -2311,33 +2451,14 @@ static NSURL* mando_recordings_dir(void) {
   NSMenu* menu = self.fxMenu;
   [menu removeAllItems];
   LOCK();
-  unsigned fx = whistle_fx;
   int mic = whistle_fx_mic;
   bool two_mics = whistle_has_second_mic();
   int gate_db = whistle_fx_gate_db;
-  int mando_gate = mando_gate_db;
   UNLOCK();
 
-  for (int i = VFX_NONE; i < N_VFX; i++) {
-    NSString* title = @"None";
-    if (i != VFX_NONE) {
-      NSString* label = [[@(WHISTLE_FX[i].label)
-        stringByReplacingOccurrencesOfString:@"-\n" withString:@"-"]
-        stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
-      // Its key, while the whistle's selected.
-      title = [NSString stringWithFormat:@"%@   (%s)", label,
-               WHISTLE_FX[i].cap];
-    }
-    NSMenuItem* item = [menu addItemWithTitle:title
-                                       action:@selector(chooseFx:)
-                                keyEquivalent:@""];
-    item.target = self;
-    item.tag = i;
-    bool on = i == VFX_NONE ? fx == 0 : (fx & VFX_BIT(i)) != 0;
-    item.state = on ? NSControlStateValueOn : NSControlStateValueOff;
-  }
-
-  [menu addItem:[NSMenuItem separatorItem]];
+  // Which effects are on isn't here: the keys choose them, while the
+  // whistle's selected, and the keyboard shows which.
+  //
   // Which input they hear: F2, while the whistle's selected.
   for (int i = 0; i < 2; i++) {
     NSMenuItem* item =
@@ -2366,21 +2487,6 @@ static NSURL* mando_recordings_dir(void) {
            action:nil keyEquivalent:@""];
   note.enabled = NO;
   [menu addItem:note];
-
-  // The mandolin's voices have their own, since its input is its own.
-  [menu addItem:[NSMenuItem separatorItem]];
-  [menu addItem:[self gateItem:[NSString stringWithFormat:
-                                @"Mandolin gate: %d dB", mando_gate]
-                         value:mando_gate
-                        action:@selector(mandoGateChanged:)
-                        holder:&caption]];
-  self.mandoGateCaption = caption;
-  NSMenuItem* mando_note = [[NSMenuItem alloc]
-    initWithTitle:@"Set it above the mandolin's in level the audio row "
-                   "shows between tunes"
-           action:nil keyEquivalent:@""];
-  mando_note.enabled = NO;
-  [menu addItem:mando_note];
 
   [menu addItem:[NSMenuItem separatorItem]];
   self.vocoderVolumeSlider.doubleValue = vocoder_gain;
@@ -2562,6 +2668,9 @@ int main(int argc, const char** argv) {
 
     // Before the synth opens the device, and checked after: see "The output
     // block size" above.
+    if (device) {
+      snprintf(wanted_output, sizeof(wanted_output), "%s", device);
+    }
     char out_device[256];
     prepare_output_device(device, out_device, sizeof(out_device));
     start_synth(soundfont, out_device);
