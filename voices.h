@@ -95,7 +95,7 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
   volume += volume_delta;
 
   if (endpoint == ENDPOINT_FLEX) {
-    volume -= 24;
+    volume -= 14;
   } else if (is_footbass(endpoint)) {
     volume -= 20;
   } else if (endpoint == ENDPOINT_ARP) {
