@@ -84,6 +84,43 @@ static const char* source_kind_name(int kind) {
   return "?";
 }
 
+// The pedals by number, left to right, rather than by the drum notes they
+// happen to send: 1 snare, 2 kick, 3 crash, 4 hihat.  0 if it isn't one.
+static int pedal_number(int note) {
+  switch (note) {
+  case MIDI_DRUM_IN_SNARE: case MIDI_DRUM_IN_SNARE_2: return 1;
+  case MIDI_DRUM_IN_KICK: case MIDI_DRUM_IN_KICK_2:
+  case MIDI_DRUM_IN_KICK_3: return 2;
+  case MIDI_DRUM_IN_CRASH: return 3;
+  case MIDI_DRUM_IN_HIHAT: return 4;
+  }
+  return 0;
+}
+
+// The note's degree in the key, as a roman numeral: lowercase when the chord
+// on it is minor, with a ° when diminished.  The chord only counts when it's
+// on this note -- a two-pedal passing note keeps the chord it passes over.
+static void scale_degree(int note, char* out, size_t len) {
+  static const char* NUMERALS[12] = {
+    "I", "bII", "II", "bIII", "III", "IV", "bV", "V", "bVI", "VI", "bVII",
+    "VII",
+  };
+  int interval = ((note - root_note) % 12 + 12) % 12;
+  int type = CHORD_MAJOR;
+  if (drum_chooses_notes || drum_chooses_some_notes) {
+    if (note == active_chord()) type = chord_type;
+  } else if (musical_mode == MODE_MINOR) {
+    type = CHORD_MINOR;
+  }
+  snprintf(out, len, "%s", NUMERALS[interval]);
+  if (type == CHORD_MINOR || type == CHORD_DIM) {
+    for (char* c = out; *c; c++) {
+      if (*c != 'b') *c = (char)(*c - 'A' + 'a');
+    }
+  }
+  if (type == CHORD_DIM) strlcat(out, "°", len);
+}
+
 // A consistent read of everything the GUI draws, so we can let go of the lock
 // before doing any actual drawing.
 typedef struct {
@@ -91,6 +128,8 @@ typedef struct {
   bool selected[N_KEYS];
   int selected_endpoint;
   int root_note;
+  int active_note;    // what the pedals (or voice) picked, else the root
+  char degree[8];     // the active note's scale degree: "IV", "vi", "bVII"
   int octave_delta;
   int volume_delta;
   int air;
@@ -171,6 +210,8 @@ static void take_snapshot(Snapshot* s) {
   int sel = c->selected_endpoint;
   s->selected_endpoint = sel;
   s->root_note = root_note;
+  s->active_note = active_note();
+  scale_degree(s->active_note, s->degree, sizeof(s->degree));
   s->octave_delta = c->octave_deltas[sel];
   s->volume_delta = c->volume_deltas[sel];
   s->air = (int)air;
@@ -692,6 +733,14 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   // when there's nothing to show, so a value changing never shoves the rest
   // of its row sideways.
   NSMutableString* line = [NSMutableString string];
+  // The note in play, and where it sits in the key.
+  [line appendFormat:@"%@ %@   ",
+                     [note_name(snapshot.active_note)
+                       stringByPaddingToLength:2 withString:@" "
+                               startingAtIndex:0],
+                     [@(snapshot.degree)
+                       stringByPaddingToLength:4 withString:@" "
+                               startingAtIndex:0]];
   if (snapshot.bpm > 0) {
     [line appendFormat:@"%3d bpm   ", snapshot.bpm];
   } else {
@@ -772,6 +821,9 @@ static CGFloat text_width(NSString* s, NSFont* font) {
       snprintf(value, sizeof(value), "(silent)");
     } else if ((a->status & 0xf0) == MIDI_CC) {
       snprintf(value, sizeof(value), "cc%d=%d", a->data1, a->data2);
+    } else if (kinds[i] == SRC_FEET && pedal_number(a->data1)) {
+      snprintf(value, sizeof(value), "%d v%d", pedal_number(a->data1),
+               a->data2);
     } else {
       snprintf(value, sizeof(value), "%s%d v%d",
                note_str(a->data1), a->data1 / 12 - 1, a->data2);
