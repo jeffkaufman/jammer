@@ -228,8 +228,8 @@ the physical keyboard in the middle, and what it actually does underneath:
   everything hit harder.  The drum starts on downbeat, upbeat, pre uniq,
   breath fill, breath hard and vel: "kick . hat hat", the breath filling it
   out and hitting it harder, and each pedal as hard as it's hit.  And on
-  the right, the alternate channel, with CH on -- its kits, the Feet and the
-  Grid Hat all go where the drum does.  Hit the hat pedal (4) any time
+  the right, the drum's side of the main output, with TB off -- its kits,
+  the Feet and the Grid Hat all go where the drum does.  Hit the hat pedal (4) any time
   after the kick, and the rest of that beat's in-between steps -- the hats,
   or the Feet's taps, whether the keys put them in or the breath fills them
   -- are left to it, until the next kick: the kick alone gets "kick . hat
@@ -700,8 +700,8 @@ fades, while the shifted voice carries on.
 They share the Vocoder's gate, so the band in the microphone doesn't reach the
 PA through them, its volume slider and the whistle's volume keys, and a gain
 that meets the microphone halfway, as it does.  Like the whistle, they all
-come out of the **left output only**, where fluidsynth's endpoints are unless
-CHANNEL SWAP moves them.  `make voicefx-levels && ./voicefx-levels` plays the
+come out of the **left output only**, where fluidsynth's endpoints are but
+the drum.  `make voicefx-levels && ./voicefx-levels` plays the
 kept number clips through each and says how loud each came out against the
 Vocoder, by perceived loudness; they're levelled to within 1dB of it.
 
@@ -775,9 +775,9 @@ trigger without listening for it.
 ### The mandolin
 
 Left `option` is the mandolin: whatever comes into the audio device's second
-input, played out of the **right** channel, the alternate one, which goes to
-the talkbox the mandolin shares.  Everything else only reaches the right when
-`CH` puts it there; the mandolin always does.  It's on from the start; left
+input, played out of the **right** side of the main output, which it shares
+with the drum, or with `TB` on -- `F2` while it's selected -- out of the
+talkbox (see "The talkbox" below).  It's on from the start; left
 `option` switches it off and on, and shift-left `option` selects it, the way
 `1` and shift-`1` do the whistle.  Right `option` does nothing.  Like the
 whistle it isn't an endpoint, and there's none of it on the Pi
@@ -803,7 +803,6 @@ order, each crossfaded in and out:
 
 | key | effect | |
 |---|---|---|
-| `B` | Talkbox | the mandolin through a mouth the breath opens: three vowel formants, a closed "oo" at rest, opening to "ah" at half and "ae" at full, following the breath over about 25ms, so a breath is a "wah" and a longer one a "wow-yeah", about 3dB over the mandolin.  First in the chain, like a wah pedal.  Breath FX leaves it alone, since the breath is already playing it |
 | `V` | Drive | an overdrive, a Tube Screamer's shape: the lows kept out, the mids pushed hard into a soft clip that's a little uneven, and a lowpass after for the fizz, 6dB over the mandolin.  Set for an electric mandolin into an interface's instrument input, around -20dB peak.  With Breath FX the breath sets how hard it's pushed |
 | `H` | Resonator | the mandolin through a string on each note of the chord from C3 to B3, whose harmonics cover the rest, ringing for most of a second, with only a little of the mandolin straight: a metallic halo that follows the changes |
 | `,` | Harm Trem | a harmonic tremolo, a brownface Fender's: the lows and highs swelling in turn, once a beat, the lows on it, split at the chord's root between 350 and 700Hz |
@@ -820,11 +819,11 @@ the last tempo when they stop, 116 BPM before there's been one.
 
 The voices -- Vocoder, Bass, Synth, Drone and Shimmer -- go to the
 left, since the mandolin itself is still heard under them on the right.  The
-chain is the mandolin itself -- Talkbox, Drive, Resonator, Harm Trem,
+chain is the mandolin itself -- Drive, Resonator, Harm Trem,
 Tremolo, Leslie, in that order -- so it stays on the
 right with it.  Each side, once the mandolin's on it, goes through a limiter
 that holds it under -1dBFS -- down at once on a peak and back up over 80ms --
-so the Talkbox's resonances, Boost or the volume turned up never clip, with
+so Drive, Boost or the volume turned up never clip, with
 whatever else is on that side.
 
 The copied ones are instances of their own, so the whistle's can run at the
@@ -838,7 +837,7 @@ Vocoder, which brings a quiet input up, and whose gate is moved up by its
 would play the chord from the room.  The rest pass what
 comes in, and quiet in is quiet out.  The audio row shows the
 mandolin's input as `in -NNdB`; set the gate a little above what it reads
-between tunes.  The mandolin is summed in after the alternate channel volume,
+between tunes.  The mandolin is summed in after the right channel volume,
 since that's what everything else on the right is matched against.  The
 audio row also says whether it's on, which voices are, where they're going,
 and "no input 2" on a device without one.
@@ -1038,20 +1037,46 @@ rest of the rig too: fluidsynth used to always run at its own default of
 ### Audio output
 
 The Audio Output menu lists the CoreAudio devices and carries a global volume
-slider on top of the per-voice levels in `voices.h`.  Under it, "Alternate
-channel volume" sets the right channel -- where `CH` sends a voice -- as a
-proportion of the global volume, for matching it by ear to whatever else
-shares where it goes (a talkbox, with the mandolin, which isn't moved by
-it).  Under that, "Mandolin volume" is the mandolin's own, it and its voices
-together, from silent to double of where it starts, which is about 5dB over
-the input.  Nothing but the mandolin plays on the
-right unless `CH` sends it there: every fluidsynth channel starts hard left,
-and the Breath Gate's own sounds -- its brushes' stir, the Tamb Shake, the
-scrapers, the riser and the wobble, and its Brush and 808 kits -- follow the
-Breath Gate's `CH` rather than playing in stereo.  All four are remembered
-across launches; `$JAMMER_AUDIO_DEVICE` overrides it (exact name or any
-substring, so "Scarlett" finds "Scarlett 2i2 USB").  Without a choice it
-follows the system default, which on a laptop is the built-in speakers.
+slider on top of the per-voice levels in `voices.h`.  Under it, "Right
+channel volume" sets the main output's right side -- the drum's and the
+mandolin's -- as a proportion of the global volume, for matching it by ear to
+the mandolin, which isn't moved by it.  Under that, "Mandolin volume" is the
+mandolin's own, it and its voices together, from silent to double of where
+it starts, which is about 5dB over the input.  Only the drum, with its kits,
+the Grid Hat and the Feet, and the mandolin play on the right: every other
+fluidsynth channel is hard left, and the Breath Gate's own sounds -- its
+brushes' stir, the Tamb Shake, the scrapers, the riser and the wobble, and
+its Brush and 808 kits -- go where the Breath Gate does rather than playing
+in stereo.  All four are remembered across launches; `$JAMMER_AUDIO_DEVICE`
+overrides it (exact name or any substring, so "Scarlett" finds "Scarlett 2i2
+USB").  Without a choice it follows the system default, which on a laptop is
+the built-in speakers.
+
+#### The talkbox
+
+There are three outputs: the main device's left and right, and a talkbox, on
+a device of its own -- by default the "USB Audio Device", a C-Media card --
+the same on both its sides, since a talkbox's driver is one speaker.
+Nothing goes to it until **`TB`** (`F2`, "talk box") is on for something:
+then that endpoint, or with it selected the mandolin, plays out of the
+talkbox instead of its side of the main output.  An endpoint with `TB` on
+carries the tag in its key's corner, as the mandolin's key does.  Kick Duck,
+the trance gate, the Breath Gate's gate and the sweeps all still apply to
+what's sent.  On the Pi, which has only the two outputs, `TB` puts an
+endpoint on the right instead.
+
+While anything has `TB` on, what the whistle's microphone, input 1, hears
+comes back onto the main output -- the talkbox's tube goes in your mouth, in
+front of it -- onto the right if the mandolin is one of them, since that's
+its side, and otherwise the left, after the right channel volume.  It fades
+in and out over 10ms as `TB` comes and goes.
+
+The menu's **Talkbox output** picks the device; **Talkbox send from the
+left** and **from the right** set how much of what's sent from each side
+reaches it, so the drum and the mandolin can be matched to everything else
+by ear; and **Talkbox return volume** how loud the microphone comes back.
+All remembered.  A talkbox device that's unplugged is taken up again when it
+comes back, and one that stops pulling audio is reopened, like the others.
 
 Don't set `audio.periods` or `audio.period-size` here the way
 `run-fluidsynth.sh` does for ALSA.  On CoreAudio those make the driver open

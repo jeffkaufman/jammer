@@ -37,7 +37,7 @@ typedef enum {
 enum {
   FLAG_DOWNBEAT, FLAG_UPBEAT, FLAG_UPBEAT_HIGH, FLAG_DOUBLED,
   FLAG_SHORTISH, FLAG_SHORTER, FLAG_PRE_UNIQUE, FLAG_CHORD, FLAG_VEL,
-  FLAG_PAN, FLAG_DUCKED, FLAG_AIR_LOCKED, FLAG_FOLLOWS_AIR,
+  FLAG_TALKBOX, FLAG_DUCKED, FLAG_AIR_LOCKED, FLAG_FOLLOWS_AIR,
   // The drum's alone, on voice keys it has no kit on.
   FLAG_BREATH_HARD, FLAG_GRID_HAT,
 };
@@ -94,7 +94,7 @@ static const Key KEYS[] = {
    NOLABEL, 0, 0, 1.5},
   {kVK_F1, F1, 0, "F1", "ER", "CLEAR\nENDPT", GROUP_MODIFIER, LIT_NEVER, 0,
    NOLABEL, 0, 2, 1},
-  {kVK_F2, F2, 0, "F2", "CH", "CHANNEL\nSWAP", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_PAN,
+  {kVK_F2, F2, 0, "F2", "TB", "TALK\nBOX", GROUP_MODIFIER, LIT_EP_FLAG, FLAG_TALKBOX,
    NOLABEL, 0, 3, 1},
   // Number recognition: Drum Some, with a spoken number choosing the chord
   // instead of the feet (speech.h).  One of the three ways of choosing, with

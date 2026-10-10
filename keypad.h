@@ -32,7 +32,7 @@ static bool ep_flag(int ep, int flag) {
   case FLAG_PRE_UNIQUE:  return c->pre_unique[ep];
   case FLAG_CHORD:       return c->chord[ep];
   case FLAG_VEL:         return c->vel[ep];
-  case FLAG_PAN:         return c->pans[ep];
+  case FLAG_TALKBOX:     return c->talkbox[ep];
   case FLAG_DUCKED:      return c->ducked[ep];
   case FLAG_AIR_LOCKED:  return c->air_lockeds[ep];
   case FLAG_FOLLOWS_AIR: return c->follows_air[ep];
@@ -175,7 +175,7 @@ static int mando_voice_on_key(const Key* key) {
 static bool mando_key_is_dead(const Key* key) {
   return mando_selected && key->label &&
     (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) &&
-    mando_voice_on_key(key) < 0;
+    key->note != F2 && mando_voice_on_key(key) < 0;
 }
 
 // Handle a key press if the mandolin owns it, and say whether it did.
@@ -194,6 +194,10 @@ static bool mando_key(const Key* key, bool selecting) {
     return false;
   }
   if (!mando_selected) return false;
+  if (key->note == F2) {
+    mando_toggle_talkbox();
+    return true;
+  }
   if (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) {
     mando_set_voice(mando_voice_on_key(key));
     return true;
@@ -296,7 +300,7 @@ static bool endpoint_uses_flag(int ep, int flag) {
   case FLAG_VEL:
     return !holds_bass_note(ep) && ep != ENDPOINT_FLEX;
   }
-  return true;  // the ones every channel has: CH, P, AL, AF
+  return true;  // the ones every channel has: TB, P, AL, AF
 }
 
 // True if this modifier does nothing for the selected endpoint.  The whistle
@@ -545,6 +549,7 @@ static bool key_is_lit(const Key* key) {
   if (key->lit == LIT_MANDO_ON) return mando_on;
 
   if (mando_selected) {
+    if (key->note == F2) return mando_talkbox;
     int v = mando_voice_on_key(key);
     if (v >= 0) return mando_voices & MANDO_BIT(v);
     if (key->group == GROUP_VOICE || key->group == GROUP_MODIFIER) {

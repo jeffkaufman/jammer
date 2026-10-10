@@ -308,13 +308,15 @@ static bool whistle_request_rate(AudioDeviceID device, double rate) {
 // rather than assumed -- see "The device is borrowed, not taken" in
 // whistle-synth's mac/README.md.  It is restored anyway, on the principle
 // that what we changed we put back.
-// One slot per direction: at most an input and an output are held at once.
-// A slot is free again once it's been put back (frames 0), since switching
-// devices from the menus lets go of one and takes another.
+// One slot for each device held at once: the microphone, the output, and the
+// talkbox's (talkbox.h).  A slot is free again once it's been put back
+// (frames 0), since switching devices from the menus lets go of one and
+// takes another.
+#define WHISTLE_SAVED_FRAMES 3
 static struct {
   AudioDeviceID device;
   UInt32 frames;
-} whistle_saved_frames[2];
+} whistle_saved_frames[WHISTLE_SAVED_FRAMES];
 static int whistle_saved_frames_count;
 
 static void whistle_remember_frames(AudioDeviceID device, UInt32 frames) {
@@ -327,7 +329,7 @@ static void whistle_remember_frames(AudioDeviceID device, UInt32 frames) {
     }
   }
   if (free_slot < 0) {
-    if (whistle_saved_frames_count >= 2) return;
+    if (whistle_saved_frames_count >= WHISTLE_SAVED_FRAMES) return;
     free_slot = whistle_saved_frames_count++;
   }
   whistle_saved_frames[free_slot].device = device;

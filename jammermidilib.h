@@ -626,7 +626,7 @@ struct Configuration {
   int volume_deltas[N_ENDPOINTS];
   int manual_volumes[128*9];
   int voices[N_ENDPOINTS];
-  bool pans[N_ENDPOINTS];
+  bool talkbox[N_ENDPOINTS];  // TB: to the talkbox rather than its side
 
   int octave_deltas[N_ENDPOINTS];
 
@@ -688,6 +688,9 @@ unsigned breath_fx;
 // the gate: see breath_gate_breath.
 bool breath_gate_rested = true;
 static void (*breath_hook)(int breath, unsigned fx) = NULL;
+// Which endpoints have TB on, a bit each, for the Mac's audio to send to the
+// talkbox (macapi.h).  NULL on the Pi, where TB is the right channel's pan.
+static void (*talkbox_hook)(unsigned endpoints) = NULL;
 // And how loud the Breath Gate's own sounds are, from its -/+ (mac_gain).
 static void (*breath_gain_hook)(double gain) = NULL;
 // And how much louder the drum's fluidsynth kit plays for the breath, with
@@ -1068,13 +1071,25 @@ void all_notes_off() {
   send_midi(MIDI_CC, 123, 0, CHANNEL_PITCHED_KICK);
 }
 
+// Whether an endpoint's channel is panned right: its side (common.h), or on
+// the Pi, which has no talkbox output of its own, the right for TB too.  The
+// Mac sends TB to its talkbox from the mix instead (macapi.h), so the pan
+// stays where the side says.
+static bool endpoint_pans_right(int endpoint) {
+#ifdef TALKBOX_OUTPUT
+  return endpoint_home_right(endpoint);
+#else
+  return endpoint_home_right(endpoint) || c->talkbox[endpoint];
+#endif
+}
+
 void reload_voice_setting(struct Configuration* c) {
   int endpoint = c->selected_endpoint;
   int voice = c->voices[endpoint];
   if (is_breath_percussion(voice)) return;  // no program to set up
   int volume_delta = c->volume_deltas[endpoint];
   int manual_volume = c->manual_volumes[voice];
-  bool pan = c->pans[endpoint];
+  bool pan = endpoint_pans_right(endpoint);
 
   if (endpoint != ENDPOINT_JAWHARP && c->ducked[endpoint]) {
     volume_delta += 20;
@@ -1084,12 +1099,12 @@ void reload_voice_setting(struct Configuration* c) {
                         volume_delta, manual_volume, pan);
 }
 
-// The drum's CH: its channel, and on the Mac the kick's and the Grid Hat's
-// with it (macapi.h), and the pitched kick's, and the Feet
-// (update_breath_fx).  Apart from its volume, which is only ever sent when
-// -/+ ask for it.
+// The drum's side: its channel, and on the Mac the kick's and the Grid
+// Hat's with it (macapi.h), and the pitched kick's, and its TB, for them and
+// the Feet (update_breath_fx).  Apart from its volume, which is only ever
+// sent when -/+ ask for it.
 void send_drum_pan(void) {
-  int value = c->pans[ENDPOINT_DRUM] ? MIDI_MAX : 0;
+  int value = endpoint_pans_right(ENDPOINT_DRUM) ? MIDI_MAX : 0;
   send_midi(MIDI_CC, CC_PAN, value, CHANNEL_DRUM);
   send_midi(MIDI_CC, CC_BALANCE, value, CHANNEL_DRUM);
   send_midi(MIDI_CC, CC_PAN, value, CHANNEL_PITCHED_KICK);
@@ -1209,8 +1224,8 @@ void clear_drum() {
   c->drum_breath_hard = true;
   c->drum_grid_hat = false;
   c->vel[ENDPOINT_DRUM] = true;
-  // On the right, the alternate channel, to start with.
-  c->pans[ENDPOINT_DRUM] = true;
+  // On its side, the right, and not the talkbox.
+  c->talkbox[ENDPOINT_DRUM] = false;
   send_drum_pan();
 }
 
@@ -1299,7 +1314,7 @@ void clear_endpoint() {
   c->pre_unique[c->selected_endpoint] = false;
   c->chord[c->selected_endpoint] = false;
   c->vel[c->selected_endpoint] = false;
-  c->pans[c->selected_endpoint] = false;
+  c->talkbox[c->selected_endpoint] = false;
   c->octave_deltas[c->selected_endpoint] = 0;
   c->air_lockeds[c->selected_endpoint] = false;
   c->locked_airs[c->selected_endpoint] = 0;
@@ -1490,11 +1505,17 @@ static double kit_gain(void) {
 
 // Tell the Mac's audio what the breath is doing and how hard you're blowing:
 // the sweeps that are on, and the Breath Gate's percussion if it's on and on
-// one of those voices, and which channel that goes to.
+// one of those voices.  And which endpoints have TB on, for those and for
+// everything else.
 void update_breath_fx(void) {
   unsigned fx = breath_fx;
-  if (c->pans[ENDPOINT_BREATH]) fx |= BREATH_FX_RIGHT;
-  if (c->pans[ENDPOINT_DRUM]) fx |= BREATH_FX_DRUM_RIGHT;
+  if (talkbox_hook) {
+    unsigned talkbox = 0;
+    for (int ep = 0; ep < N_ENDPOINTS; ep++) {
+      if (c->talkbox[ep]) talkbox |= 1u << ep;
+    }
+    talkbox_hook(talkbox);
+  }
   if (c->on[ENDPOINT_BREATH]) {
     for (int i = 0; i < N_BREATH_VOICES; i++) {
       if (c->breath_layers & BREATH_VOICES[i].layer) {
@@ -2799,10 +2820,10 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     clear_endpoint();
     return;
   case F2:
-    c->pans[c->selected_endpoint] = !c->pans[c->selected_endpoint];
-    reload_voice_setting(c);
+    c->talkbox[c->selected_endpoint] = !c->talkbox[c->selected_endpoint];
+    reload_voice_setting(c);  // the Pi's pan
     if (c->selected_endpoint == ENDPOINT_DRUM) send_drum_pan();
-    update_breath_fx();  // the Breath Gate's own sounds move with it
+    update_breath_fx();  // the Mac's talkbox, and the Breath Gate's own
     return;
   case '-':
     c->volume_deltas[c->selected_endpoint] -= 5;

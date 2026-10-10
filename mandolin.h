@@ -4,10 +4,9 @@
 #include <pthread.h>
 
 // The mandolin: whatever comes into the audio device's second input, played
-// out of the right channel, the alternate one, which goes to the talkbox the
-// mandolin shares.  Everything else only reaches the right when CH puts it
-// there; the mandolin always does.  On from the start, since that's where the
-// mandolin now goes: left option (M) switches it off and on, and shift-left
+// out of the main output's right side, which it shares with the drum, or
+// with TB on (F2 while it's selected), out of the talkbox (macapi.h).  On
+// from the start: left option (M) switches it off and on, and shift-left
 // option selects it, the way `1` and shift-`1` do the whistle.
 //
 // Like the whistle it's an instrument on the keyboard but not an endpoint --
@@ -47,10 +46,6 @@
 // than voices beside it, in a chain in the order a pedalboard would have
 // them:
 //
-//   B  Talkbox     the mandolin through a mouth the breath opens: at rest a
-//                  closed "oo", opening to "ah" and then "ae" at full, so a
-//                  breath is a "wah" and a longer one a "wow-yeah".  Breath
-//                  FX leaves it be, since the breath is already playing it
 //   V  Drive       an overdrive, a Tube Screamer's shape: the mids pushed
 //                  into a soft, uneven clip, and the top taken off, 6dB up
 //   H  Resonator   the mandolin through a string tuned to each note of the
@@ -73,7 +68,7 @@
 // by itself, any of them at once, like the whistle's vocal effects.  The
 // mandolin itself plays under all of them but the Tuner, which mutes the lot.
 //
-// The chain's order: Talkbox, Drive, Resonator, Harm Trem, Tremolo, Leslie.
+// The chain's order: Drive, Resonator, Harm Trem, Tremolo, Leslie.
 //
 // The voices -- the Vocoder, the Bass, Synth, Drone and Shimmer --
 // go to the left, where fluidsynth's endpoints are, since the mandolin
@@ -89,7 +84,8 @@
 // comes in, and quiet in is quiet out.
 //
 // Its output is summed in after the right channel's level (alt_channel_gain),
-// since that's there to match everything else to the mandolin.
+// since that's there to match everything else to the mandolin.  Sent to the
+// talkbox, it goes at the right side's send, like the drum.
 //
 // Include from whistle.h, after voicefx.h.
 
@@ -103,7 +99,6 @@ enum {
   MANDO_SYNTH,
   MANDO_BREATH,  // not a sound: see the top
   // The rest are the mandolin itself, through them, rather than voices.
-  MANDO_TALKBOX,
   MANDO_DRIVE,
   MANDO_RESONATOR,
   MANDO_HARM_TREM,
@@ -127,7 +122,6 @@ static const MandoVoice MANDO_VOICES[N_MANDO_VOICES] = {
   [MANDO_SHIMMER] = {'F', "Shimmer", "shimmer"},
   [MANDO_SYNTH] = {'S', "Synth", "synth"},
   [MANDO_BREATH] = {'C', "Breath\nFX", "breath"},
-  [MANDO_TALKBOX] = {'B', "Talk\nbox", "talkbox"},
   [MANDO_DRIVE] = {'V', "Drive", "drive"},
   [MANDO_RESONATOR] = {'H', "Reso\nnator", "resonator"},
   [MANDO_HARM_TREM] = {',', "Harm\nTrem", "harmtrem"},
@@ -152,7 +146,7 @@ static const MandoVoice MANDO_VOICES[N_MANDO_VOICES] = {
 
 // Its level, all of it, voices and all, from the Audio Output menu: from
 // silent to double, remembered.  Neither the global volume, which is
-// fluidsynth's, nor the alternate channel volume moves it.
+// fluidsynth's, nor the right channel volume moves it.
 //
 // The slider's middle, 1, is MANDO_GAIN_UNIT: where it was first set by ear
 // against the rig, about 5dB over the input as it comes in.
@@ -200,6 +194,10 @@ static int mando_voice_for_note(int note) {
 static bool mando_on = true;
 static bool mando_selected;
 static unsigned mando_voices;  // MANDO_BIT each
+// TB: the mandolin itself to the talkbox rather than the right.  Its voices
+// stay on the left.
+static bool mando_talkbox;
+static _Atomic bool mando_pub_talkbox;
 
 // Its voices' gate, in dBFS peak, like the whistle effects' (RoomGate), and
 // with the same range.  Remembered, like that one.
@@ -219,6 +217,8 @@ static void mando_publish(void) {
                         mando_voices | (mando_on ? MANDO_PUB_ON : 0),
                         memory_order_relaxed);
   atomic_store_explicit(&mando_pub_gate_db, mando_gate_db,
+                        memory_order_relaxed);
+  atomic_store_explicit(&mando_pub_talkbox, mando_talkbox,
                         memory_order_relaxed);
   if (!(mando_voices & MANDO_BIT(MANDO_TUNER))) {
     atomic_store_explicit(&mando_meter_hz, 0, memory_order_relaxed);
@@ -408,66 +408,6 @@ static double biquad_run(Biquad* f, double x) {
   f->y2 = f->y1;
   f->y1 = y;
   return y;
-}
-
-// A state-variable filter's bandpass, 0dB and in phase at `hz`, which can
-// move sample by sample: for the Talkbox's formants.
-typedef struct {
-  double ic1, ic2;
-} MandoBand;
-
-static double mando_band(MandoBand* b, double x, double hz, double q,
-                         double rate) {
-  double g = tan(M_PI * fmin(hz, 0.45 * rate) / rate), k = 1 / q;
-  double a1 = 1 / (1 + g * (g + k)), a2 = g * a1;
-  double v1 = a1 * b->ic1 + a2 * (x - b->ic2);
-  double v2 = b->ic2 + g * v1;
-  b->ic1 = 2 * v1 - b->ic1;
-  b->ic2 = 2 * v2 - b->ic2;
-  return k * v1;
-}
-
-// Talkbox: three formants, in parallel bandpasses, moving from one vowel to
-// the next as the breath comes -- "oo" at rest, "ah" at half, "ae" at full --
-// each between two by its frequencies' logs.  The breath is followed over
-// TALKBOX_SMOOTH_S, quick enough to say a "wah" with but not so quick the
-// controller's steps zip.  TALKBOX_LEVEL makes up what the mouth takes
-// away, and a little more, to sit about 3dB over the mandolin.
-#define TALKBOX_FORMANTS 3
-#define TALKBOX_VOWELS 3
-#define TALKBOX_Q 5.0
-#define TALKBOX_SMOOTH_S 0.025
-#define TALKBOX_LEVEL 3.25
-
-static const double TALKBOX_HZ[TALKBOX_VOWELS][TALKBOX_FORMANTS] = {
-  {300, 870, 2240},   // oo
-  {730, 1090, 2440},  // ah
-  {660, 1720, 2410},  // ae
-};
-static const double TALKBOX_GAIN[TALKBOX_FORMANTS] = {1, 0.7, 0.35};
-
-typedef struct {
-  MandoBand formant[TALKBOX_FORMANTS];
-  double open, smooth;  // the breath, followed, 0 to 1
-} Talkbox;
-
-static void talkbox_prepare(Talkbox* t, double rate) {
-  memset(t, 0, sizeof(*t));
-  t->smooth = 1 - exp(-1 / (rate * TALKBOX_SMOOTH_S));
-}
-
-static double talkbox_run(Talkbox* t, double x, double blown, double rate) {
-  t->open += (blown - t->open) * t->smooth;
-  double at = t->open * (TALKBOX_VOWELS - 1);
-  int from = (int)fmin(at, TALKBOX_VOWELS - 2);
-  double frac = at - from, y = 0;
-  for (int f = 0; f < TALKBOX_FORMANTS; f++) {
-    double hz = TALKBOX_HZ[from][f] *
-      pow(TALKBOX_HZ[from + 1][f] / TALKBOX_HZ[from][f], frac);
-    y += TALKBOX_GAIN[f] *
-      mando_band(&t->formant[f], x, hz, TALKBOX_Q, rate);
-  }
-  return TALKBOX_LEVEL * y;
 }
 
 // Drive: a Tube Screamer's shape.  The lows kept out of the clipping, so it
@@ -981,7 +921,6 @@ static struct {
   MandoClock clock;
   ChordStrings drone;
   SynthPedal synth;
-  Talkbox talkbox;
   Drive drive;
   ChordStrings resonator;
   HarmTrem harm_trem;
@@ -994,7 +933,7 @@ static struct {
 } mando;
 
 // The limiter mando_add puts on each side once the mandolin's on it, so
-// nothing on it -- the Talkbox's resonances, Boost, the volume turned up,
+// nothing on it -- Drive, Boost, the volume turned up,
 // whatever else is on that side with it -- ever clips.  Quiet enough and it
 // does nothing; over MANDO_LIMIT it comes down right away, on the sample
 // that went over, and back up over MANDO_LIMIT_RELEASE_S.  About -1dBFS.
@@ -1005,7 +944,7 @@ typedef struct {
   double env;  // the peak it's holding down to MANDO_LIMIT, falling back
 } MandoLimiter;
 
-static MandoLimiter mando_limiter[2];  // left, right
+static MandoLimiter mando_limiter[3];  // left, right, talkbox
 static double mando_limit_release;
 
 static void mando_limit(MandoLimiter* l, float* buf, int len) {
@@ -1054,7 +993,6 @@ static void mando_prepare(double rate) {
                   RESONATOR_RING_S, RESONATOR_STOP_S, RESONATOR_DAMP, rate);
   htrem_prepare(&mando.harm_trem, rate);
   synth_prepare(&mando.synth, rate);
-  talkbox_prepare(&mando.talkbox, rate);
   drive_prepare(&mando.drive, rate);
   leslie_prepare(&mando.leslie, rate);
   shimmer_prepare(&mando.shimmer, rate);
@@ -1096,7 +1034,7 @@ static void mando_process(const float* in, int len, double rate) {
     if (v == MANDO_BREATH) continue;
     // The ones in the chain crossfade in and out whether or not it's heard:
     // the dry ramp's what mutes it.
-    bool in_chain = v >= MANDO_TALKBOX;
+    bool in_chain = v >= MANDO_DRIVE;
     whistle_ramp_to(&mando.voice[v],
                     (heard || in_chain) && (pub & MANDO_BIT(v)) ? 1 : 0,
                     ramp_frames);
@@ -1118,7 +1056,6 @@ static void mando_process(const float* in, int len, double rate) {
   bool vocoder = mando_ramp_live(&mando.voice[MANDO_VOCODER]);
   bool drone = mando_ramp_live(&mando.voice[MANDO_DRONE]);
   bool synth = mando_ramp_live(&mando.voice[MANDO_SYNTH]);
-  bool talkbox = mando_ramp_live(&mando.voice[MANDO_TALKBOX]);
   bool drive = mando_ramp_live(&mando.voice[MANDO_DRIVE]);
   bool resonator = mando_ramp_live(&mando.voice[MANDO_RESONATOR]);
   bool harm_trem = mando_ramp_live(&mando.voice[MANDO_HARM_TREM]);
@@ -1158,13 +1095,8 @@ static void mando_process(const float* in, int len, double rate) {
     // The chain: each crossfaded in and out.  With Breath FX, the Resonator
     // is crossfaded in from what went into it as the breath comes, all of it by a third of the breath, and
     // louder after that; Drive pushed harder; and the tremolos deepened, all
-    // the way by that third.  Not the Talkbox, which the breath already
-    // plays, nor the Leslie, which it spins.
+    // the way by that third.  Not the Leslie, which it spins.
     double dry = x;
-    if (talkbox) {
-      double r = whistle_ramp_next(&mando.voice[MANDO_TALKBOX]);
-      dry += r * (talkbox_run(&mando.talkbox, dry, blown, rate) - dry);
-    }
     if (drive) {
       double r = whistle_ramp_next(&mando.voice[MANDO_DRIVE]);
       // With Breath FX, the breath pushes it: followed as the voices are.
@@ -1251,15 +1183,17 @@ static void mando_process(const float* in, int len, double rate) {
   }
 }
 
-// Onto the right channel, and its voices onto the left, or both onto the only
-// one on a mono device, and each side limited.  After the right's level: see
-// the top.  On the audio thread.
+// Onto the right channel, or with TB on the talkbox's right-side bus, and
+// its voices onto the left, or all onto the only one on a mono device, and
+// each limited.  After the right's level: see the top.  On the audio thread.
 static void mando_add(float** out, int nout, int len) {
   if (nout < 1 || mando_block_len != len) {
     mando_block_len = 0;
     return;
   }
-  float* right = out[nout >= 2 ? 1 : 0];
+  bool talkbox = talkbox_block_fits &&
+    atomic_load_explicit(&mando_pub_talkbox, memory_order_relaxed);
+  float* right = talkbox ? talkbox_bus[1] : out[nout >= 2 ? 1 : 0];
   float* voices = out[0];
   float gain = atomic_load_explicit(&mando_gain, memory_order_relaxed);
   for (int i = 0; i < len; i++) {
@@ -1267,7 +1201,7 @@ static void mando_add(float** out, int nout, int len) {
     voices[i] += gain * mando_voice_block[i];
   }
   mando_limit(&mando_limiter[0], voices, len);
-  if (right != voices) mando_limit(&mando_limiter[1], right, len);
+  if (right != voices) mando_limit(&mando_limiter[talkbox ? 2 : 1], right, len);
   mando_block_len = 0;
 }
 
@@ -1292,11 +1226,18 @@ static void mando_set_voice(int v) {
   mando_publish();
 }
 
-// esc: back to how it starts, on and playing straight through.
+// F2 while it's selected: TB, to the talkbox and back.
+static void mando_toggle_talkbox(void) {
+  mando_talkbox = !mando_talkbox;
+  mando_publish();
+}
+
+// esc: back to how it starts, on and playing straight through, on the right.
 static void mando_reset(void) {
   mando_on = true;
   mando_selected = false;
   mando_voices = 0;
+  mando_talkbox = false;
   mando_publish();
 }
 

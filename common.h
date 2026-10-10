@@ -98,11 +98,6 @@ enum {
   // The Tamb Shake: a tambourine jiggled in the hand, on the beat's grid,
   // harder the harder you blow.
   BREATH_FX_TAMB = 1 << 9,
-  // Not a sound: the Breath Gate's CH is on, so the Mac's own sounds for it
-  // play on the right, the alternate channel, instead of the left.
-  BREATH_FX_RIGHT = 1 << 10,
-  // And the drum's CH, for the Feet: on the right, where the drum starts.
-  BREATH_FX_DRUM_RIGHT = 1 << 11,
 };
 
 // The trance gate's patterns on a drone, from its DOUB and PRE UNIQ flags:
@@ -148,6 +143,14 @@ enum {
 // alone: on the Pi nothing switches it on.
 #define ENDPOINT_BREATH 14
 #define N_ENDPOINTS (ENDPOINT_BREATH+1)
+
+// The side of the main output an endpoint plays on: the drum on the right,
+// and everything else the left.  TB (F2) sends one to the talkbox instead --
+// on the Mac an output of its own (macapi.h); on the Pi, which has only the
+// two, the right.
+static inline bool endpoint_home_right(int endpoint) {
+  return endpoint == ENDPOINT_DRUM;
+}
 
 // The drum's Feet kit's steps (jammermidilib.h's feet_tick and
 // feet_pedal): the heel and the whole foot, the kick's; a toe's bright tap,

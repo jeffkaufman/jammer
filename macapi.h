@@ -29,6 +29,10 @@
 #define CHANNEL_BRUSH 32
 #define CHANNEL_HAT 33
 
+// The Mac has a talkbox output of its own, apart from the main device's left
+// and right: see "The talkbox" below.
+#define TALKBOX_OUTPUT
+
 #include "common.h"
 
 // Voice channels: three spare channels for each drone, past the kick's, so a
@@ -113,8 +117,60 @@ static void (*audio_mix_hook)(float** out, int nout, int len,
 
 // And one more, after the right channel's level (alt_channel_gain) has been
 // applied, for what that level is matched against rather than moved by: the
-// mandolin (mandolin.h).  Same rules.
+// mandolin (mandolin.h), and what comes back from the talkbox (talkbox.h).
+// Same rules.
 static void (*audio_after_alt_hook)(float** out, int nout, int len) = NULL;
+
+// ---------------------------------------------------------------------------
+// The talkbox
+//
+// Three outputs rather than two: the main device's left and right, and the
+// talkbox, on a device of its own (talkbox.h), mono.  Everything has a side
+// of the main output -- the drum, with its kits and the Feet, and the
+// mandolin, the right; everything else the left (common.h's
+// endpoint_home_right) -- and TB (F2) sends it to the talkbox instead.
+// What comes back from the talkbox, through the microphone, is talkbox.h's.
+//
+// What's for the talkbox is mixed apart by the side it came from, a bus
+// each, so that each side's send to it can be set by ear on its own: the
+// Audio Output menu's talkbox sends.  Then the two together are handed to
+// talkbox_out_hook, once a block, on the audio thread.
+// ---------------------------------------------------------------------------
+
+#define TALKBOX_BUS_FRAMES 8192  // the longest block that can reach it
+#define MAX_TALKBOX_SEND 2.0
+
+// The endpoints with TB on, a bit each, from jammermidilib.h's talkbox_hook.
+static _Atomic unsigned audio_talkbox;
+// What's for the talkbox, from the left's sounds and from the right's.
+static float talkbox_bus[2][TALKBOX_BUS_FRAMES];
+// And the two of them together, as sent.
+static float talkbox_mix[TALKBOX_BUS_FRAMES];
+static _Atomic float talkbox_send[2] = {1.0f, 1.0f};
+
+// The talkbox's device, if one's open.  NULL in the tools.
+static void (*talkbox_out_hook)(const float* mono, int len) = NULL;
+
+static void talkbox_set(unsigned endpoints) {
+  atomic_store_explicit(&audio_talkbox, endpoints, memory_order_relaxed);
+}
+
+static bool endpoint_to_talkbox(int endpoint) {
+  return endpoint >= 0 && endpoint < N_ENDPOINTS &&
+    (atomic_load_explicit(&audio_talkbox, memory_order_relaxed) &
+     (1u << endpoint));
+}
+
+void set_talkbox_send(int right, double gain) {
+  if (gain < 0) gain = 0;
+  if (gain > MAX_TALKBOX_SEND) gain = MAX_TALKBOX_SEND;
+  atomic_store_explicit(&talkbox_send[right != 0], (float)gain,
+                        memory_order_relaxed);
+}
+
+// Where the mix goes, a block at a time: the main output's two sides, and
+// the talkbox's two buses.
+enum { BUS_LEFT, BUS_RIGHT, BUS_TALKBOX_LEFT, BUS_TALKBOX_RIGHT, N_BUSES };
 
 // What the synth is running at, which is also what any mixed-in engine has to
 // run at.  Set before start_synth to ask for something other than fluidsynth's
@@ -139,8 +195,6 @@ static _Atomic unsigned audio_breath_fx;
 // The Breath Gate's -/+, from breath_gain_hook: its layers' level.
 static _Atomic float audio_breath_gain = 1.0f;
 
-static void pan_breath_kits(bool right);
-
 static void breath_gain_set(double gain) {
   atomic_store_explicit(&audio_breath_gain, (float)gain, memory_order_relaxed);
 }
@@ -148,7 +202,6 @@ static void breath_gain_set(double gain) {
 static void breath_set(int breath, unsigned fx) {
   atomic_store_explicit(&audio_breath, breath, memory_order_relaxed);
   atomic_store_explicit(&audio_breath_fx, fx, memory_order_relaxed);
-  pan_breath_kits(fx & BREATH_FX_RIGHT);
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +343,8 @@ static bool trance_gate_open(int pattern, double phase,
 // For that the synth renders each MIDI channel to a stereo pair of its own
 // (start_synth), and the mix happens here: the exempt channels as they are,
 // and the rest ducked.  The whistle is summed in after, by audio_mix_hook, so
-// it isn't ducked; it isn't fluidsynth's.
+// it isn't ducked; it isn't fluidsynth's.  And each channel goes to its bus
+// here too: the main output, or with TB on, the talkbox's.
 // ---------------------------------------------------------------------------
 
 #define SYNTH_CHANNELS 34  // MIDI channels, each rendered to its own pair
@@ -378,6 +432,57 @@ static bool breath_gate_open;
 static double breath_gate_gain;
 static double trance_gate_gain[SYNTH_CHANNELS];
 static double trance_gate_phase[KICK_DUCK_FRAMES];
+static float breath_gate_gains[KICK_DUCK_FRAMES];
+
+// Whether this block fits the talkbox's buses.  If it doesn't, which no
+// device asks for, the talkbox misses it and all of it plays on its sides.
+static bool talkbox_block_fits = true;
+
+// Where `endpoint`'s sound goes: its side of the main output, or with TB on,
+// that side's talkbox bus.
+static int endpoint_bus(int endpoint) {
+  bool right = endpoint_home_right(endpoint);
+  if (talkbox_block_fits && endpoint_to_talkbox(endpoint)) {
+    return right ? BUS_TALKBOX_RIGHT : BUS_TALKBOX_LEFT;
+  }
+  return right ? BUS_RIGHT : BUS_LEFT;
+}
+
+// The endpoint whose side and TB a channel follows: channel_endpoint's, and
+// the drum's for the kick's, the pitched kick's and the Grid Hat's, and the
+// Breath Gate's for its brushes.
+static int channel_route_endpoint(int channel) {
+  switch (channel) {
+  case CHANNEL_KICK:
+  case CHANNEL_PITCHED_KICK:
+  case CHANNEL_HAT:
+    return ENDPOINT_DRUM;
+  case CHANNEL_BRUSH:
+    return ENDPOINT_BREATH;
+  }
+  return channel_endpoint(channel);
+}
+
+// Add a channel's pair, times `gain` sample by sample unless it's NULL, to
+// its bus: as it's panned on the main output, or the two together, mono, on
+// the talkbox's.
+static void mix_channel(float** buses, float** bufs, int ch, int n,
+                        const float* gain) {
+  const float* l = bufs[2 * ch];
+  const float* r = bufs[2 * ch + 1];
+  int bus = endpoint_bus(channel_route_endpoint(ch));
+  if (bus == BUS_LEFT || bus == BUS_RIGHT) {
+    for (int i = 0; i < n; i++) {
+      float g = gain ? gain[i] : 1.0f;
+      buses[BUS_LEFT][i] += l[i] * g;
+      buses[BUS_RIGHT][i] += r[i] * g;
+    }
+  } else {
+    for (int i = 0; i < n; i++) {
+      buses[bus][i] += (l[i] + r[i]) * (gain ? gain[i] : 1.0f);
+    }
+  }
+}
 
 // Chop the drones' channels, and their voice channels, with the trance gate,
 // for n frames from t0.
@@ -505,43 +610,34 @@ static int render_kick_ducked(fluid_synth_t* synth, int len, int nfx,
                        audio_block_ns + (uint64_t)(done * 1e9 / sample_rate),
                        sample_rate);
 
-    float* left = out[0] + done;
-    float* right = out[1] + done;
+    float* buses[N_BUSES] = {out[0] + done, out[1] + done,
+                             talkbox_bus[0] + done, talkbox_bus[1] + done};
+    int n_buses = talkbox_block_fits ? N_BUSES : BUS_TALKBOX_LEFT;
     for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
       if (kick_duck_exempt(ch) || channel_endpoint(ch) == ENDPOINT_BREATH) {
         continue;
       }
-      for (int i = 0; i < n; i++) {
-        left[i] += bufs[2 * ch][i];
-        right[i] += bufs[2 * ch + 1][i];
-      }
+      mix_channel(buses, bufs, ch, n, NULL);
     }
     for (int i = 0; i < n; i++) {
       breath_gate_gain = gate_target > breath_gate_gain
         ? fmin(gate_target, breath_gate_gain + gate_up)
         : fmax(gate_target, breath_gate_gain - gate_down);
-      float gain = (float)breath_gate_gain;
-      left[i] += bufs[2 * ENDPOINT_BREATH][i] * gain;
-      right[i] += bufs[2 * ENDPOINT_BREATH + 1][i] * gain;
-      int base = voice_channel_base(ENDPOINT_BREATH);
-      for (int k = 0; k < VOICE_CHANNELS_PER_DRONE; k++) {
-        left[i] += bufs[2 * (base + k)][i] * gain;
-        right[i] += bufs[2 * (base + k) + 1][i] * gain;
-      }
+      breath_gate_gains[i] = (float)breath_gate_gain;
+    }
+    mix_channel(buses, bufs, ENDPOINT_BREATH, n, breath_gate_gains);
+    int base = voice_channel_base(ENDPOINT_BREATH);
+    for (int k = 0; k < VOICE_CHANNELS_PER_DRONE; k++) {
+      mix_channel(buses, bufs, base + k, n, breath_gate_gains);
     }
     if (kick_duck_pos >= 0) {
       for (int i = 0; i < n; i++) {
         float gain = kick_duck_step();
-        left[i] *= gain;
-        right[i] *= gain;
+        for (int b = 0; b < n_buses; b++) buses[b][i] *= gain;
       }
     }
     for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
-      if (!kick_duck_exempt(ch)) continue;
-      for (int i = 0; i < n; i++) {
-        left[i] += bufs[2 * ch][i];
-        right[i] += bufs[2 * ch + 1][i];
-      }
+      if (kick_duck_exempt(ch)) mix_channel(buses, bufs, ch, n, NULL);
     }
   }
   return result;
@@ -582,7 +678,7 @@ enum { SWEEP_BASS, SWEEP_TREBLE, SWEEP_PEAK, N_SWEEPS };
 // moved that fast without it ringing: pulsing the breath had one stepping
 // every 16 samples, and it squealed.
 typedef struct {
-  double ic1[2], ic2[2];  // the two integrators, per side
+  double ic1[N_BUSES], ic2[N_BUSES];  // the two integrators, per bus
   double level;  // the smoothed breath, 0-1, or 0 at rest
   double wet;    // how much of the filtered sound is heard, 0-1
   bool live;     // being applied: on, or fading out
@@ -640,7 +736,9 @@ static float sweep_run(int which, Sweep* s, const SweepCoeffs* c, int ch,
   }
 }
 
-static void apply_sweeps(float* left, float* right, int len,
+// Over the first `n_buses` of `buses`: the main output's sides, and the
+// talkbox's, since what's sent there is fluidsynth's too.
+static void apply_sweeps(float** buses, int n_buses, int len,
                          double sample_rate) {
   double blown = breath_blown(
     atomic_load_explicit(&audio_breath, memory_order_relaxed));
@@ -667,10 +765,10 @@ static void apply_sweeps(float* left, float* right, int len,
       }
       SweepCoeffs c = sweep_coefficients(which, s->level, sample_rate);
       float wet = (float)s->wet;
-      float l = sweep_run(which, s, &c, 0, left[i]);
-      float r = sweep_run(which, s, &c, 1, right[i]);
-      left[i] += (l - left[i]) * wet;
-      right[i] += (r - right[i]) * wet;
+      for (int b = 0; b < n_buses; b++) {
+        float y = sweep_run(which, s, &c, b, buses[b][i]);
+        buses[b][i] += (y - buses[b][i]) * wet;
+      }
     }
     // Faded all the way out after being switched off: out of the way.
     if (!wanted && s->wet == 0) s->live = false;
@@ -2032,25 +2130,24 @@ static void render_breath_instruments(float* left, float* right, int len,
   }
 }
 
-// The right channel's level, as a proportion of the global volume.  Voices
-// play on the left unless CH swaps them to the right, and the right goes to a
-// talkbox shared with a mandolin, so it wants matching to that by ear rather
-// than to the rest of the rig.  Scaled after everything is mixed, on the
-// audio thread, hence atomic.
+// The main output's right side's level, as a proportion of the global
+// volume: the drum and the mandolin's side, matched to the mandolin by ear
+// rather than to the rest of the rig.  Scaled after everything is mixed, on
+// the audio thread, hence atomic.
 #define MAX_ALT_CHANNEL_GAIN 2.0
 static _Atomic float alt_channel_gain = 1.0f;
 
-// The Breath Gate's own sounds, on one channel like everything else: the
-// left, or the right if its CH is on.  They're made in stereo -- the brushes
-// circle from side to side -- so each is folded down to its middle, which is
-// what either side of it carries on average.  And the Feet, which are the
-// drum's, on its side, and at its level (they come with it).
+// The Breath Gate's own sounds, on one channel like everything else: its
+// side, the left, or the talkbox with its TB on.  They're made in stereo --
+// the brushes circle from side to side -- so each is folded down to its
+// middle, which is what either side of it carries on average.  And the
+// Feet, which are the drum's, where it goes, and at its level (they come
+// with it).  `buses` are BUS_*'s.
 #define BREATH_CHUNK 512
-static void play_breath_instruments(float* left, float* right, int len,
+static void play_breath_instruments(float** buses, int len,
                                     double sample_rate) {
   static float l[BREATH_CHUNK], r[BREATH_CHUNK];
-  unsigned fx = atomic_load_explicit(&audio_breath_fx, memory_order_relaxed);
-  float* out = (fx & BREATH_FX_RIGHT) ? right : left;
+  float* out = buses[endpoint_bus(ENDPOINT_BREATH)];
   for (int done = 0; done < len; done += BREATH_CHUNK) {
     int n = len - done < BREATH_CHUNK ? len - done : BREATH_CHUNK;
     memset(l, 0, sizeof(l));
@@ -2058,7 +2155,7 @@ static void play_breath_instruments(float* left, float* right, int len,
     render_breath_instruments(l, r, n, sample_rate);
     for (int i = 0; i < n; i++) out[done + i] += (l[i] + r[i]) / 2;
   }
-  float* drum = (fx & BREATH_FX_DRUM_RIGHT) ? right : left;
+  float* drum = buses[endpoint_bus(ENDPOINT_DRUM)];
   float gain = atomic_load_explicit(&drum_level, memory_order_relaxed);
   for (int done = 0; done < len; done += BREATH_CHUNK) {
     int n = len - done < BREATH_CHUNK ? len - done : BREATH_CHUNK;
@@ -2083,13 +2180,20 @@ static int jammer_audio_render(void* data, int len, int nfx, float** fx,
     memset(fx[i], 0, (size_t)len * sizeof(float));
   }
   audio_block_ns = now();
+  talkbox_block_fits = len <= TALKBOX_BUS_FRAMES && nout >= 2;
+  if (talkbox_block_fits) {
+    memset(talkbox_bus[0], 0, (size_t)len * sizeof(float));
+    memset(talkbox_bus[1], 0, (size_t)len * sizeof(float));
+  }
   int result = render_kick_ducked((fluid_synth_t*)data, len, nfx, fx, nout,
                                   out, synth_sample_rate);
   if (nout >= 2) {
+    float* buses[N_BUSES] = {out[0], out[1], talkbox_bus[0], talkbox_bus[1]};
     build_follow_breath(breath_blown(
       atomic_load_explicit(&audio_breath, memory_order_relaxed)));
-    apply_sweeps(out[0], out[1], len, synth_sample_rate);
-    play_breath_instruments(out[0], out[1], len, synth_sample_rate);
+    apply_sweeps(buses, talkbox_block_fits ? N_BUSES : BUS_TALKBOX_LEFT, len,
+                 synth_sample_rate);
+    play_breath_instruments(buses, len, synth_sample_rate);
   }
   if (audio_mix_hook) {
     audio_mix_hook(out, nout, len, synth_sample_rate);
@@ -2099,6 +2203,18 @@ static int jammer_audio_render(void* data, int len, int nfx, float** fx,
     for (int i = 0; i < len; i++) out[1][i] *= alt;
   }
   if (audio_after_alt_hook) audio_after_alt_hook(out, nout, len);
+  // And the talkbox's, each side at its send, to its device.
+  if (talkbox_block_fits) {
+    float send_left = atomic_load_explicit(&talkbox_send[0],
+                                           memory_order_relaxed);
+    float send_right = atomic_load_explicit(&talkbox_send[1],
+                                            memory_order_relaxed);
+    for (int i = 0; i < len; i++) {
+      talkbox_mix[i] = send_left * talkbox_bus[0][i] +
+                       send_right * talkbox_bus[1][i];
+    }
+    if (talkbox_out_hook) talkbox_out_hook(talkbox_mix, len);
+  }
   return result;
 }
 
@@ -2283,20 +2399,6 @@ void set_alt_channel_gain(double gain) {
   atomic_store_explicit(&alt_channel_gain, (float)gain, memory_order_relaxed);
 }
 
-// The Breath Gate's brushes, on their own kit's channel, go where the
-// Breath Gate does: left, or right with its CH on.  From breath_set, which
-// is often, so only when that changes.  (The Grid Hat's is the drum's now,
-// and goes where the drum does, with the rest of its CCs.)
-static bool breath_kits_right = false;
-
-static void pan_breath_kits(bool right) {
-  if (!fl_synth || right == breath_kits_right) return;
-  breath_kits_right = right;
-  int value = right ? 127 : 0;
-  fluid_synth_cc(fl_synth, CHANNEL_BRUSH, CC_PAN, value);
-  fluid_synth_cc(fl_synth, CHANNEL_BRUSH, CC_BALANCE, value);
-}
-
 // Mirrors run-fluidsynth.sh: -c 2 -z 64 -g 1.0, stereo, reverb/chorus off.
 void start_synth(const char* soundfont_path, const char* device) {
   fl_settings = new_fluid_settings();
@@ -2333,14 +2435,13 @@ void start_synth(const char* soundfont_path, const char* device) {
   fluid_synth_set_channel_type(fl_synth, CHANNEL_KICK, CHANNEL_TYPE_DRUM);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_BRUSH, CHANNEL_TYPE_DRUM);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_HAT, CHANNEL_TYPE_DRUM);
-  // Everything on the left until CH says otherwise: fluidsynth starts each
-  // channel in the middle, which would put a little of anything nothing's
-  // panned yet on the right, the alternate channel.
+  // Everything on the left until it's put on its side: fluidsynth starts
+  // each channel in the middle, which would put a little of anything
+  // nothing's panned yet on the right.
   for (int ch = 0; ch < SYNTH_CHANNELS; ch++) {
     fluid_synth_cc(fl_synth, ch, CC_PAN, 0);
     fluid_synth_cc(fl_synth, ch, CC_BALANCE, 0);
   }
-  breath_kits_right = false;
 
   fl_sfont_id = fluid_synth_sfload(fl_synth, soundfont_path, 1);
   if (fl_sfont_id == FLUID_FAILED) {
@@ -2386,7 +2487,7 @@ void send_midi(int action, int note, int velocity, int endpoint) {
     fluid_synth_cc(fl_synth, channel, note, velocity);
     // The kick's channel is the drum's, split off: same volume, pan, fade.
     // And so is the Grid Hat's.  And the brushes', on their own kit -- all
-    // but their pan, which is the Breath Gate's (pan_breath_kits).
+    // but their pan, which is the Breath Gate's side, the left.
     if (channel == CHANNEL_DRUM) {
       fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
       fluid_synth_cc(fl_synth, CHANNEL_HAT, note, velocity);

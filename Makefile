@@ -52,7 +52,7 @@ SOUNDFONT := FluidR3_GM.sf2
 SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h \
-            jammermidilib.h voices.h common.h whistle.h whistleinput.h \
+            jammermidilib.h voices.h common.h whistle.h whistleinput.h talkbox.h \
             breathmic.h voicefx.h mandolin.h \
             speech.h speechwords.h numrec.h numtrain.h numheard.h Info.plist
 

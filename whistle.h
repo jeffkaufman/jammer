@@ -16,7 +16,7 @@
 // macapi.h); the whistle is summed into those same buffers, so it comes out
 // of whatever the Audio Output menu picked, at whatever latency that device
 // is already running -- on its left channel only, where fluidsynth's
-// endpoints are panned.
+// endpoints are panned but the drum.
 //
 // The whistle is an instrument in the UI, but it is not an endpoint: endpoints
 // are fluidsynth MIDI channels (common.h), and this one makes its own sound
@@ -962,6 +962,9 @@ static int vocoder_chord(double* hz, double* weight) {
 static float* whistle_input_block;
 static float* whistle_input_block_2;  // the second input's
 static int whistle_input_block_frames;
+// How much of whistle_input_block this render block has filled, or 0 once
+// what follows it -- the talkbox's return (talkbox.h) -- has taken it.
+static int whistle_input_block_len;
 
 // Sum the whistle into fluidsynth's output buffers.  Runs on the audio
 // thread, after fluid_synth_process has filled them.  Realtime safe: no
@@ -981,6 +984,7 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
 
   whistle_apply_controls(len, sample_rate);
   whistle_pop_input(whistle_input_block, whistle_input_block_2, len);
+  whistle_input_block_len = len;
   // The mandolin, on the second input, for mando_add to put on the right.
   mando_process(whistle_input_block_2, len, sample_rate);
   // What the vocal effects hear: the first input, or the second.  On the
@@ -1073,8 +1077,8 @@ static void whistle_mix(float** out, int nout, int len, double sample_rate) {
       left += sum;
       right += sum;
     }
-    // All of it on the left, folded to mono, the way fluidsynth's endpoints
-    // are panned unless CHANNEL SWAP moves them.
+    // All of it on the left, folded to mono, the side fluidsynth's endpoints
+    // are on but the drum.
     out[0][i] += 0.5f * (left + right);
   }
   if (fx) {

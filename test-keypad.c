@@ -458,12 +458,26 @@ static void record_breath_gain(double gain) {
   told_breath_gain = gain;
 }
 
-// The drum's side, told alongside, is apart from the rest: told_drum_right.
-static bool told_drum_right;
 static void record_breath(int breath, unsigned fx) {
   told_breath = breath;
-  told_fx = fx & ~BREATH_FX_DRUM_RIGHT;
-  told_drum_right = fx & BREATH_FX_DRUM_RIGHT;
+  told_fx = fx;
+}
+
+// Which endpoints have TB on, as the Mac's audio is told.
+static unsigned told_talkbox;
+static void record_talkbox(unsigned endpoints) {
+  told_talkbox = endpoints;
+}
+
+// The Breath Gate's own sounds and the Feet, as play_breath_instruments mixes
+// them, onto the main output's two sides, `l` and `r`, and the talkbox's
+// buses, `tb_l` and `tb_r`, or let go if they're NULL.
+static void play_breath_sides(float* l, float* r, float* tb_l, float* tb_r,
+                              int len, double sr) {
+  static float spare[2][4800];
+  float* buses[N_BUSES] = {l, r, tb_l ? tb_l : spare[0],
+                           tb_r ? tb_r : spare[1]};
+  play_breath_instruments(buses, len, sr);
 }
 
 static void test_breath_fx() {
@@ -1118,11 +1132,18 @@ static void test_mandolin() {
   strike("K", false);
   CHECK(c->downbeat[ENDPOINT_FLEX] == flex_downbeat,
         "the row keys should be the mandolin's, not the endpoint's");
-  // Its voices are always on the left, so F2 has nothing to do.
-  bool flex_pan = c->pans[ENDPOINT_FLEX];
-  CHECK(key_is_dead(key_for_cap("F2")), "F2 should be dead");
+  // F2 is its TB: the mandolin to the talkbox, not the endpoint's.
+  bool flex_talkbox = c->talkbox[ENDPOINT_FLEX];
+  CHECK(!key_is_dead(key_for_cap("F2")) && !lit("F2"),
+        "F2 should be the mandolin's TB, off");
   strike("F2", false);
-  CHECK(c->pans[ENDPOINT_FLEX] == flex_pan, "F2 shouldn't swap an endpoint");
+  CHECK(mando_talkbox && atomic_load(&mando_pub_talkbox) && lit("F2") &&
+        c->talkbox[ENDPOINT_FLEX] == flex_talkbox,
+        "F2 should send the mandolin to the talkbox, not an endpoint");
+  strike("F2", false);
+  CHECK(!mando_talkbox && !atomic_load(&mando_pub_talkbox),
+        "F2 again should bring the mandolin back");
+  strike("F2", false);
   select_ep("R");
   strike("R", true);
   CHECK(!mando_selected, "shift over an endpoint should take the keys back");
@@ -1131,8 +1152,8 @@ static void test_mandolin() {
   mando_on = false;
   mando_voices = MANDO_BIT(MANDO_BOOST);
   strike("esc", false);
-  CHECK(mando_on && !mando_voices && !mando_selected,
-        "esc should leave the mandolin on and plain");
+  CHECK(mando_on && !mando_voices && !mando_selected && !mando_talkbox,
+        "esc should leave the mandolin on and plain, off the talkbox");
 }
 
 // A block of the mandolin through, from `in`, `n` samples at 48kHz; the
@@ -1227,7 +1248,7 @@ static void test_mandolin_sound() {
   // And the rest make a sound over it: all but Breath FX, which is a
   // setting.
   for (int v = MANDO_VOCODER; v < N_MANDO_VOICES; v++) {
-    if (v == MANDO_BREATH || v >= MANDO_TALKBOX) continue;
+    if (v == MANDO_BREATH || v >= MANDO_DRIVE) continue;
     mando_prepare(48000);
     mando_voices = MANDO_BIT(v);
     mando_publish();
@@ -1501,54 +1522,11 @@ static void test_mandolin_effects() {
           20 * log10(through / plain));
   }
 
-  // The Talkbox: about 3dB over the mandolin wherever the breath has it, and
-  // brighter the more it's blown -- its mouth opening -- whether or not
-  // Breath FX is on, which leaves it be.
-  int talk_breaths[] = {0, (BREATH_FLOOR + BREATH_FULL) / 2, BREATH_FULL};
-  double talk_bright[3];
-  for (int fx = 0; fx < 2; fx++) {
-    for (int b = 0; b < 3; b++) {
-      mando_prepare(48000);
-      mando_voices = MANDO_BIT(MANDO_TALKBOX) |
-                     (fx ? MANDO_BIT(MANDO_BREATH) : 0);
-      mando_publish();
-      atomic_store(&audio_breath, talk_breaths[b]);
-      double through;
-      mando_strums(3, 24000, false, 2, &through, &voice);
-      if (!fx) {
-        printf("mandolin: talkbox %+.1fdB against the mandolin at %d\n",
-               20 * log10(through / plain), talk_breaths[b]);
-      }
-      CHECK(fabs(20 * log10(through / plain) - 3) < 2.5 && voice == 0,
-            "the Talkbox is %+.1fdB against the mandolin at %d%s",
-            20 * log10(through / plain), talk_breaths[b],
-            fx ? " with Breath FX" : "");
-      mando_run(220, 0.1, 9600, true);
-      for (int k = 0; k < 100; k++) {
-        mando_run(220, 0.1, 480, true);
-        memcpy(heard + 480 * k, mando_block, sizeof(float) * 480);
-      }
-      // An A's third harmonic against its fundamental.
-      double bright = goertzel(heard, 48000, 660) /
-                      goertzel(heard, 48000, 220);
-      if (fx) {
-        CHECK(fabs(bright / talk_bright[b] - 1) < 0.01,
-              "Breath FX moved the Talkbox at %d", talk_breaths[b]);
-      } else {
-        talk_bright[b] = bright;
-      }
-    }
-  }
-  CHECK(talk_bright[0] < talk_bright[1] && talk_bright[1] < talk_bright[2],
-        "the Talkbox should open with the breath (%.3f %.3f %.3f)",
-        talk_bright[0], talk_bright[1], talk_bright[2]);
-  atomic_store(&audio_breath, 0);
-
-  // The limiter: the Talkbox wide open, Boosted, with the volume all the
-  // way up and a loud mandolin, over whatever else is on each side, and
-  // neither side goes over it; and a quiet one's left alone.
+  // The limiter: Driven and Boosted, with the volume all the way up and a
+  // loud mandolin, over whatever else is on each side, and neither side
+  // goes over it; and a quiet one's left alone.
   mando_prepare(48000);
-  mando_voices = MANDO_BIT(MANDO_TALKBOX) | MANDO_BIT(MANDO_BOOST) |
+  mando_voices = MANDO_BIT(MANDO_DRIVE) | MANDO_BIT(MANDO_BOOST) |
                  MANDO_BIT(MANDO_DRONE);
   mando_publish();
   set_mando_gain(MAX_MANDO_GAIN);
@@ -1571,7 +1549,7 @@ static void test_mandolin_effects() {
       limit_peak = fmaxf(limit_peak, fmaxf(fabsf(left[k]), fabsf(right[k])));
     }
   }
-  CHECK(limit_in > 1.5 && limit_peak <= MANDO_LIMIT + 1e-6,
+  CHECK(limit_in > 1.2 && limit_peak <= MANDO_LIMIT + 1e-6,
         "the limiter let %.2f through of %.2f", limit_peak, limit_in);
   set_mando_gain(1);
   atomic_store(&audio_breath, 0);
@@ -2572,8 +2550,8 @@ static void test_spoken_presses() {
         "whistle bass");
   CHECK(strcmp(PHRASE(false, "press", "pad", "chord"), "press 9") == 0,
         "pad chord");
-  CHECK(strcmp(PHRASE(false, "press", "channel", "swap"), "press F2") == 0,
-        "channel swap");
+  CHECK(strcmp(PHRASE(false, "press", "talk", "box"), "press F2") == 0,
+        "talk box");
   CHECK(strcmp(PHRASE(false, "press", "pulse"), "press F4") == 0, "pulse");
   CHECK(strcmp(PHRASE(false, "press", "arpeggiator"), "press E") == 0,
         "arpeggiator");
@@ -4353,9 +4331,11 @@ static double feet_render(int kind, double hard, double* low, double* high,
   memset(l, 0, sizeof(l));
   memset(r, 0, sizeof(r));
   atomic_store(&audio_breath_fx, 0);
+  atomic_store(&audio_talkbox, 0);
   feet_hit(kind, hard, 1, false);
+  // On the drum's side, the right, so that's `l` here.
   for (int b = 0; b < 50; b++) {
-    play_breath_instruments(l + 480 * b, r + 480 * b, 480, 48000);
+    play_breath_sides(r + 480 * b, l + 480 * b, NULL, NULL, 480, 48000);
   }
   double sum = 0, lo = 0, hi = 0, first = 0, rest = 0, lp1 = 0, lp2 = 0;
   double k_lo = 1 - exp(-2 * M_PI * 200 / 48000);
@@ -4534,12 +4514,12 @@ static double brush_stir(int breath, double settle, double seconds,
   for (int b = 0; b < (int)(settle * 20); b++) {
     memset(l, 0, sizeof(l));
     memset(r, 0, sizeof(r));
-    play_breath_instruments(l, r, 2400, sr);
+    play_breath_sides(l, r, NULL, NULL, 2400, sr);
   }
   for (; n < (int)(seconds * 20) && n < 200; n++) {
     memset(l, 0, sizeof(l));
     memset(r, 0, sizeof(r));
-    play_breath_instruments(l, r, 2400, sr);
+    play_breath_sides(l, r, NULL, NULL, 2400, sr);
     double w = 0;
     for (int i = 0; i < 2400; i++) w += (double)l[i] * l[i] + r[i] * r[i];
     windows[n] = sqrt(w / 4800);
@@ -4596,7 +4576,7 @@ static double tamb_shake(int breath, double settle, double seconds,
     memset(l, 0, sizeof(l));
     memset(r, 0, sizeof(r));
     audio_block_ns = tamb_clock;
-    play_breath_instruments(l, r, 240, sr);
+    play_breath_sides(l, r, NULL, NULL, 240, sr);
     tamb_clock += 5000000;
     if (b < (int)(settle * 200) || n >= 1000) continue;
     double w = 0;
@@ -4660,7 +4640,7 @@ static double render_builds(unsigned fx, int breath, double seconds) {
     memset(build_l, 0, sizeof(build_l));
     memset(build_r, 0, sizeof(build_r));
     build_follow_breath(breath_blown(breath));
-    play_breath_instruments(build_l, build_r, len, sr);
+    play_breath_sides(build_l, build_r, NULL, NULL, len, sr);
     for (int i = 0; i < len; i++) {
       if (!isfinite(build_l[i])) return NAN;
       sum += build_l[i] * build_l[i];
@@ -4692,34 +4672,112 @@ static void test_build_voices() {
 }
 
 // The Breath Gate's own sounds play on one channel, the left, and all on the
-// right instead with CH: the right goes to a talkbox, so nothing should
-// reach it unless asked.
-static void render_sides(unsigned fx, double seconds, double* left,
-                         double* right) {
+// talkbox instead with TB, so nothing should reach it unless asked.
+//
+// How loud the Breath Gate's own sounds are on the left, the right and the
+// talkbox, with `talkbox` the endpoints with TB on.
+static void render_sides(unsigned fx, unsigned talkbox, double seconds,
+                         double* left, double* right, double* to_talkbox) {
   const double sr = 48000;
   const int len = 64;
   int breath = BREATH_FLOOR + (int)(0.6 * (BREATH_FULL - BREATH_FLOOR));
   breath_set(breath, fx);
-  double l2 = 0, r2 = 0;
+  talkbox_set(talkbox);
+  float tb_l[64], tb_r[64];
+  double l2 = 0, r2 = 0, t2 = 0;
   long n = 0;
   for (int b = 0; b < (int)(seconds * sr / len); b++) {
     audio_block_ns = (uint64_t)sim_ns;
     memset(build_l, 0, sizeof(build_l));
     memset(build_r, 0, sizeof(build_r));
+    memset(tb_l, 0, sizeof(tb_l));
+    memset(tb_r, 0, sizeof(tb_r));
     build_follow_breath(breath_blown(breath));
-    play_breath_instruments(build_l, build_r, len, sr);
+    play_breath_sides(build_l, build_r, tb_l, tb_r, len, sr);
     for (int i = 0; i < len; i++) {
       l2 += build_l[i] * build_l[i];
       r2 += build_r[i] * build_r[i];
+      t2 += tb_l[i] * tb_l[i] + tb_r[i] * tb_r[i];
       n++;
     }
     sim_ns += len * 1e9 / sr;
   }
   *left = sqrt(l2 / n);
   *right = sqrt(r2 / n);
+  *to_talkbox = sqrt(t2 / n);
+  talkbox_set(0);
 }
 
-static void test_breath_sounds_follow_ch() {
+// fluidsynth's channels, each to its bus: on its side as it's panned, or
+// with its endpoint's TB on, folded to mono on its side's talkbox bus.  The
+// drum's kick, pitched kick and Grid Hat follow the drum, and the brushes
+// the Breath Gate.
+static void test_channels_follow_tb() {
+  static float pairs[2 * SYNTH_CHANNELS][4];
+  float* bufs[2 * SYNTH_CHANNELS];
+  for (int i = 0; i < 2 * SYNTH_CHANNELS; i++) {
+    bufs[i] = pairs[i];
+    for (int k = 0; k < 4; k++) pairs[i][k] = i % 2 ? 0.25f : 0.5f;
+  }
+  const struct { int ch, ep; const char* name; } CHANNELS[] = {
+    {ENDPOINT_FLEX, ENDPOINT_FLEX, "flex"},
+    {voice_channel_base(ENDPOINT_DRONE_CHORD) + 1, ENDPOINT_DRONE_CHORD,
+     "a drone's voice channel"},
+    {CHANNEL_DRUM, ENDPOINT_DRUM, "the drum"},
+    {CHANNEL_KICK, ENDPOINT_DRUM, "the kick"},
+    {CHANNEL_PITCHED_KICK, ENDPOINT_DRUM, "the pitched kick"},
+    {CHANNEL_HAT, ENDPOINT_DRUM, "the Grid Hat"},
+    {CHANNEL_BRUSH, ENDPOINT_BREATH, "the brushes"},
+  };
+  for (int i = 0; i < 7; i++) {
+    for (int tb = 0; tb < 2; tb++) {
+      float b[N_BUSES][4] = {{0}};
+      float* buses[N_BUSES] = {b[0], b[1], b[2], b[3]};
+      talkbox_set(tb ? 1u << CHANNELS[i].ep : 0);
+      mix_channel(buses, bufs, CHANNELS[i].ch, 4, NULL);
+      bool right = CHANNELS[i].ep == ENDPOINT_DRUM;
+      if (!tb) {
+        CHECK(b[BUS_LEFT][3] == 0.5f && b[BUS_RIGHT][3] == 0.25f &&
+              b[BUS_TALKBOX_LEFT][3] == 0 && b[BUS_TALKBOX_RIGHT][3] == 0,
+              "%s should be on the main output as it's panned",
+              CHANNELS[i].name);
+      } else {
+        int to = right ? BUS_TALKBOX_RIGHT : BUS_TALKBOX_LEFT;
+        CHECK(b[BUS_LEFT][3] == 0 && b[BUS_RIGHT][3] == 0 &&
+              b[to][3] == 0.75f && b[BUS_TALKBOX_LEFT + BUS_TALKBOX_RIGHT -
+                                     to][3] == 0,
+              "with TB, %s should be on the talkbox from the %s, alone",
+              CHANNELS[i].name, right ? "right" : "left");
+      }
+    }
+    // Another endpoint's TB leaves it be.
+    float b[N_BUSES][4] = {{0}};
+    float* buses[N_BUSES] = {b[0], b[1], b[2], b[3]};
+    talkbox_set(~(1u << CHANNELS[i].ep) & ((1u << N_ENDPOINTS) - 1));
+    mix_channel(buses, bufs, CHANNELS[i].ch, 4, NULL);
+    CHECK(b[BUS_LEFT][3] == 0.5f && b[BUS_TALKBOX_LEFT][3] == 0 &&
+          b[BUS_TALKBOX_RIGHT][3] == 0,
+          "others' TB shouldn't move %s", CHANNELS[i].name);
+  }
+  talkbox_set(0);
+
+  // On the Mac TB doesn't pan anything: the talkbox is its own output.
+  full_reset();
+  midi_tap = tap_midi;
+  select_ep("R");
+  n_tapped = 0;
+  press("F2");
+  CHECK(c->talkbox[ENDPOINT_FLEX], "F2 should put flex on the talkbox");
+  for (int i = 0; i < n_tapped; i++) {
+    CHECK(!(tapped[i].action == MIDI_CC && tapped[i].note == CC_PAN &&
+            tapped[i].velocity != 0),
+          "TB shouldn't pan flex right on the Mac");
+  }
+  midi_tap = NULL;
+  full_reset();
+}
+
+static void test_breath_sounds_follow_tb() {
   const struct { unsigned fx; const char* name; } VOICES[] = {
     {BREATH_FX_GUIRO, "guiro"}, {BREATH_FX_WASHBOARD, "washboard"},
     {BREATH_FX_GUIRA, "guira"}, {BREATH_FX_RISER, "riser"},
@@ -4727,27 +4785,37 @@ static void test_breath_sounds_follow_ch() {
     {BREATH_FX_TAMB, "tamb shake"},
   };
   for (int v = 0; v < 7; v++) {
-    double l, r;
-    render_sides(VOICES[v].fx, 0.5, &l, &r);
-    CHECK(l > 1e-5 && r == 0, "%s should be on the left alone: %.6f, %.6f",
-          VOICES[v].name, l, r);
-    render_sides(0, 0.5, &l, &r);  // let it stop
-    render_sides(VOICES[v].fx | BREATH_FX_RIGHT, 0.5, &l, &r);
-    CHECK(r > 1e-5 && l == 0, "with CH, %s should be on the right alone: "
-          "%.6f, %.6f", VOICES[v].name, l, r);
-    render_sides(0, 0.5, &l, &r);
+    double l, r, t;
+    render_sides(VOICES[v].fx, 0, 0.5, &l, &r, &t);
+    CHECK(l > 1e-5 && r == 0 && t == 0,
+          "%s should be on the left alone: %.6f, %.6f, %.6f",
+          VOICES[v].name, l, r, t);
+    render_sides(0, 0, 0.5, &l, &r, &t);  // let it stop
+    render_sides(VOICES[v].fx, 1u << ENDPOINT_BREATH, 0.5, &l, &r, &t);
+    CHECK(t > 1e-5 && l == 0 && r == 0, "with TB, %s should be on the "
+          "talkbox alone: %.6f, %.6f, %.6f", VOICES[v].name, l, r, t);
+    // Not the drum's TB, which isn't the Breath Gate's.
+    render_sides(0, 0, 0.5, &l, &r, &t);
+    render_sides(VOICES[v].fx, 1u << ENDPOINT_DRUM, 0.5, &l, &r, &t);
+    CHECK(l > 1e-5 && t == 0, "the drum's TB moved %s: %.6f, %.6f",
+          VOICES[v].name, l, t);
+    render_sides(0, 0, 0.5, &l, &r, &t);
   }
   breath_set(0, 0);
 
-  // And CH on the Breath Gate is what says so.
+  // And TB on the Breath Gate is what says so.
   full_reset();
-  breath_hook = record_breath;
+  talkbox_hook = record_talkbox;
   press("`");
-  CHECK(!(told_fx & BREATH_FX_RIGHT), "the Breath Gate should start left");
+  CHECK(!(told_talkbox & (1u << ENDPOINT_BREATH)),
+        "the Breath Gate should start off the talkbox");
   press("F2");
-  CHECK(told_fx & BREATH_FX_RIGHT, "CH should move the Breath Gate right");
+  CHECK(told_talkbox == 1u << ENDPOINT_BREATH,
+        "TB should send the Breath Gate, alone, to the talkbox");
   press("F2");
-  CHECK(!(told_fx & BREATH_FX_RIGHT), "CH again should move it back");
+  CHECK(told_talkbox == 0, "TB again should bring it back");
+  talkbox_hook = NULL;
+  breath_hook = record_breath;
   // And its -/+ are what say how loud they are.
   breath_gain_hook = record_breath_gain;
   press("=");
@@ -4820,13 +4888,43 @@ static void test_drum_kit_reach() {
   kit_gain_hook = record_kit_gain;
   update_breath_fx();
   CHECK(c->vel[ENDPOINT_DRUM], "the drum should start with VEL on");
-  CHECK(c->pans[ENDPOINT_DRUM] && told_drum_right,
-        "the drum, and the Feet, should start on the right");
+  talkbox_hook = record_talkbox;
+  update_breath_fx();
+  CHECK(!c->talkbox[ENDPOINT_DRUM] && told_talkbox == 0,
+        "the drum, and the Feet, should start off the talkbox");
+  CHECK(endpoint_pans_right(ENDPOINT_DRUM), "the drum should be on the right");
   select_ep("tab");
   press("F2");
-  CHECK(!c->pans[ENDPOINT_DRUM] && !told_drum_right,
-        "CH should move the drum left");
+  CHECK(c->talkbox[ENDPOINT_DRUM] && told_talkbox == 1u << ENDPOINT_DRUM &&
+        endpoint_pans_right(ENDPOINT_DRUM),
+        "TB should send the drum to the talkbox, from its own side");
+  // And the Feet with it, onto the talkbox's bus for the right.
+  {
+    static float l[480], r[480], tb_l[480], tb_r[480];
+    talkbox_set(told_talkbox);
+    memset(feet_voices, 0, sizeof(feet_voices));
+    feet_hit(FEET_THUMP, 0.5, 1, false);
+    double main_sum = 0, tb_sum = 0;
+    for (int b = 0; b < 10; b++) {
+      memset(l, 0, sizeof(l));
+      memset(r, 0, sizeof(r));
+      memset(tb_l, 0, sizeof(tb_l));
+      memset(tb_r, 0, sizeof(tb_r));
+      play_breath_sides(l, r, tb_l, tb_r, 480, 48000);
+      for (int i = 0; i < 480; i++) {
+        main_sum += fabsf(l[i]) + fabsf(r[i]) + fabsf(tb_l[i]);
+        tb_sum += fabsf(tb_r[i]);
+      }
+    }
+    CHECK(main_sum == 0 && tb_sum > 0,
+          "with the drum's TB, the Feet should be on the talkbox: %f, %f",
+          main_sum, tb_sum);
+    talkbox_set(0);
+  }
   press("F2");
+  CHECK(!c->talkbox[ENDPOINT_DRUM] && told_talkbox == 0,
+        "TB again should bring the drum back");
+  talkbox_hook = NULL;
 
   // The Grid Hat on the kit's hat: the Ride kit's is its ride.
   press("tab");
@@ -4928,7 +5026,8 @@ int main() {
   test_every_kick_plays();
   test_tambourines();
   test_brush_swish();
-  test_breath_sounds_follow_ch();
+  test_breath_sounds_follow_tb();
+  test_channels_follow_tb();
   test_grid_hat_on_the_pedals();
   test_drum_kit_reach();
   test_feet();

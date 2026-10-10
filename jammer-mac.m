@@ -28,6 +28,7 @@
 #include "whistle.h"
 #include "speechwords.h"
 #include "whistleinput.h"
+#include "talkbox.h"
 #include "keylayout.h"
 #include "keypad.h"
 #include "fkeys.h"
@@ -95,11 +96,13 @@ typedef struct {
   int air;
   int bpm;
   bool on[N_ENDPOINTS];
-  bool pans[N_ENDPOINTS];  // channel swapped (F2)
+  bool talkbox[N_ENDPOINTS];  // to the talkbox (F2)
   MidiActivity midi[N_SOURCE_KINDS];
   uint64_t now_ns;
   char audio_device[256];
   double gain;
+  char talkbox_device[WHISTLE_DEVICE_NAME_MAX];  // or empty, if none's open
+  char talkbox_error[256];
 
   // The whistle bass, which is an instrument here but not an endpoint.
   bool whistle_available;
@@ -131,6 +134,7 @@ typedef struct {
   // The mandolin, likewise.
   bool mando_on;
   bool mando_selected;
+  bool mando_talkbox;
   bool mando_has_input;
   bool mando_recording;
   double mando_rec_seconds;
@@ -173,12 +177,15 @@ static void take_snapshot(Snapshot* s) {
   s->bpm = current_beat_ns > 0 ? (int)(60 * NS_PER_SEC / current_beat_ns) : 0;
   for (int i = 0; i < N_ENDPOINTS; i++) {
     s->on[i] = c->on[i];
-    s->pans[i] = c->pans[i];
+    s->talkbox[i] = c->talkbox[i];
   }
   memcpy(s->midi, midi_activity, sizeof(s->midi));
   s->now_ns = now();
   s->gain = synth_gain;
   snprintf(s->audio_device, sizeof(s->audio_device), "%s", audio_device);
+  snprintf(s->talkbox_device, sizeof(s->talkbox_device), "%s",
+           talkbox_device_name);
+  snprintf(s->talkbox_error, sizeof(s->talkbox_error), "%s", talkbox_error);
 
   s->whistle_available = whistle_available;
   s->whistle_on = whistle_on;
@@ -235,6 +242,7 @@ static void take_snapshot(Snapshot* s) {
 
   s->mando_on = mando_on;
   s->mando_selected = mando_selected;
+  s->mando_talkbox = mando_talkbox;
   s->mando_has_input = whistle_available && mando_has_input();
   s->mando_recording = mando_rec_running();
   s->mando_rec_seconds = s->mando_recording
@@ -534,11 +542,13 @@ static CGFloat text_width(NSString* s, NSFont* font) {
 
   if (unbound) return;
 
-  // An endpoint that's been channel swapped carries F2's tag in the corner,
-  // since otherwise the only way to tell is to select it and look at F2.
-  if (key->lit == LIT_EP_ON && snapshot.pans[key->arg]) {
+  // An endpoint that's on the talkbox carries F2's tag in the corner, since
+  // otherwise the only way to tell is to select it and look at F2.  And the
+  // mandolin, likewise.
+  if ((key->lit == LIT_EP_ON && snapshot.talkbox[key->arg]) ||
+      (key->lit == LIT_MANDO_ON && snapshot.mando_talkbox)) {
     NSFont* tag_font = mono_font(cap_size * 0.85, NSFontWeightBold);
-    NSString* tag = @"CH";
+    NSString* tag = @"TB";
     CGFloat tag_w = text_width(tag, tag_font) + 8;
     CGFloat tag_h = cap_size + 2;
     NSRect tag_rect = NSMakeRect(NSMaxX(r) - tag_w - 5, r.origin.y + 4,
@@ -798,8 +808,9 @@ static CGFloat text_width(NSString* s, NSFont* font) {
 
   // The mandolin, after it: on or off, and its voices.
   CGFloat x = VIEW_PAD + text_width(audio, font) + 40;
-  NSMutableString* mando = [NSMutableString stringWithFormat:@"mandolin %s",
-                            snapshot.mando_on ? "on " : "off"];
+  NSMutableString* mando = [NSMutableString stringWithFormat:@"mandolin %s%s",
+                            snapshot.mando_on ? "on " : "off",
+                            snapshot.mando_talkbox ? " → talkbox" : ""];
   if (!snapshot.mando_has_input) {
     [mando appendString:@"  no input 2"];
   } else {
@@ -1525,6 +1536,9 @@ static void flash_from_speech(int key) {
 @property(strong) NSSlider* altVolumeSlider;
 @property(strong) NSMenuItem* mandoVolumeItem;
 @property(strong) NSMenuItem* drumVolumeItem;
+@property(strong) NSMenuItem* talkboxSendLeftItem;
+@property(strong) NSMenuItem* talkboxSendRightItem;
+@property(strong) NSMenuItem* talkboxReturnItem;
 @property(strong) NSSlider* drumVolumeSlider;
 @property(strong) NSSlider* mandoVolumeSlider;
 @property(strong) NSMenu* whistleMenu;
@@ -1686,6 +1700,26 @@ static void flash_from_speech(int key) {
     [self reopenOutput];
     last_frames = audio_frames_rendered;
   }
+
+  static uint64_t last_talkbox;
+  static int talkbox_quiet;
+  uint64_t played =
+    atomic_load_explicit(&talkbox_frames_played, memory_order_relaxed);
+  talkbox_quiet = (talkbox_unit && played == last_talkbox)
+    ? talkbox_quiet + 1 : 0;
+  last_talkbox = played;
+  if (watchdog_due(talkbox_quiet)) {
+    printf("talkbox: silent for %ds; reopening %s\n", talkbox_quiet,
+           talkbox_wanted);
+    [self reopenTalkbox];
+    last_talkbox =
+      atomic_load_explicit(&talkbox_frames_played, memory_order_relaxed);
+  }
+}
+
+- (void)reopenTalkbox {
+  talkbox_start(talkbox_wanted, synth_sample_rate);
+  [self rebuildAudioMenu];
 }
 
 // Something was plugged in or taken out.  Only acts on what we were asked
@@ -1705,6 +1739,15 @@ static void flash_from_speech(int key) {
   if (strcmp(resolved, "default") != 0 && strcmp(resolved, audio_device) != 0) {
     printf("audio output: %s is back; playing through it again\n", resolved);
     [self reopenOutput];
+  }
+
+  char talkbox_name[WHISTLE_DEVICE_NAME_MAX];
+  AudioDeviceID talkbox = talkbox_find(talkbox_wanted, talkbox_name,
+                                       sizeof(talkbox_name));
+  if (talkbox != kAudioObjectUnknown &&
+      (!talkbox_unit || talkbox != talkbox_device)) {
+    printf("talkbox: %s is back; playing through it again\n", talkbox_name);
+    [self reopenTalkbox];
   }
 }
 
@@ -1758,8 +1801,8 @@ static void flash_from_speech(int key) {
   return self.volumeItem;
 }
 
-// The right channel, where CH sends a voice, relative to the global volume:
-// it goes to a talkbox shared with the mandolin, so it's matched to that.
+// The main output's right side, the drum's and the mandolin's, relative to
+// the global volume: matched to the mandolin, which it doesn't move.
 - (void)altVolumeChanged:(NSSlider*)slider {
   set_alt_channel_gain(slider.doubleValue);
   [NSUserDefaults.standardUserDefaults setDouble:slider.doubleValue
@@ -1770,7 +1813,7 @@ static void flash_from_speech(int key) {
   if (self.altVolumeItem) return self.altVolumeItem;
   NSSlider* slider = nil;
   self.altVolumeItem =
-    [self sliderMenuItem:@"Alternate channel volume"
+    [self sliderMenuItem:@"Right channel volume"
                    value:alt_channel_gain
                      max:MAX_ALT_CHANNEL_GAIN
                   action:@selector(altVolumeChanged:)
@@ -1819,6 +1862,94 @@ static void flash_from_speech(int key) {
   return self.drumVolumeItem;
 }
 
+// The talkbox's: which device it plays out of, how much of each side TB
+// sends it, and how loud what comes back through the microphone is.  All
+// remembered.
+- (void)chooseTalkboxDevice:(NSMenuItem*)item {
+  NSString* name = item.representedObject;
+  [NSUserDefaults.standardUserDefaults setObject:name forKey:@"talkboxDevice"];
+  talkbox_start(name.UTF8String, synth_sample_rate);
+  [self rebuildAudioMenu];
+}
+
+- (void)talkboxSendLeftChanged:(NSSlider*)slider {
+  set_talkbox_send(0, slider.doubleValue);
+  [NSUserDefaults.standardUserDefaults setDouble:slider.doubleValue
+                                          forKey:@"talkboxSendLeft"];
+}
+
+- (void)talkboxSendRightChanged:(NSSlider*)slider {
+  set_talkbox_send(1, slider.doubleValue);
+  [NSUserDefaults.standardUserDefaults setDouble:slider.doubleValue
+                                          forKey:@"talkboxSendRight"];
+}
+
+- (void)talkboxReturnChanged:(NSSlider*)slider {
+  set_talkbox_return_gain(slider.doubleValue);
+  [NSUserDefaults.standardUserDefaults setDouble:slider.doubleValue
+                                          forKey:@"talkboxReturn"];
+}
+
+- (NSMenuItem*)talkboxMenuItem {
+  NSMenu* devices = [[NSMenu alloc] initWithTitle:@"Talkbox output"];
+  char names[32][256];
+  int n = list_audio_devices(names, 32);
+  for (int i = 0; i < n; i++) {
+    if (strcmp(names[i], "default") == 0) continue;
+    NSString* name = @(names[i]);
+    NSMenuItem* item = [devices addItemWithTitle:name
+                                          action:@selector(chooseTalkboxDevice:)
+                                   keyEquivalent:@""];
+    item.target = self;
+    item.representedObject = name;
+    item.state = strcmp(names[i], talkbox_device_name) == 0
+      ? NSControlStateValueOn : NSControlStateValueOff;
+  }
+  NSString* title = talkbox_device_name[0]
+    ? [NSString stringWithFormat:@"Talkbox output: %s", talkbox_device_name]
+    : [NSString stringWithFormat:@"Talkbox output: %s", talkbox_error];
+  NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title action:nil
+                                         keyEquivalent:@""];
+  item.submenu = devices;
+  return item;
+}
+
+- (NSMenuItem*)talkboxSendLeftMenuItem {
+  if (self.talkboxSendLeftItem) return self.talkboxSendLeftItem;
+  NSSlider* slider = nil;
+  self.talkboxSendLeftItem =
+    [self sliderMenuItem:@"Talkbox send from the left"
+                   value:talkbox_send[0]
+                     max:MAX_TALKBOX_SEND
+                  action:@selector(talkboxSendLeftChanged:)
+                  slider:&slider];
+  return self.talkboxSendLeftItem;
+}
+
+- (NSMenuItem*)talkboxSendRightMenuItem {
+  if (self.talkboxSendRightItem) return self.talkboxSendRightItem;
+  NSSlider* slider = nil;
+  self.talkboxSendRightItem =
+    [self sliderMenuItem:@"Talkbox send from the right"
+                   value:talkbox_send[1]
+                     max:MAX_TALKBOX_SEND
+                  action:@selector(talkboxSendRightChanged:)
+                  slider:&slider];
+  return self.talkboxSendRightItem;
+}
+
+- (NSMenuItem*)talkboxReturnMenuItem {
+  if (self.talkboxReturnItem) return self.talkboxReturnItem;
+  NSSlider* slider = nil;
+  self.talkboxReturnItem =
+    [self sliderMenuItem:@"Talkbox return volume"
+                   value:talkbox_return_gain
+                     max:MAX_TALKBOX_RETURN
+                  action:@selector(talkboxReturnChanged:)
+                  slider:&slider];
+  return self.talkboxReturnItem;
+}
+
 - (void)rebuildAudioMenu {
   NSMenu* menu = self.audioMenu;
   [menu removeAllItems];
@@ -1842,6 +1973,12 @@ static void flash_from_speech(int key) {
   [menu addItem:[self altVolumeMenuItem]];
   [menu addItem:[self mandoVolumeMenuItem]];
   [menu addItem:[self drumVolumeMenuItem]];
+
+  [menu addItem:[NSMenuItem separatorItem]];
+  [menu addItem:[self talkboxMenuItem]];
+  [menu addItem:[self talkboxSendLeftMenuItem]];
+  [menu addItem:[self talkboxSendRightMenuItem]];
+  [menu addItem:[self talkboxReturnMenuItem]];
 }
 
 // ---------------------------------------------------------------------------
@@ -2515,6 +2652,8 @@ static NSURL* mando_recordings_dir(void) {
   // under the lock, for the reason in chooseWhistleDevice.
   whistle_input_stop();
   audio_mix_hook = NULL;
+  talkbox_out_hook = NULL;
+  talkbox_stop();
   stop_synth();
   // The synth has let go of the output device, so its block size can go back
   // to whatever the rest of the machine was using.
@@ -2593,6 +2732,15 @@ int main(int argc, const char** argv) {
     NSNumber* saved_drum_gain =
       [NSUserDefaults.standardUserDefaults objectForKey:@"drumVolume"];
     if (saved_drum_gain) set_drum_gain(saved_drum_gain.doubleValue);
+    NSNumber* saved_send_left =
+      [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxSendLeft"];
+    if (saved_send_left) set_talkbox_send(0, saved_send_left.doubleValue);
+    NSNumber* saved_send_right =
+      [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxSendRight"];
+    if (saved_send_right) set_talkbox_send(1, saved_send_right.doubleValue);
+    NSNumber* saved_return =
+      [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxReturn"];
+    if (saved_return) set_talkbox_return_gain(saved_return.doubleValue);
 
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.
@@ -2681,7 +2829,9 @@ int main(int argc, const char** argv) {
     // safe to install before there is an engine, since it checks.
     whistle_resolve_voices();
     audio_mix_hook = whistle_mix;
-    audio_after_alt_hook = mando_add;
+    audio_after_alt_hook = talkbox_after_alt;
+    talkbox_out_hook = talkbox_push;
+    talkbox_hook = talkbox_set;
     kick_hook = kick_duck_hit;
     feet_hook = feet_hit;
     breath_hook = breath_set;
@@ -2689,6 +2839,13 @@ int main(int argc, const char** argv) {
     kit_gain_hook = kit_gain_set;
     music_hook = music_set;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
+    // After the synth and the microphone, so it knows their blocks and
+    // which devices are theirs.
+    NSString* talkbox_output =
+      [NSUserDefaults.standardUserDefaults stringForKey:@"talkboxDevice"];
+    talkbox_start(talkbox_output ? talkbox_output.UTF8String
+                                 : TALKBOX_DEFAULT_DEVICE,
+                  synth_sample_rate);
     speech_start(synth_sample_rate);
 
     setup_midi_input();
