@@ -20,6 +20,7 @@
 #import <Cocoa/Cocoa.h>
 #include <Carbon/Carbon.h>
 #include <CoreMIDI/CoreMIDI.h>
+#include <IOKit/pwr_mgt/IOPMLib.h>
 #include <pthread.h>
 
 #include "macapi.h"
@@ -1397,11 +1398,32 @@ static void connect_midi_sources() {
   printf("\n");
 }
 
+// While we're frontmost with an instrument plugged in, someone is playing,
+// even if they haven't touched the laptop in a while: keep the display and
+// the system awake, on battery too, like `caffeinate -d -i`.
+static IOPMAssertionID stay_awake_assertion = kIOPMNullAssertionID;
+
+static void update_stay_awake() {
+  bool want = NSApp.isActive && n_connected_sources > 0;
+  bool have = stay_awake_assertion != kIOPMNullAssertionID;
+  if (want == have) return;
+  if (want) {
+    IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep,
+                                kIOPMAssertionLevelOn,
+                                CFSTR("jammer: playing with MIDI connected"),
+                                &stay_awake_assertion);
+  } else {
+    IOPMAssertionRelease(stay_awake_assertion);
+    stay_awake_assertion = kIOPMNullAssertionID;
+  }
+}
+
 static void midi_notify(const MIDINotification* message, void* refCon) {
   if (message->messageID == kMIDIMsgSetupChanged) {
     // Something was plugged in or unplugged; re-scan.
     dispatch_async(dispatch_get_main_queue(), ^{
       connect_midi_sources();
+      update_stay_awake();
     });
   }
 }
@@ -2687,10 +2709,12 @@ static NSURL* mando_recordings_dir(void) {
 // controlling brightness and volume.
 - (void)applicationDidBecomeActive:(NSNotification*)note {
   fkeys_grab();
+  update_stay_awake();
 }
 
 - (void)applicationDidResignActive:(NSNotification*)note {
   fkeys_release();
+  update_stay_awake();
 }
 
 - (void)applicationWillTerminate:(NSNotification*)note {
