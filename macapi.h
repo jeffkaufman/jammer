@@ -397,6 +397,12 @@ static float breath_gate_gains[KICK_DUCK_FRAMES];
 // device asks for, the talkbox misses it and all of it plays on its sides.
 static bool talkbox_block_fits = true;
 
+// The Audio Output menu's global volume, for the audio thread: on what
+// fluidsynth plays onto the main output only (mix_channel).  The talkbox's
+// device isn't heard directly, only through the microphone it plays into,
+// which has levels of its own.
+static _Atomic float main_synth_gain = 1.0f;
+
 // Where `endpoint`'s sound goes: its side of the main output, or with TB on,
 // that side's talkbox bus.
 static int endpoint_bus(int endpoint) {
@@ -423,16 +429,17 @@ static int channel_route_endpoint(int channel) {
 }
 
 // Add a channel's pair, times `gain` sample by sample unless it's NULL, to
-// its bus: as it's panned on the main output, or the two together, mono, on
-// the talkbox's.
+// its bus: as it's panned on the main output, at the global volume, or the
+// two together, mono, on the talkbox's.
 static void mix_channel(float** buses, float** bufs, int ch, int n,
                         const float* gain) {
   const float* l = bufs[2 * ch];
   const float* r = bufs[2 * ch + 1];
   int bus = endpoint_bus(channel_route_endpoint(ch));
   if (bus == BUS_LEFT || bus == BUS_RIGHT) {
+    float main = atomic_load_explicit(&main_synth_gain, memory_order_relaxed);
     for (int i = 0; i < n; i++) {
-      float g = gain ? gain[i] : 1.0f;
+      float g = main * (gain ? gain[i] : 1.0f);
       buses[BUS_LEFT][i] += l[i] * g;
       buses[BUS_RIGHT][i] += r[i] * g;
     }
@@ -2187,6 +2194,7 @@ bool audio_is_flowing(void) {
 
 // Global output volume, on top of the per-voice levels in voices.h.  The
 // Audio Output menu's slider moves it when a room or a PA wants more or less.
+// Main L and R only: see main_synth_gain.
 #define MAX_SYNTH_GAIN 2.0
 double synth_gain = 1.0;
 
@@ -2347,7 +2355,7 @@ void set_synth_gain(double gain) {
   if (gain < 0) gain = 0;
   if (gain > MAX_SYNTH_GAIN) gain = MAX_SYNTH_GAIN;
   synth_gain = gain;
-  if (fl_synth) fluid_synth_set_gain(fl_synth, (float)gain);
+  atomic_store_explicit(&main_synth_gain, (float)gain, memory_order_relaxed);
 }
 
 void set_alt_channel_gain(double gain) {

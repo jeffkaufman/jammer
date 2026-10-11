@@ -920,7 +920,9 @@ rest of the rig too: fluidsynth used to always run at its own default of
 ### Audio output
 
 The Audio Output menu lists the CoreAudio devices and carries a global volume
-slider on top of the per-voice levels in `voices.h`.  Under it, "Right
+slider on top of the per-voice levels in `voices.h`.  It's for the main
+output only: the talkbox's device is heard only through the microphone, so
+the slider leaves what's sent there alone.  Under it, "Right
 channel volume" sets the main output's right side -- the drum's and the
 mandolin's -- as a proportion of the global volume, for matching it by ear to
 the mandolin, which isn't moved by it.  Under that, "Mandolin volume" is the
