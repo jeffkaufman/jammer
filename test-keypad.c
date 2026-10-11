@@ -4734,6 +4734,9 @@ static void test_channels_follow_tb() {
     {CHANNEL_HAT, ENDPOINT_DRUM, "the Grid Hat"},
     {CHANNEL_BRUSH, ENDPOINT_BREATH, "the brushes"},
   };
+  // The main output at the global volume, and the talkbox's without it.
+  float g = atomic_load(&main_synth_gain);
+#define NEAR(x, want) (fabsf((x) - (want)) < 1e-6f)
   for (int i = 0; i < 7; i++) {
     for (int tb = 0; tb < 2; tb++) {
       float b[N_BUSES][4] = {{0}};
@@ -4742,7 +4745,8 @@ static void test_channels_follow_tb() {
       mix_channel(buses, bufs, CHANNELS[i].ch, 4, NULL);
       bool right = CHANNELS[i].ep == ENDPOINT_DRUM;
       if (!tb) {
-        CHECK(b[BUS_LEFT][3] == 0.5f && b[BUS_RIGHT][3] == 0.25f &&
+        CHECK(NEAR(b[BUS_LEFT][3], 0.5f * g) &&
+              NEAR(b[BUS_RIGHT][3], 0.25f * g) &&
               b[BUS_TALKBOX_LEFT][3] == 0 && b[BUS_TALKBOX_RIGHT][3] == 0,
               "%s should be on the main output as it's panned",
               CHANNELS[i].name);
@@ -4760,10 +4764,11 @@ static void test_channels_follow_tb() {
     float* buses[N_BUSES] = {b[0], b[1], b[2], b[3]};
     talkbox_set(~(1u << CHANNELS[i].ep) & ((1u << N_ENDPOINTS) - 1));
     mix_channel(buses, bufs, CHANNELS[i].ch, 4, NULL);
-    CHECK(b[BUS_LEFT][3] == 0.5f && b[BUS_TALKBOX_LEFT][3] == 0 &&
+    CHECK(NEAR(b[BUS_LEFT][3], 0.5f * g) && b[BUS_TALKBOX_LEFT][3] == 0 &&
           b[BUS_TALKBOX_RIGHT][3] == 0,
           "others' TB shouldn't move %s", CHANNELS[i].name);
   }
+#undef NEAR
   talkbox_set(0);
 
   // On the Mac TB doesn't pan anything: the talkbox is its own output.

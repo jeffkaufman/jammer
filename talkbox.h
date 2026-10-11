@@ -28,6 +28,9 @@
 #define TALKBOX_BLOCK 64            // asked of the device: latency, again
 #define TALKBOX_RETURN_FADE_MS 10
 #define MAX_TALKBOX_RETURN 2.0
+// The return's slider's middle, 1: where it had been set by ear on
+// 2026-10-11.
+#define TALKBOX_RETURN_UNITY 0.430
 
 // What the menu asked for, a name or part of one, and what that opened.
 static char talkbox_wanted[256] = TALKBOX_DEFAULT_DEVICE;
@@ -48,14 +51,18 @@ static _Atomic unsigned talkbox_ring_target;
 static _Atomic bool talkbox_running;
 static bool talkbox_priming;  // the device's thread's own: waiting to refill
 
-// The return's level, from the menu, and where its fade has got to.
-static _Atomic float talkbox_return_gain = 1.0f;
+// The return's level, the slider's and as applied, and where its fade has
+// got to.
+static double talkbox_return_volume = 1.0;
+static _Atomic float talkbox_return_gain = (float)TALKBOX_RETURN_UNITY;
 static float talkbox_return_now;  // the audio thread's own
 
 void set_talkbox_return_gain(double gain) {
   if (gain < 0) gain = 0;
   if (gain > MAX_TALKBOX_RETURN) gain = MAX_TALKBOX_RETURN;
-  atomic_store_explicit(&talkbox_return_gain, (float)gain,
+  talkbox_return_volume = gain;
+  atomic_store_explicit(&talkbox_return_gain,
+                        (float)(gain * TALKBOX_RETURN_UNITY),
                         memory_order_relaxed);
 }
 

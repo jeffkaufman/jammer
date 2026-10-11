@@ -1885,7 +1885,7 @@ static void flash_from_speech(int key) {
   NSSlider* slider = nil;
   self.altVolumeItem =
     [self sliderMenuItem:@"Right channel volume"
-                   value:alt_channel_gain
+                   value:alt_channel_volume
                      max:MAX_ALT_CHANNEL_GAIN
                   action:@selector(altVolumeChanged:)
                   slider:&slider];
@@ -1990,7 +1990,7 @@ static void flash_from_speech(int key) {
   NSSlider* slider = nil;
   self.talkboxSendLeftItem =
     [self sliderMenuItem:@"Talkbox send from the left"
-                   value:talkbox_send[0]
+                   value:talkbox_send_volume[0]
                      max:MAX_TALKBOX_SEND
                   action:@selector(talkboxSendLeftChanged:)
                   slider:&slider];
@@ -2002,7 +2002,7 @@ static void flash_from_speech(int key) {
   NSSlider* slider = nil;
   self.talkboxSendRightItem =
     [self sliderMenuItem:@"Talkbox send from the right"
-                   value:talkbox_send[1]
+                   value:talkbox_send_volume[1]
                      max:MAX_TALKBOX_SEND
                   action:@selector(talkboxSendRightChanged:)
                   slider:&slider];
@@ -2014,7 +2014,7 @@ static void flash_from_speech(int key) {
   NSSlider* slider = nil;
   self.talkboxReturnItem =
     [self sliderMenuItem:@"Talkbox return volume"
-                   value:talkbox_return_gain
+                   value:talkbox_return_volume
                      max:MAX_TALKBOX_RETURN
                   action:@selector(talkboxReturnChanged:)
                   slider:&slider];

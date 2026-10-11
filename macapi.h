@@ -98,6 +98,11 @@ static void (*audio_after_alt_hook)(float** out, int nout, int len) = NULL;
 
 #define TALKBOX_BUS_FRAMES 8192  // the longest block that can reach it
 #define MAX_TALKBOX_SEND 2.0
+// The sends' sliders' middle, 1: where they had been set by ear on
+// 2026-10-11.  talkbox_send_volume is the sliders'; talkbox_send what's
+// applied.
+#define TALKBOX_SEND_LEFT_UNITY 1.477
+#define TALKBOX_SEND_RIGHT_UNITY 1.480
 
 // The endpoints with TB on, a bit each, from jammermidilib.h's talkbox_hook.
 static _Atomic unsigned audio_talkbox;
@@ -105,7 +110,9 @@ static _Atomic unsigned audio_talkbox;
 static float talkbox_bus[2][TALKBOX_BUS_FRAMES];
 // And the two of them together, as sent.
 static float talkbox_mix[TALKBOX_BUS_FRAMES];
-static _Atomic float talkbox_send[2] = {1.0f, 1.0f};
+static double talkbox_send_volume[2] = {1.0, 1.0};
+static _Atomic float talkbox_send[2] = {(float)TALKBOX_SEND_LEFT_UNITY,
+                                        (float)TALKBOX_SEND_RIGHT_UNITY};
 
 // The talkbox's device, if one's open.  NULL in the tools.
 static void (*talkbox_out_hook)(const float* mono, int len) = NULL;
@@ -123,7 +130,9 @@ static bool endpoint_to_talkbox(int endpoint) {
 void set_talkbox_send(int right, double gain) {
   if (gain < 0) gain = 0;
   if (gain > MAX_TALKBOX_SEND) gain = MAX_TALKBOX_SEND;
-  atomic_store_explicit(&talkbox_send[right != 0], (float)gain,
+  talkbox_send_volume[right != 0] = gain;
+  double unity = right ? TALKBOX_SEND_RIGHT_UNITY : TALKBOX_SEND_LEFT_UNITY;
+  atomic_store_explicit(&talkbox_send[right != 0], (float)(gain * unity),
                         memory_order_relaxed);
 }
 
@@ -340,10 +349,10 @@ static void kit_gain_set(double gain) {
 // The Audio Output menu's drum volume: everything the drum plays -- its
 // kit, the kicks, the Grid Hat and the Feet -- on top of the global volume,
 // the drum's -/+ and the rest.  Remembered, like the others.  Halfway, 1,
-// is DRUM_GAIN_UNITY: where it was set, and stayed, once the drum's own
-// levels had settled.  drum_gain is the slider's; drum_level what's heard.
+// is DRUM_GAIN_UNITY: where it was set by ear on 2026-10-11, at the top of
+// the slider's old range.  drum_gain is the slider's; drum_level what's heard.
 #define MAX_DRUM_GAIN 2.0
-#define DRUM_GAIN_UNITY 1.822
+#define DRUM_GAIN_UNITY 3.644
 static _Atomic float drum_gain = 1.0f;
 static _Atomic float drum_level = (float)DRUM_GAIN_UNITY;
 
@@ -400,8 +409,10 @@ static bool talkbox_block_fits = true;
 // The Audio Output menu's global volume, for the audio thread: on what
 // fluidsynth plays onto the main output only (mix_channel).  The talkbox's
 // device isn't heard directly, only through the microphone it plays into,
-// which has levels of its own.
-static _Atomic float main_synth_gain = 1.0f;
+// which has levels of its own.  The slider's middle, 1, is SYNTH_GAIN_UNITY:
+// where it had been set by ear on 2026-10-11.
+#define SYNTH_GAIN_UNITY 1.028
+static _Atomic float main_synth_gain = (float)SYNTH_GAIN_UNITY;
 
 // Where `endpoint`'s sound goes: its side of the main output, or with TB on,
 // that side's talkbox bus.
@@ -2099,9 +2110,13 @@ static void render_breath_instruments(float* left, float* right, int len,
 // The main output's right side's level, as a proportion of the global
 // volume: the drum and the mandolin's side, matched to the mandolin by ear
 // rather than to the rest of the rig.  Scaled after everything is mixed, on
-// the audio thread, hence atomic.
+// the audio thread, hence atomic.  The slider's middle, 1, is
+// ALT_CHANNEL_GAIN_UNITY: where it had been set by ear on 2026-10-11.
+// alt_channel_volume is the slider's; alt_channel_gain what's applied.
 #define MAX_ALT_CHANNEL_GAIN 2.0
-static _Atomic float alt_channel_gain = 1.0f;
+#define ALT_CHANNEL_GAIN_UNITY 1.024
+static double alt_channel_volume = 1.0;
+static _Atomic float alt_channel_gain = (float)ALT_CHANNEL_GAIN_UNITY;
 
 // The Breath Gate's own sounds, on one channel like everything else: its
 // side, the left, or the talkbox with its TB on.  They're made in stereo --
@@ -2355,13 +2370,17 @@ void set_synth_gain(double gain) {
   if (gain < 0) gain = 0;
   if (gain > MAX_SYNTH_GAIN) gain = MAX_SYNTH_GAIN;
   synth_gain = gain;
-  atomic_store_explicit(&main_synth_gain, (float)gain, memory_order_relaxed);
+  atomic_store_explicit(&main_synth_gain, (float)(gain * SYNTH_GAIN_UNITY),
+                        memory_order_relaxed);
 }
 
 void set_alt_channel_gain(double gain) {
   if (gain < 0) gain = 0;
   if (gain > MAX_ALT_CHANNEL_GAIN) gain = MAX_ALT_CHANNEL_GAIN;
-  atomic_store_explicit(&alt_channel_gain, (float)gain, memory_order_relaxed);
+  alt_channel_volume = gain;
+  atomic_store_explicit(&alt_channel_gain,
+                        (float)(gain * ALT_CHANNEL_GAIN_UNITY),
+                        memory_order_relaxed);
 }
 
 // Mirrors run-fluidsynth.sh: -c 2 -z 64 -g 1.0, stereo, reverb/chorus off.
