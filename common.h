@@ -7,7 +7,7 @@ void die(char *errmsg) {
 }
 
 void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
-                           int manual_volume, bool pan);
+                           bool pan);
 
 #define CHANNEL_DRUM 9
 
@@ -29,21 +29,16 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 #define CHANNEL_PITCHED_KICK 15
 
 // The kick from a percussion set, on a channel of its own so that Kick Duck
-// can leave it out of what it ducks.  The Mac makes 16, past the endpoints'
-// sixteen, a second percussion channel for it (macapi.h); the Pi's fluidsynth
-// has only the one, so there it's the drum channel, as it always was.
-#ifndef CHANNEL_KICK
-#define CHANNEL_KICK CHANNEL_DRUM
-#endif
+// (macapi.h) can leave it out of what it ducks.  Mirrors the drum channel's
+// program and controllers, so it sounds the same.  Past the sixteen channels
+// the endpoints and pitched kick use, so the synth has thirty-two
+// (start_synth).
+#define CHANNEL_KICK 16
 
 // The Breath Gate's brushes: a percussion channel set to the Brush kit, apart
-// from the drum's, which is on whichever kit's picked.  The Mac makes it,
-// past the voice channels (macapi.h); the Pi's fluidsynth has only sixteen
-// channels, so there they're the drum's, and play what that kit has on the
-// brushes' notes.
-#ifndef CHANNEL_BRUSH
-#define CHANNEL_BRUSH CHANNEL_DRUM
-#endif
+// from the drum's, which is on whichever kit's picked.  Past the voice
+// channels (below).
+#define CHANNEL_BRUSH 32
 #define BRUSH_KIT 40            // FluidR3's Brush set
 #define MIDI_BRUSH_TAP 38       // on it
 #define MIDI_BRUSH_SLAP 39
@@ -51,10 +46,8 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 
 // And the drum's Grid Hat: another, set to whichever percussion set the
 // drum's kit is from (select_drum_kit), for that kit's hat -- the 808's until
-// then.  On the Pi the drum's again, which comes to the same thing.
-#ifndef CHANNEL_HAT
-#define CHANNEL_HAT CHANNEL_DRUM
-#endif
+// then.
+#define CHANNEL_HAT 33
 #define HAT_KIT 25              // FluidR3's TR-808 set
 #define MIDI_HAT 42             // its closed hat
 
@@ -79,7 +72,7 @@ static inline double breath_blown(int breath) {
 // What the breath controller is shaping or playing, one bit each: the
 // sweeps (the Mac's 4, 6 and 7), and the Breath Gate's percussion voices
 // when it's on and playing one.  jammermidilib.h works out which are on; the
-// Mac's audio (macapi.h) does them.  The Pi does none.  The sweeps come first
+// Mac's audio (macapi.h) does them.  The sweeps come first
 // and in this order, since macapi.h numbers its filters by them.
 enum {
   BREATH_FX_SWEEP_BASS = 1 << 0,
@@ -139,15 +132,34 @@ enum {
 #define ENDPOINT_DRONE_BASS_2 12
 #define ENDPOINT_DRONE_CHORD_2 13
 // The Breath Gate: a drone chord that sounds only while you blow (the Mac's
-// audio gates its channel), or instead any of its own voices together.  A drone like the others otherwise.  The Mac's
-// alone: on the Pi nothing switches it on.
+// audio gates its channel), or instead any of its own voices together.  A
+// drone like the others otherwise.
 #define ENDPOINT_BREATH 14
 #define N_ENDPOINTS (ENDPOINT_BREATH+1)
 
+// Voice channels: three spare channels for each drone, past the kick's, so a
+// voice-led drone (jammermidilib.h's voice_lead) can play each of its notes on
+// a channel of its own and bend it on its own -- a pitch bend is a channel's,
+// not a note's.  They mirror their drone's program and controllers
+// (macapi.h's send_midi, choose_voice) and are mixed as their drone is.
+#define VOICE_CHANNELS_PER_DRONE 3
+#define VOICE_BEND_RANGE 12  // semitones each way
+
+// The first of a drone's voice channels, or -1 if it isn't a drone.
+static inline int voice_channel_base(int endpoint) {
+  switch (endpoint) {
+  case ENDPOINT_DRONE_BASS:    return 17;
+  case ENDPOINT_DRONE_CHORD:   return 20;
+  case ENDPOINT_DRONE_BASS_2:  return 23;
+  case ENDPOINT_DRONE_CHORD_2: return 26;
+  case ENDPOINT_BREATH:        return 29;
+  }
+  return -1;
+}
+
 // The side of the main output an endpoint plays on: the drum on the right,
-// and everything else the left.  TB (F2) sends one to the talkbox instead --
-// on the Mac an output of its own (macapi.h); on the Pi, which has only the
-// two, the right.
+// and everything else the left.  TB (F2) sends one to the talkbox, an output
+// of its own (macapi.h), instead.
 static inline bool endpoint_home_right(int endpoint) {
   return endpoint == ENDPOINT_DRUM;
 }

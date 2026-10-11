@@ -1,12 +1,9 @@
 #ifndef JML_MAC_API_H
 #define JML_MAC_API_H
 
-// Mac equivalent of linuxapi.h.
-//
-// On the Pi we send MIDI out over ALSA sequencer ports to a separate
-// fluidsynth process.  Here we link libfluidsynth directly and call it
-// in-process, so there's one app to launch and no MIDI routing to get wrong.
-// Same soundfont, so the same voice/volume tuning applies.
+// The platform underneath jammermidilib.h: send_midi(), choose_voice() and
+// the rest.  libfluidsynth is linked directly and called in-process, so
+// there's one app to launch and no MIDI routing to get wrong.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -19,43 +16,7 @@
 #include <fluidsynth.h>
 #include <stdatomic.h>
 
-// Its own channel here, rather than the drum channel's: see Kick Duck below.
-// Mirrors the drum channel's program and controllers, so it sounds the same.
-// Past the sixteen channels the endpoints and pitched kick use, so the synth
-// has thirty-two (start_synth).
-#define CHANNEL_KICK 16
-// And the Breath Gate's brushes and the drum's Grid Hat, past the drones'
-// voice channels, below.
-#define CHANNEL_BRUSH 32
-#define CHANNEL_HAT 33
-
-// The Mac has a talkbox output of its own, apart from the main device's left
-// and right: see "The talkbox" below.
-#define TALKBOX_OUTPUT
-
 #include "common.h"
-
-// Voice channels: three spare channels for each drone, past the kick's, so a
-// voice-led drone (jammermidilib.h's voice_lead) can play each of its notes on
-// a channel of its own and bend it on its own -- a pitch bend is a channel's,
-// not a note's.  They mirror their drone's program and controllers
-// (send_midi, choose_voice) and are mixed as their drone is.  The Pi's
-// fluidsynth has only sixteen channels, so there the drones play as they
-// always did.
-#define VOICE_CHANNELS_PER_DRONE 3
-#define VOICE_BEND_RANGE 12  // semitones each way
-
-// The first of a drone's voice channels, or -1 if it isn't a drone.
-static int voice_channel_base(int endpoint) {
-  switch (endpoint) {
-  case ENDPOINT_DRONE_BASS:    return 17;
-  case ENDPOINT_DRONE_CHORD:   return 20;
-  case ENDPOINT_DRONE_BASS_2:  return 23;
-  case ENDPOINT_DRONE_CHORD_2: return 26;
-  case ENDPOINT_BREATH:        return 29;
-  }
-  return -1;
-}
 
 // The endpoint a channel belongs to: its own, for the endpoints, or the
 // drone's, for a voice channel.
@@ -88,14 +49,12 @@ uint64_t now() {
 }
 
 // Which CoreAudio device to play through.  "default" follows the system
-// output, which is usually the wrong thing for a live rig -- on the Pi
-// run-fluidsynth.sh picks the USB interface explicitly, and this is the
-// equivalent.
+// output, which is usually the wrong thing for a live rig, so this picks the
+// interface explicitly.
 #define AUDIO_DEVICE_SETTING "audio.coreaudio.device"
 char audio_device[256] = "default";
 
-// The Pi passes fluidsynth -c 2 -z 64: two ALSA periods of 64 frames.  Neither
-// translates to CoreAudio.  Setting audio.periods at all makes the driver open
+// Don't set audio.periods: setting it at all makes the CoreAudio driver open
 // happily and then never ask us for a single sample -- no error, no sound --
 // and it's device-dependent, so it can look fine on one output and be silent
 // on the next.  Leave the buffering to fluidsynth unless told otherwise, and
@@ -2226,9 +2185,8 @@ bool audio_is_flowing(void) {
   return audio_frames_rendered > before;
 }
 
-// Global output volume, on top of the per-voice levels in voices.h.  1.0 is
-// what the Pi's run-fluidsynth.sh uses; the Audio Output menu's slider moves
-// it when a room or a PA wants more or less.
+// Global output volume, on top of the per-voice levels in voices.h.  The
+// Audio Output menu's slider moves it when a room or a PA wants more or less.
 #define MAX_SYNTH_GAIN 2.0
 double synth_gain = 1.0;
 
@@ -2238,14 +2196,13 @@ fluid_audio_driver_t* fl_driver = NULL;
 int fl_sfont_id = -1;
 
 // Where to look for FluidR3_GM.sf2, in priority order.  $JAMMER_SOUNDFONT
-// wins, then anything bundled next to the binary, then the usual homebrew and
-// Linux locations.
+// wins, then anything bundled next to the binary, then the usual homebrew
+// locations.
 const char* SOUNDFONT_PATHS[] = {
   "FluidR3_GM.sf2",
   "soundfonts/FluidR3_GM.sf2",
   "/opt/homebrew/share/soundfonts/FluidR3_GM.sf2",
   "/usr/local/share/soundfonts/FluidR3_GM.sf2",
-  "/usr/share/sounds/sf2/FluidR3_GM.sf2",
   NULL
 };
 
@@ -2426,7 +2383,7 @@ void start_synth(const char* soundfont_path, const char* device) {
                         (SYNTH_CHANNELS + 15) / 16 * 16);
   fluid_settings_setint(fl_settings, "synth.reverb.active", 0);
   fluid_settings_setint(fl_settings, "synth.chorus.active", 0);
-  // Channel 9 is percussion, as on the Pi (ENDPOINT_DRUM == CHANNEL_DRUM == 9).
+  // Channel 9 is percussion (ENDPOINT_DRUM == CHANNEL_DRUM == 9).
   fluid_settings_setstr(fl_settings, "synth.midi-bank-select", "gm");
 
   fl_synth = new_fluid_synth(fl_settings);

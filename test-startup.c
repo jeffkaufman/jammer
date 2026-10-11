@@ -33,9 +33,12 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   if (action == MIDI_ON) note_ons[endpoint]++;
 }
 void choose_voice(int channel, int bank_num, int voice) {
+  if (channel < 0 || channel > 15) return;
   prog[channel] = voice;
   bank[channel] = bank_num;
 }
+
+static void voice_bend(int channel, double semitones) {}
 
 #include "jammermidilib.h"
 #include "voices.h"

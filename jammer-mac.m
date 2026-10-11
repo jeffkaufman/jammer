@@ -1,7 +1,4 @@
-// Mac version of jammer.
-//
-// The Pi runs three processes: fluidsynth, jammer (ALSA MIDI routing), and
-// kbd.py (evdev -> MIDI keypad).  Here it's one app:
+// The jammer app:
 //
 //   * fluidsynth is linked in-process (macapi.h), so send_midi() goes straight
 //     to the synth.
@@ -10,7 +7,7 @@
 //   * The keypad is the Mac's own keyboard, drawn on screen so you can see
 //     what every key does and what's currently switched on.
 //
-// jammermidilib.h -- all the actual musical logic -- is shared unchanged.
+// jammermidilib.h has all the actual musical logic.
 
 // CoreMIDI's packet-list API is deprecated in favour of the UMP one, and the
 // IOHIDSystem parameter calls in fkeys.h are deprecated with no replacement

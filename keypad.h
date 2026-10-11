@@ -8,14 +8,9 @@
 // Include after jammermidilib.h, keylayout.h, whistle.h and speechwords.h.
 
 // ---------------------------------------------------------------------------
-// Keypad: the Mac keyboard standing in for kbd.py
+// Keypad
 // ---------------------------------------------------------------------------
 
-// kbd.py has a mode where DELETE or F8 collects three digits and sends them as
-// a velocity.  The Mac app doesn't: the root note is picked from the status
-// bar instead, and manual per-voice volumes aren't something worth typing
-// blind.  So a key press is just a key press.
-//
 // Caller must hold the lock.
 static void keypad_key(int note) {
   handle_keypad(MIDI_ON, note, 64);

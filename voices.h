@@ -1,12 +1,11 @@
 #ifndef JML_VOICES_H
 #define JML_VOICES_H
 
-// Per-voice and per-endpoint volume tuning, shared by the Linux and Mac
-// builds.  Include after jammermidilib.h, which supplies MIDI_MAX and the
+// Per-voice and per-endpoint volume tuning.  Include after jammermidilib.h, which supplies MIDI_MAX and the
 // send_midi()/choose_voice() platform API.
 
 void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
-                           int manual_volume, bool pan) {
+                           bool pan) {
   send_midi(MIDI_CC, CC_07, 0, endpoint);
 
   int volume = 70;
@@ -88,10 +87,6 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     volume = MIDI_MAX;
   }
   
-  if (manual_volume != -1) {
-    volume = manual_volume;
-  }
-
   volume += volume_delta;
 
   if (endpoint == ENDPOINT_FLEX) {

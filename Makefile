@@ -1,37 +1,8 @@
-jammer: jammer.c jammermidilib.h voices.h linuxapi.h common.h
-	gcc jammer.c -lm -lasound -o jammer -std=c99 -Wall -Werror
-
-jammer-fakeinput: jammer.c jammermidilib.h voices.h linuxapi.h common.h
-	gcc jammer.c -lm -lasound -o jammer-fakeinput -std=c99 \
-	  -Wall -Werror -DFAKE_FEET -DFAKE_CHANGE_PITCH
-
-jammermidimac: jammermidimac.m jammermidimaclib.h
-	gcc \
-    -F/System/Library/PrivateFrameworks \
-	  -framework CoreMIDI \
-    -framework CoreFoundation \
-    -framework CoreAudio \
-    -framework Foundation \
-	  jammermidimac.m -o jammermidimac -std=c99 -Wall
-
-run: jammer
-	./jammer $(CURDIR)/kbd-config
-
-run-fakeinput: jammer-fakeinput
-	./jammer-fakeinput $(CURDIR)/kbd-config
-
-runmac: jammermidimac
-	./jammermidimac
-
-### Mac version #############################################################
-
 FLUIDSYNTH := $(shell brew --prefix fluid-synth 2>/dev/null)
 
 # The whistle bass is whistle-synth's engine, compiled unchanged from that
 # repo rather than copied in here -- copies drift, and both of these live side
-# by side in ~/code.  Point this elsewhere if it doesn't.  Mac-only: the Pi
-# runs whistle-synth as its own service and the `jammer` target below doesn't
-# know about any of this.
+# by side in ~/code.  Point this elsewhere if it doesn't.
 WHISTLE_DIR ?= ../whistle-synth
 WHISTLE_SRCS := $(WHISTLE_DIR)/pitch.c $(WHISTLE_DIR)/synth.c \
                 $(WHISTLE_DIR)/engine.c
@@ -47,8 +18,8 @@ whistle-build/%.o: $(WHISTLE_DIR)/%.c $(WHISTLE_HDRS)
 	clang -c $< -o $@ -I$(WHISTLE_DIR) -std=c11 -Wall -O2
 
 SOUNDFONT := FluidR3_GM.sf2
-# The same fluid-soundfont-gm package the Pi installs, so the Mac build sounds
-# identical.  Grabs whatever the current version in the pool is.
+# Debian's fluid-soundfont-gm package.  Grabs whatever the current version in
+# the pool is.
 SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h \
@@ -196,7 +167,7 @@ whistlelevels: whistlelevels.c loudness.h jammermidilib.h voices.h common.h \
 	  -I$(WHISTLE_DIR) \
 	  -std=gnu11 -Wall -O2
 
-.PHONY: run run-fakeinput runmac soundfont run-mac app dist clean-mac test-mac
+.PHONY: soundfont run-mac app dist clean-mac test-mac
 
 test-mac: test-keypad.c test-startup.c kitlevels.c loudness.h \
           $(MAC_SRCS) keypad.h $(WHISTLE_OBJS)

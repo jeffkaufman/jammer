@@ -9,10 +9,9 @@
 // to the physical keyboard, printed big so the screen and the keyboard match
 // at a glance, and `label` spells out what it actually does.
 //
-// The pseudo-note values match what kbd.py sends on the Pi, so handle_keypad()
-// in jammermidilib.h is shared unchanged.  Shift-selecting an endpoint is a
-// Mac-only convenience, so instead of a new pseudo-note a toggle key carries
-// the select pseudo-note the number row used to send.
+// Each key sends a pseudo-note to handle_keypad() in jammermidilib.h.  A
+// toggle key's shifted pseudo-note is the select one the number row used to
+// send.
 //
 // Include after jammermidilib.h.
 
@@ -110,9 +109,7 @@ static const Key KEYS[] = {
   {kVK_F7, F7, 0, "F7", "AF", "FOLLOW\nAIR", GROUP_MODIFIER, LIT_EP_FLAG,
    FLAG_FOLLOWS_AIR, NOLABEL, 0, 8, 1},
   // Speech recognition: spoken commands, "press foot bass" and the like
-  // (speech.h), on or off whatever is choosing the chord.  F8 used to arm
-  // three-digit root-note entry, which the status bar's note picker does now,
-  // so it sends its own pseudo-note rather than F8's.
+  // (speech.h), on or off whatever is choosing the chord.
   {kVK_F8, SPEECH_COMMANDS, 0, "F8", "SR", "SPEECH\nRECOG", GROUP_GLOBAL,
    LIT_GLOBAL_FLAG, GLOBAL_SPEECH_COMMANDS, NOLABEL, 0, 9, 1},
   {kVK_F9, F9, 0, "F9", "DCN", "DRUM\nCHOOSES", GROUP_GLOBAL, LIT_GLOBAL_FLAG,
@@ -171,7 +168,7 @@ static const Key KEYS[] = {
   {kVK_ANSI_Equal, '=', 0, "=", "+", "VOL+", GROUP_MODIFIER, LIT_VOLUME, 1,
    NOLABEL, 1, 12, 1},
   // Voice leading, for all the drones at once, so none jump while the rest
-  // glide.  delete used to arm three-digit manual volume entry.
+  // glide.
   {kVK_Delete, VOICE_LEAD_TOGGLE, 0, "del", NULL, "VOICE\nLEAD",
    GROUP_GLOBAL, LIT_GLOBAL_FLAG, GLOBAL_VOICE_LEAD, NOLABEL, 1, 13, 2},
 

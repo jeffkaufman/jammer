@@ -4897,11 +4897,11 @@ static void test_drum_kit_reach() {
   update_breath_fx();
   CHECK(!c->talkbox[ENDPOINT_DRUM] && told_talkbox == 0,
         "the drum, and the Feet, should start off the talkbox");
-  CHECK(endpoint_pans_right(ENDPOINT_DRUM), "the drum should be on the right");
+  CHECK(endpoint_home_right(ENDPOINT_DRUM), "the drum should be on the right");
   select_ep("tab");
   press("F2");
   CHECK(c->talkbox[ENDPOINT_DRUM] && told_talkbox == 1u << ENDPOINT_DRUM &&
-        endpoint_pans_right(ENDPOINT_DRUM),
+        endpoint_home_right(ENDPOINT_DRUM),
         "TB should send the drum to the talkbox, from its own side");
   // And the Feet with it, onto the talkbox's bus for the right.
   {

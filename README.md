@@ -4,130 +4,21 @@ This isn't really intended for other people to use directly, because it's very
 tied to my specific equipment and the kind of music I'm playing.  But it may
 still be useful if you want to build something similar.
 
-The Mac version is also available ready-built:
+It's also available ready-built:
 [Jammer-1.1.zip](https://www.jefftk.com/Jammer-1.1.zip), signed and notarized,
 for Apple Silicon Macs on macOS 26 or later.
 
-Run `make run` to build this software and run it.  It will look for various
-midi devices:
+It's a Mac app with a GUI: fluidsynth is linked in directly, MIDI comes in
+over CoreMIDI, and the Mac's own keyboard is the keypad.  All the musical
+logic is in `jammermidilib.h`.  See "Building" below to build and run it.
+
+It looks for these MIDI devices:
 
 * MIO USB-MIDI representing a Yamaha DTX 500 used as foot pedals
 * TE-Control breath controller
 * Piano as "USB MIDI Interface" or any other unknown interface
 
-And send audio to fluidsynth.
-
-## Setup
-
-First set up the Raspberry PI (see below)
-
-Install deps
-
-```
-sudo apt install fluidsynth fluid-soundfont-gm alsa-utils jackd2 libasound2-dev
-```
-
-(When JACK asks if it can have realtime priority, say yes)
-
-Use a deploy key to check out this repo and put it at `/home/jeffkaufman/jammer/`.
-
-```
-$ cd ~/jammer
-$ make
-```
-
-To run on boot, `/etc/systemd/system/fluidsynth.service` should have:
-
-```
-[Unit]
-Description=Fluidsynth Synthesizer
-
-[Service]
-ExecStart=sudo /home/jeffkaufman/jammer/run-fluidsynth.sh
-Restart=always
-KillSignal=SIGQUIT
-Type=simple
-[A
-[Install]
-WantedBy=multi-user.target
-```
-
-And `/etc/systemd/system/jammer.service` should have:
-
-```
-[Unit]
-Description=Remap MIDI
-After=fluidsynth.service
-
-[Service]
-ExecStart=/home/jeffkaufman/jammer/jammer
-Restart=always
-KillSignal=SIGQUIT
-Type=simple
-
-[Install]
-WantedBy=multi-user.target
-```
-
-And `/etc/systemd/system/jammer-kbd.service` should have:
-
-```
-[Unit]
-Description=Keyboard Control for Jammer
-
-[Service]
-ExecStart=/home/jeffkaufman/jammer/kbd.py
-Restart=always
-KillSignal=SIGQUIT
-Type=simple
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Run:
-
-```
-sudo systemctl enable fluidsynth
-sudo systemctl enable jammer
-sudo systemctl enable jammer-kbd
-sudo systemctl daemon-reload
-```
-
-Set levels for consistency:
-
-```
-$ alsamixer
-> F6 select "USB Audio Device"
-> F5 [All]
-> Speaker: 100
-```
-
-## Raspberry PI Setup
-
-1. Put the micro SD card into an adapter and attach to laptop
-
-2. Download the imager: https://www.raspberrypi.com/software/
-
-3. Run imager
-
-4. Install Raspberry PI OS Lite. Give it jeffkaufman for the user, ssh
-   public key for login, and tell it about the WiFi
-
-5. After booting the image, run `sudo nmap -sn 192.168.0.0/24` to learn what
-   IP it came up under.
-
-6. `sudo apt update && sudo apt upgrade`
-
-7. `sudo apt install git`
-
-
-## Running on a Mac
-
-There's a Mac build with a GUI.  It's one process instead of the Pi's three:
-fluidsynth is linked in directly, MIDI comes in over CoreMIDI, and the Mac's
-own keyboard replaces `kbd.py`.  All the musical logic (`jammermidilib.h`) is
-shared with the Pi build.
+## Using it
 
 The window draws the computer keyboard, lit up to show current state.  Each
 key carries its letter in the corner, the abbreviation from the paper tab on
@@ -243,8 +134,7 @@ the physical keyboard in the middle, and what it actually does underneath:
   them is on.  The
   lit kit's key again switches the kit off altogether, leaving the pedals
   and the pattern silent and the Grid Hat, if it's on, on its own.  The
-  Feet are the kit it starts on, on the Mac (on the Pi, with no sound for
-  them, Rim is, and `S`, `D`, `F` and `G` do nothing).  Switch the drum on with `tab` for them.  Every kit plays
+  Feet are the kit it starts on.  Switch the drum on with `tab` for them.  Every kit plays
   the same way: each drum pedal is a sound of its
   own whenever it's hit, beat or no beat, and while the pedals keep a beat
   the modifier keys set the pattern -- which the breath fills out.  Blowing
@@ -275,7 +165,7 @@ the physical keyboard in the middle, and what it actually does underneath:
   Feet, their hat, the toe's tap the hihat pedal plays, and over the Bare
   Feet and the Hand Drums theirs; with no kit, the
   Standard set's closed hat -- on a channel of its own that's panned with
-  the drum (on the Pi, the drum's).  **Feet**: French
+  the drum.  **Feet**: French
   Canadian foot percussion, leather shoes on a well-sprung wooden floor. Each
   drum pedal is a step of its own whenever it's hit, beat or no beat: the kick
   (2) a thump (with downbeat), the hihat (4) a tap, the snare (1) a lower tap, half
@@ -344,10 +234,8 @@ the physical keyboard in the middle, and what it actually does underneath:
 Click the key signature at the top left to play in another key.  You can click
 keyboard keys with the mouse too, shift-clicking to select.
 
-Unlike the Pi, there's no three-digit entry on `F8` or `delete`: the root note
-comes from that picker, and manual per-voice volumes aren't something worth
-typing blind.  `F8` is speech recognition instead, `F3` number
-recognition -- see below -- and `delete` VOICE LEAD, for the drones.
+`F8` is speech recognition, `F3` number recognition -- see below -- and
+`delete` VOICE LEAD, for the drones.
 
 ### Speech recognition
 
@@ -551,9 +439,8 @@ is what the places that treat the foot bass specially now ask, rather than
 naming the one endpoint: the octave arithmetic, the note-ending rule, the
 arpeggiation and the volume trim all apply to the three of them.
 
-On the Pi they aren't reachable yet: their pseudo-notes are `s`-`v`, because
-`2` and `3` have meant "select the foot bass" and "select the arp" since
-`kbd.py`, and there's no key spare on that number row.  The Mac's `2` and `3`
+Their pseudo-notes are `s`-`v`, because `2` and `3` have meant "select the
+foot bass" and "select the arp" since the beginning.  The `2` and `3` keys
 carry the new ones instead.
 
 ### The drones' pads
@@ -569,8 +456,7 @@ have always been, and the pads picked out with `make pads && ./pads`.
 
 `B`, `N` and `M` do nothing then -- except on the Breath Gate, where they,
 and Church Organ's, Synth Brass 2's and Warm Pad's keys, are its own voices.  The list is `DRONE_VOICES` in
-`jammermidilib.h`, and `handle_keypad` does the picking, so the Pi's keypad
-gets it too.
+`jammermidilib.h`, and `handle_keypad` does the picking.
 
 Every pad on the list is levelled to Rock Organ as the drones used to play
 it, by perceived loudness -- and the chord drones 2dB above that, since they'd been a
@@ -597,7 +483,7 @@ it glides over half a beat from when it's heard, and the chord waits for it,
 made as the glide ends.  (With VOICE LEAD off, there's nothing to wait for,
 and a number with no beat is made the moment it's heard, as ever.)  Once
 it's gliding it's the drone's chord: a breath on the Breath Gate, or Pulse,
-striking the drones again doesn't pull it back.  For that, on the Mac, each of a
+striking the drones again doesn't pull it back.  For that, each of a
 voice-led drone's notes plays on a channel of its own -- three spare channels
 per drone, 17 to 31, which follow the drone's program, volume and fade and
 are gated and ducked with it -- and glides by bending that channel.  A move
@@ -614,12 +500,11 @@ The grid is the foot bass's, not an even one: the gate opens where the foot
 bass plays, the upbeat a hair early, and in jig time the 8ths at 0, 21 and 45
 of the beat's 72 subbeats rather than 0, 24 and 48, the lilt of a jig.  Only inside the beat
 the last pedal hit started -- once the feet stop, the pad just holds.  It's
-on the audio, per channel (`apply_trance_gates` in `macapi.h`), so the Pi
-doesn't have it.
+on the audio, per channel (`apply_trance_gates` in `macapi.h`).
 
 `8` and `9` are cleared exactly like `I` and `O`, and `is_drone()` is what
 the places that treat the drones specially ask.  Like the extra foot basses
-they aren't reachable from `kbd.py`: their pseudo-notes are `w`-`z`.
+their pseudo-notes aren't mnemonic: they're `w`-`z`.
 
 ### Builds and drops
 
@@ -742,12 +627,11 @@ voices.  The engine is [whistle-synth](../whistle-synth)'s -- `pitch.c`,
 `synth.c` and `engine.c` compiled unchanged from that repo, which makes jammer
 the third front end onto them after its own command-line build and its Mac
 app.  `make` expects it at `../whistle-synth`; set `WHISTLE_DIR` if it's
-somewhere else.  None of this exists on the Pi, which runs whistle-synth as a
-service of its own.
+somewhere else.
 
 It's an instrument on the keyboard but **not an endpoint**: endpoints are
 fluidsynth MIDI channels and this one makes its own sound, so `jammermidilib.h`
-doesn't know about it and neither does the Pi.
+doesn't know about it.
 
 * `1` switches it on and off.  Shift-`1` selects it, the same way shift over
   an endpoint's key selects that endpoint.
@@ -780,8 +664,7 @@ with the drum, or with `TB` on -- `F2` while it's selected -- out of the
 talkbox (see "The talkbox" below).  It's on from the start; left
 `option` switches it off and on, and shift-left `option` selects it, the way
 `1` and shift-`1` do the whistle.  Right `option` does nothing.  Like the
-whistle it isn't an endpoint, and there's none of it on the Pi
-(`mandolin.h`).
+whistle it isn't an endpoint (`mandolin.h`).
 
 While it's selected its voices are on the keys, each on and off by itself,
 any of them at once, and the mandolin plays under all of them but the Tuner:
@@ -1062,8 +945,7 @@ then that endpoint, or with it selected the mandolin, plays out of the
 talkbox instead of its side of the main output.  An endpoint with `TB` on
 carries the tag in its key's corner, as the mandolin's key does.  Kick Duck,
 the trance gate, the Breath Gate's gate and the sweeps all still apply to
-what's sent.  On the Pi, which has only the two outputs, `TB` puts an
-endpoint on the right instead.
+what's sent.
 
 While anything has `TB` on, what the whistle's microphone, input 1, hears
 comes back onto the main output -- the talkbox's tube goes in your mouth, in
@@ -1078,8 +960,7 @@ by ear; and **Talkbox return volume** how loud the microphone comes back.
 All remembered.  A talkbox device that's unplugged is taken up again when it
 comes back, and one that stops pulling audio is reopened, like the others.
 
-Don't set `audio.periods` or `audio.period-size` here the way
-`run-fluidsynth.sh` does for ALSA.  On CoreAudio those make the driver open
+Don't set `audio.periods` or `audio.period-size`.  On CoreAudio those make the driver open
 successfully and then never request a sample -- no error, no sound -- and
 which values break is device-dependent.  `$JAMMER_PERIODS` and
 `$JAMMER_PERIOD_SIZE` exist for experimenting; jammer checks that audio is
@@ -1100,20 +981,7 @@ buffering if it isn't.
   value remembered at startup, so if jammer is ever killed with `kill -9` --
   the one signal it can't catch -- the next run puts things right when you
   quit it.
-* MIDI devices are matched by name the same way as on the Pi (`mio`/`DTX` for
+* MIDI devices are matched by name (`mio`/`DTX` for
   the foot pedals, `Breath Controller`, and `Piano`/`Roland`/`USB MIDI
   Interface` for the keyboard, falling back to any unrecognized device).
   Plugging something in mid-session re-scans.
-
-## Mac Version: harp mandolin MIDI mapper
-
-Separately from the above, there's a minimal version that runs on a mac and is
-a MIDI mapper for an electronic harp mandolin.  Run `make runmac` to build and run.
-
-It will look for two midi devices:
-
-* TE-Control breath controller
-* Electronic Harp Mandolin, presenting as "Teensy "
-
-and presents a virtual midi output intended for a wind instrument synth.  I've
-been using it with The Trombones 3.0.

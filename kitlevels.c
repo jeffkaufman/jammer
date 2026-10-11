@@ -45,6 +45,9 @@ void send_midi(int action, int note, int velocity, int endpoint) {
 void choose_voice(int channel, int bank, int voice) {
   (void)channel; (void)bank; (void)voice;
 }
+static void voice_bend(int channel, double semitones) {
+  (void)channel; (void)semitones;
+}
 
 #include "jammermidilib.h"
 #include "voices.h"

@@ -143,7 +143,7 @@ static void quiet_select_voice(int endpoint, int program) {
   int saved = dup(STDOUT_FILENO);
   FILE* null = fopen("/dev/null", "w");
   if (null) dup2(fileno(null), STDOUT_FILENO);
-  select_endpoint_voice(endpoint, program, PAD_BANK, 0, -1, false);
+  select_endpoint_voice(endpoint, program, PAD_BANK, 0, false);
   fflush(stdout);
   dup2(saved, STDOUT_FILENO);
   close(saved);

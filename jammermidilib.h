@@ -76,7 +76,7 @@
     (byte & 0x02 ? '1' : '0'),                  \
     (byte & 0x01 ? '1' : '0')
 
-// kbd.py sends these as 'a' (97) + N
+// The keypad's pseudo-notes (keylayout.h): the function keys are 'a' (97) + N.
 #define F1 (98)
 #define F2 (99)
 #define F3 (100)
@@ -84,26 +84,22 @@
 #define F5 (102)
 #define F6 (103)
 #define F7 (104)
-#define F8 (105)
 #define F9 (106)
 #define F10 (107)
-#define DELETE (108)
 #define ESCAPE (109)
 #define UP (110)
 #define LEFT (111)
 #define DOWN (112)
 #define RIGHT (113)
 #define TAB (114)
-// Not keys kbd.py has: the Mac's F3 sends SPEECH_PICKS to switch spoken
-// numbers to choosing the chord, and its F8 SPEECH_COMMANDS to switch spoken
-// commands on -- F8 itself still arms root-note entry on the Pi.  Up here
-// because the values past TAB are the lowercase letters, which are taken.
+// F3 sends SPEECH_PICKS to switch spoken numbers to choosing the chord, and
+// F8 SPEECH_COMMANDS to switch spoken commands on.  Up here because the
+// values past TAB are the lowercase letters, which are taken.
 #define SPEECH_COMMANDS (126)
 #define SPEECH_PICKS (127)
-// Nor these: the Mac's 5, Kick Duck, its breath sweeps on 4, 6 and 7, and
-// the Breath Gate on `, toggled and selected.  97 is where kbd.py's F0 would
-// be, and there's no F0; the punctuation is never sent by kbd.py, which only
-// sends a key's name when it's a single letter or digit.
+// And 5, Kick Duck, the breath sweeps on 4, 6 and 7, and the Breath Gate on
+// `, toggled and selected, in the gaps: 97 is where F0 would be, and there's
+// no F0, and the punctuation isn't otherwise used.
 #define KICK_DUCK (125)
 #define BASS_SWEEP (123)
 #define TREBLE_SWEEP (124)
@@ -316,8 +312,8 @@ static const DrumKit KITS[N_KITS] = {
 // 0 gentle to 1 a stomp -- or for the Bare Feet's, how hard the foot comes
 // down (bare_force) -- how loud, 0-1, and whether it's on the grid, which
 // a player's a little behind or ahead of, rather than a pedal's, which is
-// when it is.  Called with the lock held.  NULL on the Pi, which has no
-// Feet, so there the kit isn't on the keys and isn't the default.
+// when it is.  Called with the lock held.  NULL without the Mac's audio (the
+// headless checks), so there the kit isn't on the keys and isn't the default.
 static void (*feet_hook)(int kind, double hard, double level,
                          bool on_grid) = NULL;
 
@@ -624,7 +620,6 @@ struct Configuration {
   bool vel[N_ENDPOINTS];
 
   int volume_deltas[N_ENDPOINTS];
-  int manual_volumes[128*9];
   int voices[N_ENDPOINTS];
   bool talkbox[N_ENDPOINTS];  // TB: to the talkbox rather than its side
 
@@ -683,13 +678,13 @@ static int dcn_velocity(int vel) {
 bool jig_time;
 // Each kick, pedal or sounded, ducks what fluidsynth is playing, but for the
 // kick, the foot basses and the arp (the Mac's 5).  The
-// ducking itself is the Mac's, through kick_hook; the Pi has none.
+// ducking itself is the Mac's audio's, through kick_hook.
 bool kick_duck;
 // Which breath sweeps are on, BREATH_FX_SWEEP_* (common.h): the harder you
 // blow, the more 4 takes the bass out of everything fluidsynth plays, 6 the
 // treble, and the higher 7 sweeps a peak up through it; not blowing, they
 // leave it as it was.  update_breath_fx adds the Breath Gate's percussion to
-// them.  All the Mac's, through breath_hook; the Pi has none.
+// them.  All the Mac's audio's, through breath_hook.
 unsigned breath_fx;
 // The Breath Gate's chord is let go when the breath comes to rest, and not
 // struck again -- not even for a new chord -- until the breath next opens
@@ -697,12 +692,12 @@ unsigned breath_fx;
 bool breath_gate_rested = true;
 static void (*breath_hook)(int breath, unsigned fx) = NULL;
 // Which endpoints have TB on, a bit each, for the Mac's audio to send to the
-// talkbox (macapi.h).  NULL on the Pi, where TB is the right channel's pan.
+// talkbox (macapi.h).
 static void (*talkbox_hook)(unsigned endpoints) = NULL;
 // And how loud the Breath Gate's own sounds are, from its -/+ (mac_gain).
 static void (*breath_gain_hook)(double gain) = NULL;
 // And how much louder the drum's fluidsynth kit plays for the breath, with
-// BREATH HARD on (kit_gain).  NULL on the Pi, where there's only velocity.
+// BREATH HARD on (kit_gain).
 static void (*kit_gain_hook)(double gain) = NULL;
 void update_breath_fx(void);
 bool allow_all_drums_downbeat;
@@ -712,7 +707,6 @@ bool drum_chooses_some_notes;
 // number picks the chord (nashville_picks_chord, from speech.h), and pedals
 // 1, 3 and 4 go back to only keeping time.  drum_chooses_some_notes stays on
 // underneath, since everything downstream of the choice is Drum Some's.
-// Speech is Mac-only, so on the Pi nothing ever sets this.
 bool speech_chooses_notes;
 // Spoken commands (F8): "press foot bass", "change key to B flat".  Separate
 // from the numbers, so either can be on without the other.  Not musical
@@ -1015,10 +1009,9 @@ void end_pitched_kick() {
 
 // A voice-led drone (VOICE LEAD, the Mac's delete) plays each of its
 // notes as a voice of its own, in a slot, so the next chord can keep the
-// notes it shares and move the rest the shortest way -- and on the Mac, where
-// each slot has a channel of its own (macapi.h's voice channels), glide them
-// there by bending that channel.  On the Pi they share the drone's channel
-// and move by being struck again.
+// notes it shares and move the rest the shortest way -- and, since each slot
+// has a channel of its own (macapi.h's voice channels), glide them there by
+// bending that channel.
 #define MAX_LED_NOTES 3
 // Per slot: the note it's sounding, or heading for, as handed to psend_midi,
 // or -1; the key it's holding down, which a bend moves away from; and the
@@ -1031,23 +1024,15 @@ double led_bend_to[N_ENDPOINTS][MAX_LED_NOTES];
 uint64_t led_glide_start[N_ENDPOINTS][MAX_LED_NOTES];
 uint64_t led_glide_end[N_ENDPOINTS][MAX_LED_NOTES];  // 0 if not gliding
 
-#ifdef VOICE_CHANNELS_PER_DRONE
-#define LED_CAN_GLIDE true
 static int led_channel(int endpoint, int slot) {
   return voice_channel_base(endpoint) + slot;
 }
-#else
-#define LED_CAN_GLIDE false
-#define VOICE_BEND_RANGE 0
-static int led_channel(int endpoint, int slot) { return endpoint; }
-static void voice_bend(int channel, double semitones) {}
-#endif
 
-// Let go of a drone's voices: the notes (the caller's CC123 has done that on
-// the Mac, where the voice channels follow the drone's) and the bends.
+// Let go of a drone's voices: the notes (the caller's CC123 has done that,
+// since the voice channels follow the drone's) and the bends.
 static void led_clear(int endpoint) {
   for (int k = 0; k < MAX_LED_NOTES; k++) {
-    if (led_bend[endpoint][k] != 0 && LED_CAN_GLIDE) {
+    if (led_bend[endpoint][k] != 0) {
       voice_bend(led_channel(endpoint, k), 0);
     }
     led_notes[endpoint][k] = -1;
@@ -1079,32 +1064,19 @@ void all_notes_off() {
   send_midi(MIDI_CC, 123, 0, CHANNEL_PITCHED_KICK);
 }
 
-// Whether an endpoint's channel is panned right: its side (common.h), or on
-// the Pi, which has no talkbox output of its own, the right for TB too.  The
-// Mac sends TB to its talkbox from the mix instead (macapi.h), so the pan
-// stays where the side says.
-static bool endpoint_pans_right(int endpoint) {
-#ifdef TALKBOX_OUTPUT
-  return endpoint_home_right(endpoint);
-#else
-  return endpoint_home_right(endpoint) || c->talkbox[endpoint];
-#endif
-}
-
 void reload_voice_setting(struct Configuration* c) {
   int endpoint = c->selected_endpoint;
   int voice = c->voices[endpoint];
   if (is_breath_percussion(voice)) return;  // no program to set up
   int volume_delta = c->volume_deltas[endpoint];
-  int manual_volume = c->manual_volumes[voice];
-  bool pan = endpoint_pans_right(endpoint);
+  bool pan = endpoint_home_right(endpoint);
 
   if (endpoint != ENDPOINT_JAWHARP && c->ducked[endpoint]) {
     volume_delta += 20;
   }
   select_endpoint_voice(endpoint,
                         voice % 128, voice / 128,
-                        volume_delta, manual_volume, pan);
+                        volume_delta, pan);
 }
 
 // The drum's side: its channel, and on the Mac the kick's and the Grid
@@ -1112,7 +1084,7 @@ void reload_voice_setting(struct Configuration* c) {
 // the Feet (update_breath_fx).  Apart from its volume, which is only ever
 // sent when -/+ ask for it.
 void send_drum_pan(void) {
-  int value = endpoint_pans_right(ENDPOINT_DRUM) ? MIDI_MAX : 0;
+  int value = endpoint_home_right(ENDPOINT_DRUM) ? MIDI_MAX : 0;
   send_midi(MIDI_CC, CC_PAN, value, CHANNEL_DRUM);
   send_midi(MIDI_CC, CC_BALANCE, value, CHANNEL_DRUM);
   send_midi(MIDI_CC, CC_PAN, value, CHANNEL_PITCHED_KICK);
@@ -1130,9 +1102,7 @@ void select_drum_kit(int kit) {
 
   choose_voice(CHANNEL_DRUM, PERCUSSION_BANK, k->program);
   // The Grid Hat plays the kit's own hat, to blend with it.
-  if (CHANNEL_HAT != CHANNEL_DRUM) {
-    choose_voice(CHANNEL_HAT, PERCUSSION_BANK, k->program);
-  }
+  choose_voice(CHANNEL_HAT, PERCUSSION_BANK, k->program);
   update_breath_fx();  // how much harder blowing has it play (kit_gain)
 
   end_pitched_kick();
@@ -1361,9 +1331,6 @@ void clear_endpoint() {
 void clear_configuration() {
   for (int i = 0; i < N_ENDPOINTS; i++) {
     c->volume_deltas[i] = 0;
-  }
-  for (int i = 0; i < MIDI_MAX; i++) {
-    c->manual_volumes[i] = -1;
   }
   for (int i = 0 ; i < N_ENDPOINTS; i++) {
     c->selected_endpoint = i;
@@ -1738,7 +1705,7 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
 }
 
 // Called on each kick while Kick Duck is on, with the length of the beat,
-// and the lock held.  NULL on the Pi.
+// and the lock held.
 static void (*kick_hook)(uint64_t beat_ns) = NULL;
 uint64_t last_kick_duck_ns;
 
@@ -1936,7 +1903,7 @@ void kit_pedal(int note_in, int velocity) {
 
 // Called on each beat, before its notes are played, with the lock held.  For
 // changes that have to land on a beat -- speech.h's -- to land on this one
-// rather than just after it.  NULL on the Pi.
+// rather than just after it.
 static void (*before_beat_hook)(void) = NULL;
 
 void arpeggiate(int subbeat, uint64_t current_time, bool drone, bool running) {
@@ -2362,7 +2329,7 @@ void voice_lead(int endpoint, const int* want, int n, int vel,
   }
 
   uint64_t t = now();
-  bool glide = LED_CAN_GLIDE && glide_until > t;
+  bool glide = glide_until > t;
   int target[MAX_LED_NOTES] = {-1, -1, -1};
   for (int i = 0; i < n; i++) target[best_assign[i]] = best[i];
   for (int k = 0; k < MAX_LED_NOTES; k++) {
@@ -2387,7 +2354,6 @@ void voice_lead(int endpoint, const int* want, int n, int vel,
 
 // Move the gliding voices along.  Every tick.
 void advance_glides(void) {
-  if (!LED_CAN_GLIDE) return;
   uint64_t t = 0;
   for (int endpoint = 0; endpoint < N_ENDPOINTS; endpoint++) {
     for (int k = 0; k < MAX_LED_NOTES; k++) {
@@ -2754,8 +2720,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
 
   printf("recv: %c\n", note_in);
 
-  int selected_voice = c->voices[c->selected_endpoint];
-
   if (c->selected_endpoint == ENDPOINT_DRUM) {
     switch (note_in) {
     case 'A': pick_drum_kit(KIT_RIM); return;
@@ -2818,12 +2782,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   }
 
   switch (note_in) {
-  case DELETE:
-    // Manual volume entry
-    if (is_breath_percussion(selected_voice)) return;  // no volume to set
-    c->manual_volumes[selected_voice] = val;
-    reload_voice_setting(c);
-    return;
   case ESCAPE:
     full_reset();
     return;
@@ -2832,9 +2790,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   case F2:
     c->talkbox[c->selected_endpoint] = !c->talkbox[c->selected_endpoint];
-    reload_voice_setting(c);  // the Pi's pan
-    if (c->selected_endpoint == ENDPOINT_DRUM) send_drum_pan();
-    update_breath_fx();  // the Mac's talkbox, and the Breath Gate's own
+    update_breath_fx();  // the talkbox, and the Breath Gate's own
     return;
   case '-':
     c->volume_deltas[c->selected_endpoint] -= 5;
@@ -2874,10 +2830,8 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   // The extra foot basses.  Their pseudo-notes are 's'..'v' rather than
   // anything mnemonic because the obvious ones are taken: '2' and '3' have
-  // meant "select the foot bass" and "select the arp" since kbd.py, and the
-  // Mac's number row keys carry these instead.  Nothing on the Pi sends them
-  // yet -- kbd.py has no key spare on the number row -- so there they are
-  // reachable only by adding one.
+  // meant "select the foot bass" and "select the arp" since the beginning,
+  // and the number row keys carry these instead.
   case 't':
     c->selected_endpoint = ENDPOINT_FOOTBASS_2;
     return;
@@ -2930,7 +2884,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
     return;
   // The second drones.  'w'..'z' for the same reason the extra foot basses
   // are 's'..'v': '8' and '9' already mean "select the first drones", and
-  // the Mac's own 8 and 9 carry these instead.  Nothing on the Pi sends them.
+  // the Mac's own 8 and 9 carry these instead.
   case 'x':
     c->selected_endpoint = ENDPOINT_DRONE_BASS_2;
     return;
@@ -3087,12 +3041,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case RIGHT:
     musical_mode = MODE_BETH_COHENS;
     return;
-  case F8:
-    root_note = to_root(val);
-    fifth_note = to_root(root_note + 7);
-    update_bass(/*force_refresh=*/false);
-    return;
-
   // punchy
   case 'A': select_voice(c, 39); return;
   case 'S': select_voice(c, 38); return;
@@ -3464,7 +3412,7 @@ static bool breath_grid(uint64_t t, uint64_t start, uint64_t* beat,
 // (the Mac's), and with no kit the Standard set's hat.  With the drum on and F switching it on, a layer over
 // whichever kit's playing, which it leaves be, as the drum's modifier keys
 // leave it: it's for over a drum synth the pedals play, the Feet or a kit,
-// or on its own.  On the Pi its channel's the drum's.
+// or on its own.
 #define HAT_MAIN_FULL 0.8
 #define HAT_EXTRA_FROM 0.35
 #define HAT_EXTRA_FULL 0.95
@@ -3607,7 +3555,7 @@ void breath_hat_tick(void) {
 // in jig time "thump . tap".  Only ever within the beat the last pedal hit
 // started, so they stop with the kicks.  Blowing fills in those left out,
 // and has every step hit harder, until by DRUM_FULL they're stomps.  Their
-// sound's the Mac's own, through feet_hook (macapi.h); on the Pi, nothing.
+// sound's the Mac's own, through feet_hook (macapi.h).
 // With the drum on and the Feet its kit; UP HIGH, CLIPPED, SHORTER and VEL
 // are for fluidsynth's kits, and the Feet leave them be.
 bool feet_live;
@@ -3795,7 +3743,7 @@ void feet_tick(void) {
   auto_hat_ns = t;
 }
 
-// Tell the Mac's audio about the music, every tick.  NULL on the Pi.
+// Tell the Mac's audio about the music, every tick.
 static void (*music_hook)(const MusicState* state) = NULL;
 
 void publish_music(void) {
@@ -3835,7 +3783,6 @@ void publish_music(void) {
 }
 
 uint64_t tick_n = 0;
-uint64_t subtick_n = 0;
 void jml_tick() {
 
   // play startup chime, quietly: it's to say the rig is up, not to be heard
@@ -3867,18 +3814,7 @@ void jml_tick() {
     progress_fades();
   }
 
-  if (++tick_n % 450 == 0) {
-#ifdef FAKE_FEET
-    handle_feet(MIDI_ON, MIDI_DRUM_IN_KICK, 100);
-#endif
-
-#ifdef FAKE_CHANGE_PITCH
-    if (++subtick_n % 2 == 0) {
-      root_note = to_root(root_note + 1);
-      update_bass(/*force_refresh=*/false);
-    }
-#endif
-  }
+  tick_n++;
 }
 
 #endif

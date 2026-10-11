@@ -22,7 +22,7 @@
 // are fluidsynth MIDI channels (common.h), and this one makes its own sound
 // and has no channel.  So the selection that the voice, octave and volume keys
 // follow lives here rather than in c->selected_endpoint, and jammermidilib.h
-// -- shared with the Pi -- is untouched.
+// is untouched.
 //
 // Include after common.h.
 
