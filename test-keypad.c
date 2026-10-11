@@ -356,7 +356,7 @@ static void test_drum_picks_notes_defaults() {
   CHECK(!c->upbeat[ENDPOINT_FOOTBASS], "F9 didn't clear upbeat");
   CHECK(c->vel[ENDPOINT_FOOTBASS], "F9 didn't set vel");
   CHECK(c->octave_deltas[ENDPOINT_FOOTBASS] == 1, "F9 didn't set oct+");
-  CHECK(c->volume_deltas[ENDPOINT_FOOTBASS] == 35, "F9 didn't set vol+35");
+  CHECK(c->volume_deltas[ENDPOINT_FOOTBASS] == 0, "F9 didn't clear the volume");
 
   // Off and on again lands in the same place rather than toggling back.
   press("F9");
@@ -366,7 +366,7 @@ static void test_drum_picks_notes_defaults() {
   CHECK(c->on[ENDPOINT_FOOTBASS] && c->voices[ENDPOINT_FOOTBASS] == 32 &&
         !c->upbeat[ENDPOINT_FOOTBASS] && c->vel[ENDPOINT_FOOTBASS] &&
         c->octave_deltas[ENDPOINT_FOOTBASS] == 1 &&
-        c->volume_deltas[ENDPOINT_FOOTBASS] == 35,
+        c->volume_deltas[ENDPOINT_FOOTBASS] == 0,
         "a second F9 didn't leave the same setup");
 
   // And it overrides whatever the foot bass was doing before.
@@ -382,8 +382,13 @@ static void test_drum_picks_notes_defaults() {
   CHECK(c->voices[ENDPOINT_FOOTBASS] == 32 && !c->upbeat[ENDPOINT_FOOTBASS] &&
         c->vel[ENDPOINT_FOOTBASS] &&
         c->octave_deltas[ENDPOINT_FOOTBASS] == 1 &&
-        c->volume_deltas[ENDPOINT_FOOTBASS] == 35,
+        c->volume_deltas[ENDPOINT_FOOTBASS] == 0,
         "F9 didn't override the earlier setup");
+
+  // The pedals top out around 80, so that's stretched to the full 127.
+  CHECK(dcn_velocity(0) == 0 && dcn_velocity(40) == 64 &&
+        dcn_velocity(80) == 127 && dcn_velocity(110) == 127,
+        "pedal velocities should stretch 0-80 to 0-127");
 }
 
 static void test_globals() {

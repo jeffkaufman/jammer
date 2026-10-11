@@ -672,6 +672,14 @@ uint64_t next_duck_trough_ns;
 uint64_t next_duck_peak_ns;
 uint64_t next_downbeat_ns;
 int last_fb_vel;
+// In practice the foot pedals top out around here, so when the drum chooses
+// the notes the foot bass stretches 0-DCN_PEDAL_MAX out to the full 0-127,
+// rather than turning the volume up and leaving the top of the range unused.
+#define DCN_PEDAL_MAX 80
+static int dcn_velocity(int vel) {
+  int v = (vel * MIDI_MAX + DCN_PEDAL_MAX / 2) / DCN_PEDAL_MAX;
+  return v > MIDI_MAX ? MIDI_MAX : v;
+}
 bool jig_time;
 // Each kick, pedal or sounded, ducks what fluidsynth is playing, but for the
 // kick, the foot basses and the arp (the Mac's 5).  The
@@ -1699,6 +1707,9 @@ void arpeggiate_endpoint(int endpoint, int subbeat, uint64_t current_time, bool 
   if (send_note) {
     if (selected_note != -1) {
       int vel = c->vel[endpoint] ? last_fb_vel : 90;
+      if (c->vel[endpoint] && drum_chooses_notes) {
+        vel = dcn_velocity(vel);
+      }
       if (selected_note > note_out &&
           c->voices[endpoint] == 32) {
         vel -= 20;
@@ -3057,7 +3068,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
       c->upbeat[ENDPOINT_FOOTBASS] = false;  // on by default for foot bass
       c->vel[ENDPOINT_FOOTBASS] = true;
       c->octave_deltas[ENDPOINT_FOOTBASS] = 1;
-      c->volume_deltas[ENDPOINT_FOOTBASS] = 35;
+      c->volume_deltas[ENDPOINT_FOOTBASS] = 0;  // see DCN_PEDAL_MAX instead
       if (!c->on[ENDPOINT_FOOTBASS]) {
         toggle_endpoint(ENDPOINT_FOOTBASS);
       }
