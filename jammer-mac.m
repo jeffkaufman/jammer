@@ -137,6 +137,7 @@ typedef struct {
   MidiActivity midi[N_SOURCE_KINDS];
   uint64_t now_ns;
   char audio_device[256];
+  bool audio_to_vsl;   // into VSL Mixer's inputs 1-2 (vsllink.h)
   double gain;
   char talkbox_device[WHISTLE_DEVICE_NAME_MAX];  // or empty, if none's open
   char talkbox_error[256];
@@ -222,6 +223,8 @@ static void take_snapshot(Snapshot* s) {
   s->now_ns = now();
   s->gain = synth_gain;
   snprintf(s->audio_device, sizeof(s->audio_device), "%s", audio_device);
+  s->audio_to_vsl =
+    atomic_load_explicit(&vsl_link_active, memory_order_relaxed);
   snprintf(s->talkbox_device, sizeof(s->talkbox_device), "%s",
            talkbox_device_name);
   snprintf(s->talkbox_error, sizeof(s->talkbox_error), "%s", talkbox_error);
@@ -846,8 +849,10 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSFont* font = mono_font(17, NSFontWeightRegular);
   CGFloat y = 120;
 
-  NSString* audio = [NSString stringWithFormat:@"♪ %s   vol %3d%%",
-                     snapshot.audio_device, (int)(snapshot.gain * 100 + 0.5)];
+  NSString* audio = [NSString stringWithFormat:@"♪ %s%s   vol %3d%%",
+                     snapshot.audio_device,
+                     snapshot.audio_to_vsl ? " → VSL Mixer in 1-2" : "",
+                     (int)(snapshot.gain * 100 + 0.5)];
   [self drawString:audio
             inRect:NSMakeRect(VIEW_PAD, y,
                               self.bounds.size.width - 2 * VIEW_PAD, 24)
@@ -1739,6 +1744,19 @@ static void flash_from_speech(int key) {
   snprintf(wanted, sizeof(wanted), "%s", wanted_output);
   open_output(wanted);
   [self rebuildAudioMenu];
+  [self followOutputWithInput];
+}
+
+// Playing into VSL Mixer or not changes which microphone "Automatic" means
+// (whistle_preferred_input), so a microphone left on Automatic follows.
+- (void)followOutputWithInput {
+  NSString* uid =
+    [NSUserDefaults.standardUserDefaults stringForKey:@"whistleInput"] ?: @"";
+  if (uid.length > 0) return;
+  AudioDeviceID preferred = whistle_preferred_input(NULL, 0);
+  if (preferred != kAudioObjectUnknown && preferred != whistle_input_device) {
+    [self reopenWhistle];
+  }
 }
 
 // Once a second, from the timer above.
@@ -1834,6 +1852,7 @@ static void flash_from_speech(int key) {
   [NSUserDefaults.standardUserDefaults setObject:item.representedObject
                                           forKey:@"audioDevice"];
   [self rebuildAudioMenu];
+  [self followOutputWithInput];
 }
 
 // One volume for the whole rig, on top of the per-voice levels -- the knob to
@@ -2883,10 +2902,6 @@ int main(int argc, const char** argv) {
       vocoder_gain = [defaults doubleForKey:@"vocoderGain"];
     }
 
-    AudioDeviceID mic = whistle_device_for_uid(whistle_input.UTF8String);
-    double mic_rate = mic != kAudioObjectUnknown ? whistle_device_rate(mic) : 0;
-    if (mic_rate > 0) synth_sample_rate = mic_rate;
-
     // Before the synth opens the device, and checked after: see "The output
     // block size" above.
     if (device) {
@@ -2894,6 +2909,13 @@ int main(int argc, const char** argv) {
     }
     char out_device[256];
     prepare_output_device(device, out_device, sizeof(out_device));
+    // Before the microphone is picked, which follows it into VSL Mixer.
+    vsl_link_choose(out_device);
+
+    AudioDeviceID mic = whistle_device_for_uid(whistle_input.UTF8String);
+    double mic_rate = mic != kAudioObjectUnknown ? whistle_device_rate(mic) : 0;
+    if (mic_rate > 0) synth_sample_rate = mic_rate;
+
     start_synth(soundfont, out_device);
     check_output_device(out_device);
 

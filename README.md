@@ -787,7 +787,10 @@ is a foot from the speakers and pointed at them.  Matched the same way
 "Scarlett" finds "Scarlett 2i2 USB" -- and `$JAMMER_WHISTLE_INPUT` names a
 different one.  Picking a device from the menu pins it for good; **Automatic**
 at the top of the menu goes back to taking whatever the rig has today, which
-is also what happens if the device you pinned isn't plugged in.
+is also what happens if the device you pinned isn't plugged in.  With no
+Scarlett, an AudioBox 1818VSL will do; and while the output is playing into
+VSL Mixer (below) the 1818 comes first, so its inputs 1 and 2 are what the
+whistle and the mandolin hear.
 
 Everything else here describes the microphone and the room rather than the
 tune, so none of it is on a key: the gate (how many times the
@@ -936,6 +939,25 @@ in stereo.  All four are remembered across launches; `$JAMMER_AUDIO_DEVICE`
 overrides it (exact name or any substring, so "Scarlett" finds "Scarlett 2i2
 USB").  Without a choice it follows the system default, which on a laptop is
 the built-in speakers.
+
+#### Into VSL Mixer
+
+With an AudioBox 1818VSL, the box is a mixer: VSL Mixer
+(`~/code/vsl1818/VSLMixer`) does the mixing on the Mac.  Choose the 1818 as
+the output -- or leave it on the Scarlett, which falls back to the 1818 when
+it isn't plugged in -- and jammer plays its main left and right into VSL
+Mixer's inputs 1 and 2 instead of out of the 1818's jacks, so they get the
+mixer's EQ and compression and go to every aux.  The audio row says "→ VSL
+Mixer in 1-2".  VSL Mixer has to have **Inputs 1–2 from Jammer** on in its
+Setup.  The microphone side needs nothing special: jammer listens to the
+1818's inputs 1 and 2 itself, as it would the Scarlett's.  The talkbox keeps
+its own device.
+
+The two apps share a ring in memory (`vsllink.h`; the same layout is in VSL
+Mixer's `Engine/jammer_link.h`).  Jammer still opens the 1818 for output,
+which keeps it on the box's clock so the ring never drifts, but writes
+silence there.  VSL Mixer reads a block or two behind: with jammer at 64
+frames and the mixer at 32, about 2.7ms on top of jammer's own.
 
 #### The talkbox
 

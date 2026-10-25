@@ -207,7 +207,9 @@ static int whistle_list_input_devices(WhistleInputDevice* out, int max) {
 // pointed at them -- so the interface wins if it is plugged in.  Same
 // arrangement as resolve_audio_device on the output side, matched the same
 // way: an exact name or any substring of one, so "Scarlett" finds "Scarlett
-// 2i2 USB".
+// 2i2 USB".  Then an AudioBox 1818VSL, which is the other interface the rig
+// runs on: inputs 1 and 2 are the same on both.  The 1818 comes first when
+// the output is playing into VSL Mixer through it (vsllink.h).
 #define WHISTLE_PREFERRED_INPUT "Scarlett"
 
 // kAudioObjectUnknown if nothing matches, which is not a failure -- it just
@@ -219,10 +221,14 @@ static AudioDeviceID whistle_preferred_input(char* name_out,
 
   WhistleInputDevice devices[WHISTLE_MAX_INPUT_DEVICES];
   int count = whistle_list_input_devices(devices, WHISTLE_MAX_INPUT_DEVICES);
-  for (int pass = 0; pass < 2; pass++) {
+  // Playing into VSL Mixer, the 1818's inputs are the rig's, whatever else
+  // is plugged in.
+  bool linked = atomic_load_explicit(&vsl_link_active, memory_order_relaxed);
+  for (int pass = linked ? 0 : 1; pass < 4; pass++) {
     for (int i = 0; i < count; i++) {
-      bool hit = pass == 0 ? strcmp(devices[i].name, wanted) == 0
-                           : strstr(devices[i].name, wanted) != NULL;
+      bool hit = pass == 1 ? strcmp(devices[i].name, wanted) == 0
+               : pass == 2 ? strstr(devices[i].name, wanted) != NULL
+                           : strstr(devices[i].name, VSL_LINK_DEVICE) != NULL;
       if (hit) {
         if (name_out) snprintf(name_out, name_out_len, "%s", devices[i].name);
         return devices[i].id;

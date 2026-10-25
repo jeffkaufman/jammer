@@ -17,6 +17,7 @@
 #include <stdatomic.h>
 
 #include "common.h"
+#include "vsllink.h"
 
 // The endpoint a channel belongs to: its own, for the endpoints, or the
 // drone's, for a voice channel.
@@ -2196,6 +2197,8 @@ static int jammer_audio_render(void* data, int len, int nfx, float** fx,
     }
     if (talkbox_out_hook) talkbox_out_hook(talkbox_mix, len);
   }
+  // Into VSL Mixer rather than out of the jacks, if that's where it goes.
+  vsl_link_push(out, nout, len);
   return result;
 }
 
@@ -2285,7 +2288,9 @@ int list_audio_devices(char names[][256], int max_names) {
 }
 
 // Accepts an exact device name or any substring of one, so "Scarlett" finds
-// "Scarlett 2i2 USB".  Falls back to "default" if nothing matches.
+// "Scarlett 2i2 USB".  If nothing matches, an AudioBox 1818VSL stands in --
+// it's the other interface the rig runs on, through VSL Mixer (vsllink.h) --
+// and failing that, "default".
 void resolve_audio_device(const char* wanted, char* out, size_t out_len) {
   snprintf(out, out_len, "default");
   if (!wanted || !*wanted) return;
@@ -2300,6 +2305,14 @@ void resolve_audio_device(const char* wanted, char* out, size_t out_len) {
   }
   for (int i = 0; i < n; i++) {
     if (strstr(names[i], wanted) != NULL) {
+      snprintf(out, out_len, "%s", names[i]);
+      return;
+    }
+  }
+  for (int i = 0; i < n; i++) {
+    if (strstr(names[i], VSL_LINK_DEVICE) != NULL) {
+      printf("no audio device matching \"%s\"; using %s\n", wanted,
+             names[i]);
       snprintf(out, out_len, "%s", names[i]);
       return;
     }
@@ -2319,6 +2332,7 @@ bool set_audio_device(const char* wanted) {
     fl_driver = NULL;
   }
   fluid_settings_setstr(fl_settings, AUDIO_DEVICE_SETTING, resolved);
+  vsl_link_choose(resolved);
   fl_driver = new_fluid_audio_driver2(fl_settings, jammer_audio_render,
                                       fl_synth);
 
@@ -2353,6 +2367,7 @@ bool set_audio_device(const char* wanted) {
            resolved);
     snprintf(resolved, sizeof(resolved), "default");
     fluid_settings_setstr(fl_settings, AUDIO_DEVICE_SETTING, resolved);
+    vsl_link_choose(resolved);
     fl_driver = new_fluid_audio_driver2(fl_settings, jammer_audio_render,
                                         fl_synth);
     if (!fl_driver) die("couldn't open any audio output");
