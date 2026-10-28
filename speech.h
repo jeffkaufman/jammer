@@ -201,9 +201,18 @@ static void speech_describe_locked(const SwAction* action, char* out,
 // the view.
 static void (*speech_flash)(int key) = NULL;
 
+// Told of what's done, to log it: numbers, keys and modes.  A press or a
+// select is a strike, which key_strike_hook (keypad.h) already hears.
+// Caller holds the lock.
+static void (*speech_action_hook)(const SwAction* action) = NULL;
+
 // Do it.  Caller must hold the lock -- this runs inside the beat, just before
 // its notes, so that they're the new ones.
 static void speech_apply_locked(const SwAction* action) {
+  if (speech_action_hook && action->kind != SW_PRESS &&
+      action->kind != SW_SELECT) {
+    speech_action_hook(action);
+  }
   char text[64];
   speech_describe_locked(action, text, sizeof(text));
   snprintf(speech_last_action, sizeof(speech_last_action), "%s", text);

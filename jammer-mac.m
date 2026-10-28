@@ -350,6 +350,127 @@ static void take_snapshot(Snapshot* s) {
 - (int)indexForVirtualKeyCode:(int)vk;
 @end
 
+// ---------------------------------------------------------------------------
+// Logging what's played on the laptop
+//
+// Key strikes, root-note picks and what speech does go out as MIDI on a
+// virtual source, "Jammer Keys", so anything recording MIDI (VSL Mixer does,
+// with Jammer linked) gets them alongside the pedals, breath and piano, in
+// time with the audio -- and `jammer-mac --render` (render.h) can play a
+// recording, edited or not, back through jammer.  Jammer itself never
+// listens to it: connect_midi_sources() passes over anything named "jammer".
+//
+//   strike         channel 16 note on/off, note = the key's macOS virtual
+//                  keycode (kVK_*), 50ms long; stable if the layout moves.
+//                  Typed, clicked or spoken, all the same.
+//   shift-strike   the same on channel 15 (selects instead of toggling)
+//   root note      channel 16 CC 20, value = what change_key() got
+//   mode           channel 16 CC 21, value = musical_mode, when spoken
+//   chord number   channel 16 CC 22, value = the number, when spoken
+//
+// A recording that starts partway through a set needs what came before too,
+// or a render would start from a fresh launch's state.  So everything logged
+// is also kept, and when VSL Mixer says it has started recording (CC 119 on
+// channel 16 from its own source, "VSL Mixer") it all goes out again at once
+// between CC 118 = 127 and CC 118 = 0, for render.h to replay first.
+// ---------------------------------------------------------------------------
+
+#define KEYS_LOG_STRIKE_CH 15        // zero-based: channel 16
+#define KEYS_LOG_SELECT_CH 14        // channel 15
+#define KEYS_LOG_ROOT_CC 20
+#define KEYS_LOG_MODE_CC 21
+#define KEYS_LOG_NUMBER_CC 22
+#define KEYS_LOG_HISTORY_CC 118      // 127 before the history, 0 after
+#define KEYS_LOG_REQUEST_CC 119      // from VSL Mixer: recording started
+static MIDIEndpointRef keys_log_source;
+
+// Everything logged since launch, three bytes each.  Under the lock.
+static Byte (*keys_history)[3];
+static size_t keys_history_len, keys_history_cap;
+
+static uint64_t keys_log_ns_to_host(uint64_t ns) {
+  static mach_timebase_info_data_t tb;
+  if (!tb.numer) mach_timebase_info(&tb);
+  return ns * tb.denom / tb.numer;
+}
+
+// `n` three-byte messages, the i'th at times[i].  Not under the lock: it's
+// only CoreMIDI.
+static void keys_log_send(const Byte (*msgs)[3], const uint64_t* times, size_t n) {
+  if (!keys_log_source) return;
+  Byte buf[1024];
+  MIDIPacketList* list = (MIDIPacketList*)buf;
+  MIDIPacket* p = MIDIPacketListInit(list);
+  for (size_t i = 0; i < n; i++) {
+    MIDIPacket* next = MIDIPacketListAdd(list, sizeof buf, p, times[i], 3, msgs[i]);
+    if (!next) {   // full: send what's there and start another
+      MIDIReceived(keys_log_source, list);
+      p = MIDIPacketListInit(list);
+      next = MIDIPacketListAdd(list, sizeof buf, p, times[i], 3, msgs[i]);
+    }
+    p = next;
+  }
+  MIDIReceived(keys_log_source, list);
+}
+
+// Logs one message (a strike is its note on; the note off is only for
+// whatever displays it).  Caller holds the lock.
+static void keys_log_locked(Byte status, Byte d1, Byte d2) {
+  if (keys_history_len == keys_history_cap) {
+    keys_history_cap = keys_history_cap ? 2 * keys_history_cap : 256;
+    keys_history = realloc(keys_history, keys_history_cap * sizeof *keys_history);
+  }
+  Byte* m = keys_history[keys_history_len++];
+  m[0] = status; m[1] = d1; m[2] = d2;
+  uint64_t t = mach_absolute_time();
+  if ((status & 0xf0) == 0x90) {
+    Byte msgs[2][3] = {{status, d1, d2}, {0x80 | (status & 0x0f), d1, 0}};
+    uint64_t times[2] = {t, t + keys_log_ns_to_host(50000000ull)};
+    keys_log_send(msgs, times, 2);
+  } else {
+    Byte msg[1][3] = {{status, d1, d2}};
+    keys_log_send(msg, &t, 1);
+  }
+}
+
+static void log_strike_locked(const Key* key, bool selecting) {
+  if (key->vk < 0 || key->vk > 127) return;
+  keys_log_locked(0x90 | (selecting ? KEYS_LOG_SELECT_CH : KEYS_LOG_STRIKE_CH),
+                  (Byte)key->vk, 100);
+}
+
+static void log_root_note_locked(int note) {
+  keys_log_locked(0xB0 | KEYS_LOG_STRIKE_CH, KEYS_LOG_ROOT_CC, (Byte)(note & 0x7f));
+}
+
+static void log_speech_locked(const SwAction* action) {
+  Byte cc = action->kind == SW_KEY ? KEYS_LOG_ROOT_CC
+          : action->kind == SW_MODE ? KEYS_LOG_MODE_CC
+          : action->kind == SW_NUMBER ? KEYS_LOG_NUMBER_CC : 0;
+  if (cc) keys_log_locked(0xB0 | KEYS_LOG_STRIKE_CH, cc, (Byte)(action->value & 0x7f));
+}
+
+// VSL Mixer has started recording: everything so far, between markers.
+static void keys_log_send_history(void) {
+  LOCK();
+  size_t n = keys_history_len;
+  Byte (*msgs)[3] = malloc((n + 2) * sizeof *msgs);
+  uint64_t* times = malloc((n + 2) * sizeof *times);
+  if (msgs && times) {
+    msgs[0][0] = 0xB0 | KEYS_LOG_STRIKE_CH; msgs[0][1] = KEYS_LOG_HISTORY_CC; msgs[0][2] = 127;
+    memcpy(msgs + 1, keys_history, n * sizeof *msgs);
+    msgs[n + 1][0] = 0xB0 | KEYS_LOG_STRIKE_CH; msgs[n + 1][1] = KEYS_LOG_HISTORY_CC; msgs[n + 1][2] = 0;
+  }
+  UNLOCK();
+  if (!msgs || !times) { free(msgs); free(times); return; }
+  uint64_t t = mach_absolute_time();
+  for (size_t i = 0; i < n + 2; i++) times[i] = t;
+  keys_log_send((const Byte (*)[3])msgs, times, n + 2);
+  printf("vsl mixer is recording: sent %zu logged actions so far\n", n);
+  free(msgs);
+  free(times);
+}
+
 static NSColor* group_color(KeyGroup group) {
   switch (group) {
   case GROUP_TOGGLE:   return [NSColor colorWithSRGBRed:0.24 green:0.85
@@ -1213,6 +1334,7 @@ static CGFloat text_width(NSString* s, NSFont* font) {
 
 - (void)chooseRootNote:(NSMenuItem*)item {
   LOCK();
+  log_root_note_locked((int)item.tag);
   change_key((int)item.tag);
   UNLOCK();
   [self setNeedsDisplay:YES];
@@ -1262,6 +1384,7 @@ static MIDIClientRef midi_client;
 static MIDIPortRef midi_in_port;
 static MIDIEndpointRef connected_sources[64];
 static int n_connected_sources = 0;
+static int n_vsl_sources = 0;   // of those, VSL Mixer's, which isn't an instrument
 
 static void handle_midi_message(SourceKind kind, const Byte* data, int len) {
   if (len < 2) return;
@@ -1295,10 +1418,26 @@ static void handle_midi_message(SourceKind kind, const Byte* data, int len) {
   UNLOCK();
 }
 
+// VSL Mixer's own source, which only ever says it has started recording.
+#define VSL_MIXER_SOURCE 99
+
 static void read_midi(const MIDIPacketList* pktlist,
                       void* readProcRefCon,
                       void* srcConnRefCon) {
   SourceKind kind = (SourceKind)(intptr_t)srcConnRefCon;
+  if ((intptr_t)srcConnRefCon == VSL_MIXER_SOURCE) {
+    const MIDIPacket* packet = pktlist->packet;
+    for (unsigned int i = 0; i < pktlist->numPackets; i++) {
+      for (unsigned int at = 0; at + 3 <= packet->length; at += 3) {
+        if (packet->data[at] == (0xB0 | KEYS_LOG_STRIKE_CH) &&
+            packet->data[at + 1] == KEYS_LOG_REQUEST_CC) {
+          keys_log_send_history();
+        }
+      }
+      packet = MIDIPacketNext(packet);
+    }
+    return;
+  }
   const MIDIPacket* packet = pktlist->packet;
   for (unsigned int i = 0; i < pktlist->numPackets; i++) {
     // A packet can hold several messages back to back.  Walk them by status
@@ -1335,6 +1474,7 @@ static void connect_midi_sources() {
     MIDIPortDisconnectSource(midi_in_port, connected_sources[i]);
   }
   n_connected_sources = 0;
+  n_vsl_sources = 0;
 
   LOCK();
   for (int i = 0; i < N_SOURCE_KINDS; i++) {
@@ -1360,7 +1500,11 @@ static void connect_midi_sources() {
     printf("    %s\n", cname);
 
     SourceKind kind = (SourceKind)0;
-    if (name_contains(name, "mio") || name_contains(name, "DTX")) {
+    if (name_contains(name, "VSL Mixer")) {
+      MIDIPortConnectSource(midi_in_port, src, (void*)(intptr_t)VSL_MIXER_SOURCE);
+      connected_sources[n_connected_sources++] = src;
+      n_vsl_sources++;
+    } else if (name_contains(name, "mio") || name_contains(name, "DTX")) {
       kind = SRC_FEET;
     } else if (name_contains(name, "Breath Controller")) {
       kind = SRC_BREATH;
@@ -1406,7 +1550,7 @@ static void connect_midi_sources() {
 static IOPMAssertionID stay_awake_assertion = kIOPMNullAssertionID;
 
 static void update_stay_awake() {
-  bool want = NSApp.isActive && n_connected_sources > 0;
+  bool want = NSApp.isActive && n_connected_sources > n_vsl_sources;
   bool have = stay_awake_assertion != kIOPMNullAssertionID;
   if (want == have) return;
   if (want) {
@@ -1436,6 +1580,14 @@ static void setup_midi_input() {
   attempt(MIDIInputPortCreate(midi_client, CFSTR("jammer input"),
                               read_midi, NULL, &midi_in_port)
           == noErr ? 0 : -1, "creating MIDI input port");
+  // Not fatal: without it, playing still works but isn't logged.
+  if (MIDISourceCreate(midi_client, CFSTR("Jammer Keys"), &keys_log_source)
+      != noErr) {
+    keys_log_source = 0;
+    printf("couldn't create the Jammer Keys MIDI source; key presses won't be logged\n");
+  }
+  key_strike_hook = log_strike_locked;
+  speech_action_hook = log_speech_locked;
   connect_midi_sources();
 }
 
@@ -2795,6 +2947,105 @@ static void setup_menu(JammerAppDelegate* delegate) {
   mando_item.submenu = delegate.mandoMenu;
 }
 
+// Which preset each voice key plays, looked up by name -- see
+// whistle_resolve_voices -- and how the musical logic reaches the audio.
+// After the synth.  The live rig adds talkbox_out_hook, for the talkbox's
+// own device.
+static void install_audio_hooks(void) {
+  whistle_resolve_voices();
+  audio_mix_hook = whistle_mix;
+  audio_after_alt_hook = talkbox_after_alt;
+  talkbox_hook = talkbox_set;
+  kick_hook = kick_duck_hit;
+  feet_hook = feet_hit;
+  breath_hook = breath_set;
+  breath_gain_hook = breath_gain_set;
+  kit_gain_hook = kit_gain_set;
+  music_hook = music_set;
+}
+
+#include "render.h"
+
+// What's remembered between launches: levels, and the whistle's and speech's
+// settings.  The live rig and render.h both start from it.
+static void load_settings(void) {
+  // So a rig that's set up once stays set up.  (The output device is
+  // remembered too: see main.)
+  NSNumber* saved_gain =
+    [NSUserDefaults.standardUserDefaults objectForKey:@"synthGain"];
+  if (saved_gain) synth_gain = saved_gain.doubleValue;
+  NSNumber* saved_alt_gain =
+    [NSUserDefaults.standardUserDefaults objectForKey:@"altChannelGain"];
+  if (saved_alt_gain) set_alt_channel_gain(saved_alt_gain.doubleValue);
+  NSNumber* saved_mando_gain =
+    [NSUserDefaults.standardUserDefaults objectForKey:@"mandoVolume"];
+  if (saved_mando_gain) set_mando_gain(saved_mando_gain.doubleValue);
+  NSNumber* saved_drum_gain =
+    [NSUserDefaults.standardUserDefaults objectForKey:@"drumVolume"];
+  if (saved_drum_gain) set_drum_gain(saved_drum_gain.doubleValue);
+  NSNumber* saved_send_left =
+    [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxSendLeft"];
+  if (saved_send_left) set_talkbox_send(0, saved_send_left.doubleValue);
+  NSNumber* saved_send_right =
+    [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxSendRight"];
+  if (saved_send_right) set_talkbox_send(1, saved_send_right.doubleValue);
+  NSNumber* saved_return =
+    [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxReturn"];
+  if (saved_return) set_talkbox_return_gain(saved_return.doubleValue);
+
+  whistle_init_state();
+  NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+  if ([defaults objectForKey:@"speechGate"]) {
+    speech_gate_db = [defaults doubleForKey:@"speechGate"];
+  }
+  // "whistleGate" is the knob before it moved up WHISTLE_GATE_SHIFT
+  // steps: carried over to the step that gates the same, as near as the
+  // top of the knob allows, and kept under a new name from then on.
+  if ([defaults objectForKey:@"whistleGateStep"]) {
+    whistle_gate = (int)[defaults integerForKey:@"whistleGateStep"];
+  } else if ([defaults objectForKey:@"whistleGate"]) {
+    whistle_gate = MIN(9, (int)[defaults integerForKey:@"whistleGate"] +
+                          WHISTLE_GATE_SHIFT);
+    [defaults setInteger:whistle_gate forKey:@"whistleGateStep"];
+  }
+  if ([defaults objectForKey:@"whistleLevel"]) {
+    whistle_level_full = (int)[defaults integerForKey:@"whistleLevel"];
+  }
+  if ([defaults objectForKey:@"fxGate"]) {
+    whistle_fx_gate_db = (int)[defaults integerForKey:@"fxGate"];
+  }
+  if ([defaults objectForKey:@"mandoGate"]) {
+    mando_set_gate((int)[defaults integerForKey:@"mandoGate"]);
+  }
+  if ([defaults objectForKey:@"whistleBreathGate"]) {
+    whistle_breath_gate = (int)[defaults integerForKey:@"whistleBreathGate"];
+  }
+  if ([defaults objectForKey:@"whistleBreathLevel"]) {
+    whistle_breath_level_full =
+      (int)[defaults integerForKey:@"whistleBreathLevel"];
+  }
+  if ([defaults objectForKey:@"whistleBlowGate"]) {
+    whistle_blow_gate = (int)[defaults integerForKey:@"whistleBlowGate"];
+  }
+  if ([defaults objectForKey:@"whistleBlowLevel"]) {
+    whistle_blow_level_full =
+      (int)[defaults integerForKey:@"whistleBlowLevel"];
+  }
+  if ([defaults objectForKey:@"whistleLowNote"]) {
+    whistle_low_note = (int)[defaults integerForKey:@"whistleLowNote"];
+  }
+  if ([defaults objectForKey:@"whistleHighNote"]) {
+    whistle_high_note = (int)[defaults integerForKey:@"whistleHighNote"];
+  }
+  if ([defaults objectForKey:@"whistleGain"]) {
+    whistle_gain = [defaults doubleForKey:@"whistleGain"];
+  }
+  if ([defaults objectForKey:@"vocoderGain"]) {
+    vocoder_gain = [defaults doubleForKey:@"vocoderGain"];
+  }
+
+}
+
 int main(int argc, const char** argv) {
   @autoreleasepool {
     // In an .app bundle the soundfont sits in Contents/Resources; running
@@ -2810,29 +3061,10 @@ int main(int argc, const char** argv) {
              "Run `make soundfont`, or set $JAMMER_SOUNDFONT.\n");
       return 1;
     }
-    // Volume and output device are both remembered, so a rig that's set up
-    // once stays set up.
-    NSNumber* saved_gain =
-      [NSUserDefaults.standardUserDefaults objectForKey:@"synthGain"];
-    if (saved_gain) synth_gain = saved_gain.doubleValue;
-    NSNumber* saved_alt_gain =
-      [NSUserDefaults.standardUserDefaults objectForKey:@"altChannelGain"];
-    if (saved_alt_gain) set_alt_channel_gain(saved_alt_gain.doubleValue);
-    NSNumber* saved_mando_gain =
-      [NSUserDefaults.standardUserDefaults objectForKey:@"mandoVolume"];
-    if (saved_mando_gain) set_mando_gain(saved_mando_gain.doubleValue);
-    NSNumber* saved_drum_gain =
-      [NSUserDefaults.standardUserDefaults objectForKey:@"drumVolume"];
-    if (saved_drum_gain) set_drum_gain(saved_drum_gain.doubleValue);
-    NSNumber* saved_send_left =
-      [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxSendLeft"];
-    if (saved_send_left) set_talkbox_send(0, saved_send_left.doubleValue);
-    NSNumber* saved_send_right =
-      [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxSendRight"];
-    if (saved_send_right) set_talkbox_send(1, saved_send_right.doubleValue);
-    NSNumber* saved_return =
-      [NSUserDefaults.standardUserDefaults objectForKey:@"talkboxReturn"];
-    if (saved_return) set_talkbox_return_gain(saved_return.doubleValue);
+    load_settings();
+    if (argc > 1 && strcmp(argv[1], "--render") == 0) {
+      return render_main(argc, argv, soundfont);
+    }
 
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.
@@ -2849,58 +3081,9 @@ int main(int argc, const char** argv) {
     // sharp.  Taking the rate *from* the microphone means the common case --
     // one interface doing both ends of the rig -- changes no device settings
     // at all.  See whistle_request_rate for the other case.
-    whistle_init_state();
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
     NSString* whistle_input =
       [defaults stringForKey:@"whistleInput"] ?: @"";
-    if ([defaults objectForKey:@"speechGate"]) {
-      speech_gate_db = [defaults doubleForKey:@"speechGate"];
-    }
-    // "whistleGate" is the knob before it moved up WHISTLE_GATE_SHIFT
-    // steps: carried over to the step that gates the same, as near as the
-    // top of the knob allows, and kept under a new name from then on.
-    if ([defaults objectForKey:@"whistleGateStep"]) {
-      whistle_gate = (int)[defaults integerForKey:@"whistleGateStep"];
-    } else if ([defaults objectForKey:@"whistleGate"]) {
-      whistle_gate = MIN(9, (int)[defaults integerForKey:@"whistleGate"] +
-                            WHISTLE_GATE_SHIFT);
-      [defaults setInteger:whistle_gate forKey:@"whistleGateStep"];
-    }
-    if ([defaults objectForKey:@"whistleLevel"]) {
-      whistle_level_full = (int)[defaults integerForKey:@"whistleLevel"];
-    }
-    if ([defaults objectForKey:@"fxGate"]) {
-      whistle_fx_gate_db = (int)[defaults integerForKey:@"fxGate"];
-    }
-    if ([defaults objectForKey:@"mandoGate"]) {
-      mando_set_gate((int)[defaults integerForKey:@"mandoGate"]);
-    }
-    if ([defaults objectForKey:@"whistleBreathGate"]) {
-      whistle_breath_gate = (int)[defaults integerForKey:@"whistleBreathGate"];
-    }
-    if ([defaults objectForKey:@"whistleBreathLevel"]) {
-      whistle_breath_level_full =
-        (int)[defaults integerForKey:@"whistleBreathLevel"];
-    }
-    if ([defaults objectForKey:@"whistleBlowGate"]) {
-      whistle_blow_gate = (int)[defaults integerForKey:@"whistleBlowGate"];
-    }
-    if ([defaults objectForKey:@"whistleBlowLevel"]) {
-      whistle_blow_level_full =
-        (int)[defaults integerForKey:@"whistleBlowLevel"];
-    }
-    if ([defaults objectForKey:@"whistleLowNote"]) {
-      whistle_low_note = (int)[defaults integerForKey:@"whistleLowNote"];
-    }
-    if ([defaults objectForKey:@"whistleHighNote"]) {
-      whistle_high_note = (int)[defaults integerForKey:@"whistleHighNote"];
-    }
-    if ([defaults objectForKey:@"whistleGain"]) {
-      whistle_gain = [defaults doubleForKey:@"whistleGain"];
-    }
-    if ([defaults objectForKey:@"vocoderGain"]) {
-      vocoder_gain = [defaults doubleForKey:@"vocoderGain"];
-    }
 
     // Before the synth opens the device, and checked after: see "The output
     // block size" above.
@@ -2922,17 +3105,8 @@ int main(int argc, const char** argv) {
     // Which preset each voice key plays, looked up by name -- see
     // whistle_resolve_voices.  Then the microphone, then the mix: the hook is
     // safe to install before there is an engine, since it checks.
-    whistle_resolve_voices();
-    audio_mix_hook = whistle_mix;
-    audio_after_alt_hook = talkbox_after_alt;
+    install_audio_hooks();
     talkbox_out_hook = talkbox_push;
-    talkbox_hook = talkbox_set;
-    kick_hook = kick_duck_hit;
-    feet_hook = feet_hit;
-    breath_hook = breath_set;
-    breath_gain_hook = breath_gain_set;
-    kit_gain_hook = kit_gain_set;
-    music_hook = music_set;
     whistle_input_start(whistle_input.UTF8String, synth_sample_rate);
     // After the synth and the microphone, so it knows their blocks and
     // which devices are theirs.

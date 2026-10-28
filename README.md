@@ -959,6 +959,47 @@ which keeps it on the box's clock so the ring never drifts, but writes
 silence there.  VSL Mixer reads a block or two behind: with jammer at 64
 frames and the mixer at 32, about 2.7ms on top of jammer's own.
 
+Recording in VSL Mixer with this on keeps what jammer was fed: the 1818's
+real inputs 1 and 2, every MIDI device, and what's done on the laptop.
+That last comes from jammer, as a virtual MIDI source, "Jammer Keys", so it
+lands in the same MIDI file as the pedals, in time with the audio:
+
+* a key strike -- typed, clicked or spoken -- is a 50ms note on channel
+  16, its note number the key's macOS virtual keycode (`kVK_*`), which
+  stays put if the layout changes;
+* a shifted strike (select) is the same on channel 15;
+* the root note, picked from its menu or spoken, is CC 20 on channel 16,
+  the value what `change_key()` got; a spoken mode is CC 21 and a spoken
+  chord number CC 22.
+
+Jammer passes over its own source when it looks for MIDI devices.  It also
+keeps everything it has logged since launch, and when VSL Mixer starts
+recording (it says so on a source of its own, "VSL Mixer", with CC 119) it
+sends all of that again, between CC 118 = 127 and CC 118 = 0, so a
+recording made partway through a set knows how things were set up.
+
+#### Rendering a recording again
+
+    ./jammer-mac --render "~/Music/VSL Mixer/2026-10-28 21.04.17" \
+        [--midi edited.mid] [--out FOLDER]
+
+(or `Jammer.app/Contents/MacOS/jammer --render ...`) plays a recording back
+through jammer and writes "Jammer L (render).wav" and "Jammer R
+(render).wav", the same length as the recording's tracks and lined up with
+them.  Edit "Jammer MIDI.mid" -- move notes, fix a pedal, add a strike --
+and pass it with `--midi` for new audio.  Keep the tracks separate and
+keep their names: each is taken for the device it's named after, the way
+jammer takes devices live.  See `render.h` for how: it's the live rig, the
+synth without an audio driver, the whistle without a microphone device,
+and a simulated clock, run faster than real time.  The same input renders
+the same audio every time, so edits can be compared.
+
+It won't be exactly what was heard: the drums' random takes come out
+differently, speech isn't recognized again (what it did is replayed), the
+talkbox's return is whatever the microphone heard at the time, and menu
+settings changed during the set aren't logged -- a render uses the saved
+settings as they are now.
+
 #### The talkbox
 
 There are three outputs: the main device's left and right, and a talkbox, on

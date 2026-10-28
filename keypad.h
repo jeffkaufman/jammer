@@ -319,9 +319,15 @@ static bool key_is_dead(const Key* key) {
     endpoint_key_is_dead(key);
 }
 
+// Told of every strike, however it came -- typed, clicked or spoken -- so it
+// can be logged (jammer-mac.m's "Logging what's played on the laptop").
+// Caller holds the lock.
+static void (*key_strike_hook)(const Key* key, bool selecting) = NULL;
+
 // Strike a key, as a keypress would, minus the drawing.  Caller must hold the
 // lock.
 static void strike_key_locked(const Key* key, bool selecting) {
+  if (key_strike_hook) key_strike_hook(key, selecting);
   int note = (selecting && key->select_note) ? key->select_note : key->note;
   // The mandolin and the whistle get first refusal: while one is selected
   // the voice keys, and the rest it uses, are its, and their own on/off keys

@@ -43,7 +43,13 @@ int attempt(int result, char* errmsg) {
   return result;
 }
 
+// Rendering a recording (render.h) runs on a clock of its own, moved along
+// as it goes, so everything that keeps time keeps the recording's.
+static bool clock_simulated;
+static uint64_t clock_simulated_ns;
+
 uint64_t now() {
+  if (clock_simulated) return clock_simulated_ns;
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (ts.tv_sec * 1000000000LL) + ts.tv_nsec;
@@ -2399,7 +2405,9 @@ void set_alt_channel_gain(double gain) {
 }
 
 // Mirrors run-fluidsynth.sh: -c 2 -z 64 -g 1.0, stereo, reverb/chorus off.
-void start_synth(const char* soundfont_path, const char* device) {
+// The synth with no audio driver: start_synth adds one, and render.h calls
+// jammer_audio_render itself.
+void create_synth(const char* soundfont_path) {
   fl_settings = new_fluid_settings();
   if (!fl_settings) die("couldn't create fluidsynth settings");
 
@@ -2454,6 +2462,10 @@ void start_synth(const char* soundfont_path, const char* device) {
                              PERCUSSION_BANK, HAT_KIT);
 
   set_synth_gain(synth_gain);
+}
+
+void start_synth(const char* soundfont_path, const char* device) {
+  create_synth(soundfont_path);
   set_audio_device(device);
 }
 

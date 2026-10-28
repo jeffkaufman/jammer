@@ -570,6 +570,22 @@ static void whistle_input_stop(void) {
 //
 // Returns false with whistle_input_error set.  Not audio-thread safe and not
 // re-entrant: call it from the main thread.
+// The engine with no microphone, for render.h, which pushes recorded input
+// with whistle_push_input itself, a block at a time and just before each
+// block is rendered, so there's nothing to keep buffered.
+static bool whistle_input_start_offline(double rate) {
+  whistle_input_stop();
+  if (!whistle_allocate_capture(WHISTLE_MAX_BLOCK, 2)) return false;
+  atomic_store_explicit(&whistle_input_count, 2, memory_order_relaxed);
+  atomic_store_explicit(&whistle_ring_target, 0, memory_order_relaxed);
+  whistle_engine_prepare(rate);
+  whistle_publish();
+  snprintf(whistle_input_name, sizeof(whistle_input_name), "the recording");
+  whistle_available = true;
+  atomic_store_explicit(&whistle_engine_live, 1, memory_order_release);
+  return true;
+}
+
 static bool whistle_input_start(const char* uid, double rate) {
   whistle_input_stop();
   whistle_input_error[0] = '\0';
