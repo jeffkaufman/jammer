@@ -121,7 +121,7 @@ static const Key KEYS[] = {
   // ` and 1-9 used to select which endpoint the modifiers act on; that's
   // shift + the endpoint's toggle key now.
   // The Breath Gate: a pad chord that sounds only while you blow, so pulsing
-  // the breath chops it, or with B, N or M percussion the breath plays.  An
+  // the breath chops it, or with S, D or F percussion the breath plays.  An
   // endpoint like the drones, so it toggles and selects like them.
   {kVK_ANSI_Grave, BREATH_GATE, BREATH_GATE_SELECT, "`", "BG",
    "Breath\nGate", GROUP_TOGGLE, LIT_EP_ON, ENDPOINT_BREATH, NOLABEL, 1, 0,

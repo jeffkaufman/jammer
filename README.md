@@ -514,7 +514,7 @@ doing: the breath voices stop within a few milliseconds of the breath, and
 the rest only ever fill the beat the last pedal hit started.
 
 **The Breath Gate's voices.**  With `` ` `` selected, blue layers that can be
-on together, and over its pad (see [the Breath Gate](#running-on-a-mac)):
+on together, and over its pad (see [Using it](#using-it)):
 
 | key | voice | |
 |---|---|---|
@@ -780,8 +780,8 @@ recordings to try others.  The detectors are in `breathmic.h`.
 ### The Whistle menu
 
 **Which input.**  Left to itself it takes the Scarlett, not the system
-default, for the same reason `run-fluidsynth.sh` names the USB interface on
-the way out: the system default on a laptop is the built-in microphone, which
+default, for the same reason the output side doesn't follow it on the way
+out: the system default on a laptop is the built-in microphone, which
 is a foot from the speakers and pointed at them.  Matched the same way
 `resolve_audio_device` matches an output -- an exact name or any substring, so
 "Scarlett" finds "Scarlett 2i2 USB" -- and `$JAMMER_WHISTLE_INPUT` names a
@@ -933,9 +933,9 @@ mandolin's own, it and its voices together, from silent to double of where
 it starts, which is about 5dB over the input.  Only the drum, with its kits,
 the Grid Hat and the Feet, and the mandolin play on the right: every other
 fluidsynth channel is hard left, and the Breath Gate's own sounds -- its
-brushes' stir, the Tamb Shake, the scrapers, the riser and the wobble, and
-its Brush and 808 kits -- go where the Breath Gate does rather than playing
-in stereo.  All four are remembered across launches; `$JAMMER_AUDIO_DEVICE`
+brushes' stir, the Tamb Shake, the scrapers, the riser and the wobble --
+go where the Breath Gate does rather than playing in stereo.  All four are
+remembered across launches; `$JAMMER_AUDIO_DEVICE`
 overrides it (exact name or any substring, so "Scarlett" finds "Scarlett 2i2
 USB").  Without a choice it follows the system default, which on a laptop is
 the built-in speakers.

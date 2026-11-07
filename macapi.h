@@ -69,7 +69,7 @@ char audio_device[256] = "default";
 
 // Bumped by the render callback, so we can tell "device open" from "device
 // actually playing".
-static volatile uint64_t audio_frames_rendered = 0;
+static _Atomic uint64_t audio_frames_rendered = 0;
 
 // Anything else that wants to be heard through jammer's output device, summed
 // into fluidsynth's buffers after it has filled them.  This is how the whistle
@@ -155,7 +155,7 @@ double synth_sample_rate = 44100;
 // How big a block fluidsynth's driver asks for.  Read by the whistle, which
 // has to keep at least one of these buffered to hand it -- see
 // whistle_input_start.  Set here because this is the only place that knows.
-static volatile int audio_block_frames = 0;
+static _Atomic int audio_block_frames = 0;
 
 // ---------------------------------------------------------------------------
 // The breath
@@ -432,16 +432,13 @@ static int endpoint_bus(int endpoint) {
 }
 
 // The endpoint whose side and TB a channel follows: channel_endpoint's, and
-// the drum's for the kick's, the pitched kick's and the Grid Hat's, and the
-// Breath Gate's for its brushes.
+// the drum's for the kick's, the pitched kick's and the Grid Hat's.
 static int channel_route_endpoint(int channel) {
   switch (channel) {
   case CHANNEL_KICK:
   case CHANNEL_PITCHED_KICK:
   case CHANNEL_HAT:
     return ENDPOINT_DRUM;
-  case CHANNEL_BRUSH:
-    return ENDPOINT_BREATH;
   }
   return channel_endpoint(channel);
 }
@@ -762,7 +759,7 @@ static void apply_sweeps(float** buses, int n_buses, int len,
 // ---------------------------------------------------------------------------
 // Breath instruments
 //
-// The Breath Gate's percussion voices (B, N and M with it selected): played
+// The Breath Gate's percussion voices (S, D and F with it selected): played
 // by moving the breath rather than by how hard it is, so holding it steady is
 // silence and every sound is set off by a movement.
 // Their own sound rather than fluidsynth's, like the whistle, and summed in
@@ -2404,7 +2401,8 @@ void set_alt_channel_gain(double gain) {
                         memory_order_relaxed);
 }
 
-// Mirrors run-fluidsynth.sh: -c 2 -z 64 -g 1.0, stereo, reverb/chorus off.
+// Stereo, gain 1.0, reverb and chorus off: what the old command-line
+// fluidsynth was run with.
 // The synth with no audio driver: start_synth adds one, and render.h calls
 // jammer_audio_render itself.
 void create_synth(const char* soundfont_path) {
@@ -2440,7 +2438,6 @@ void create_synth(const char* soundfont_path) {
   if (!fl_synth) die("couldn't create fluidsynth synth");
   fluid_settings_setint(fl_settings, "synth.audio-channels", 1);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_KICK, CHANNEL_TYPE_DRUM);
-  fluid_synth_set_channel_type(fl_synth, CHANNEL_BRUSH, CHANNEL_TYPE_DRUM);
   fluid_synth_set_channel_type(fl_synth, CHANNEL_HAT, CHANNEL_TYPE_DRUM);
   // Everything on the left until it's put on its side: fluidsynth starts
   // each channel in the middle, which would put a little of anything
@@ -2456,8 +2453,6 @@ void create_synth(const char* soundfont_path) {
     die("couldn't load soundfont");
   }
   printf("loaded soundfont %s\n", soundfont_path);
-  fluid_synth_program_select(fl_synth, CHANNEL_BRUSH, fl_sfont_id,
-                             PERCUSSION_BANK, BRUSH_KIT);
   fluid_synth_program_select(fl_synth, CHANNEL_HAT, fl_sfont_id,
                              PERCUSSION_BANK, HAT_KIT);
 
@@ -2497,14 +2492,10 @@ void send_midi(int action, int note, int velocity, int endpoint) {
   if (action == MIDI_CC) {
     fluid_synth_cc(fl_synth, channel, note, velocity);
     // The kick's channel is the drum's, split off: same volume, pan, fade.
-    // And so is the Grid Hat's.  And the brushes', on their own kit -- all
-    // but their pan, which is the Breath Gate's side, the left.
+    // And so is the Grid Hat's.
     if (channel == CHANNEL_DRUM) {
       fluid_synth_cc(fl_synth, CHANNEL_KICK, note, velocity);
       fluid_synth_cc(fl_synth, CHANNEL_HAT, note, velocity);
-      if (note != CC_PAN && note != CC_BALANCE) {
-        fluid_synth_cc(fl_synth, CHANNEL_BRUSH, note, velocity);
-      }
     }
     // And a drone's voice channels are the drone's.
     int base = voice_channel_base(channel);

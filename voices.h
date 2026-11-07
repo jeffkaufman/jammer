@@ -83,8 +83,11 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
     volume = jawharp_volume(voice);
   }
 
+  // The drum: fluidsynth's default channel volume, which is what it played
+  // at for years without ever being sent one, and what kitlevels measures
+  // its kits at.  -/+ move from there.
   if (endpoint == ENDPOINT_DRUM) {
-    volume = MIDI_MAX;
+    volume = 100;
   }
   
   volume += volume_delta;

@@ -25,7 +25,13 @@ SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h render.h \
             jammermidilib.h voices.h common.h whistle.h whistleinput.h talkbox.h talkboxmatch.h vsllink.h \
             breathmic.h voicefx.h mandolin.h \
-            speech.h speechwords.h numrec.h numtrain.h numheard.h Info.plist
+            speech.h speechwords.h speechgate.h numrec.h numtrain.h numheard.h \
+            Info.plist
+
+# The speech recognizer's dictionary; how it's built is below.  Named here,
+# above the rules that depend on it, since make expands a rule's
+# prerequisites as it reads them.
+SPEECH_MODEL := speech-model.bin
 
 jammer-mac: $(MAC_SRCS) $(WHISTLE_OBJS)
 	@test -n "$(FLUIDSYNTH)" || \
@@ -103,7 +109,6 @@ speechphrases: speechphrases.c $(MAC_SRCS) $(WHISTLE_OBJS)
 speechmodel: speechmodel.swift
 	swiftc -O speechmodel.swift -o speechmodel
 
-SPEECH_MODEL := speech-model.bin
 $(SPEECH_MODEL): speechphrases speechmodel
 	./speechphrases | ./speechmodel $(SPEECH_MODEL)
 

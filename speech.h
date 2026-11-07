@@ -1077,9 +1077,11 @@ static void speech_tick(void) {
   speech_drain();
 }
 
-// Every phrase it should expect, as hint words: the numbers, the modes, and
-// every button's name.  Apple asks for no more than a hundred, which this
-// fits, just.
+// Phrases it should expect, as hint words: the numbers, the modes, and the
+// buttons' names, as far as they go -- Apple takes no more than a hundred,
+// and the buttons alone are past that now.  The dictionary
+// (speech_prepare_dictionary) has every one of them; this is only for when
+// it can't be had.
 static NSArray<NSString*>* speech_make_hints(void) {
   NSMutableArray<NSString*>* hints = [NSMutableArray arrayWithArray:@[
     @"one", @"two", @"three", @"four", @"five", @"six", @"seven",

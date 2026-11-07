@@ -75,10 +75,15 @@ int main(void) {
     // set a volume for until one's picked.
     bool no_pad = i == ENDPOINT_BREATH &&
       c->voices[ENDPOINT_BREATH] == VOICE_BREATH_NO_PAD;
-    if (i != ENDPOINT_DRUM && !no_pad) {
+    if (!no_pad) {
       CHECK(cc7[i] > 0, "endpoint %d volume is 0", i);
     }
   }
+  // The drum used to be the one channel never sent a volume, so it sat on
+  // fluidsynth's default of 100 until -/+ moved it to 127 and change: the
+  // first VOL- made it louder.  It starts on the 100 it always played at.
+  CHECK(cc7[ENDPOINT_DRUM] == 100, "the drum's volume is %d, want 100",
+        cc7[ENDPOINT_DRUM]);
   // And picking one sets it.
   int was = c->selected_endpoint;
   c->selected_endpoint = ENDPOINT_BREATH;

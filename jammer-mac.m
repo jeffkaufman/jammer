@@ -1466,7 +1466,7 @@ static bool name_contains(CFStringRef name, const char* needle) {
   return found;
 }
 
-// Mirrors the device matching in jammer.c: the mio is the foot pedals, the
+// The mio is the foot pedals, the
 // TE-Control is the breath controller, and the piano is either a known name or
 // whatever other MIDI device happens to be plugged in.
 static void connect_midi_sources() {
@@ -1500,6 +1500,11 @@ static void connect_midi_sources() {
     printf("    %s\n", cname);
 
     SourceKind kind = (SourceKind)0;
+    if (n_connected_sources >= 64) {
+      printf("        (too many MIDI sources; ignoring the rest)\n");
+      CFRelease(name);
+      break;
+    }
     if (name_contains(name, "VSL Mixer")) {
       MIDIPortConnectSource(midi_in_port, src, (void*)(intptr_t)VSL_MIXER_SOURCE);
       connected_sources[n_connected_sources++] = src;
@@ -1532,7 +1537,7 @@ static void connect_midi_sources() {
     CFRelease(name);
   }
 
-  if (!found_piano && piano_candidate) {
+  if (!found_piano && piano_candidate && n_connected_sources < 64) {
     MIDIPortConnectSource(midi_in_port, piano_candidate,
                           (void*)(intptr_t)SRC_PIANO);
     connected_sources[n_connected_sources++] = piano_candidate;

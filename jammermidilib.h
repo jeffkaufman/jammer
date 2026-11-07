@@ -65,17 +65,6 @@
 #define N_NOTE_DIVISIONS 72
 #define N_SUBBEATS (N_NOTE_DIVISIONS)
 
-#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-#define BYTE_TO_BINARY(byte)                    \
-  (byte & 0x80 ? '1' : '0'),                    \
-    (byte & 0x40 ? '1' : '0'),                  \
-    (byte & 0x20 ? '1' : '0'),                  \
-    (byte & 0x10 ? '1' : '0'),                  \
-    (byte & 0x08 ? '1' : '0'),                  \
-    (byte & 0x04 ? '1' : '0'),                  \
-    (byte & 0x02 ? '1' : '0'),                  \
-    (byte & 0x01 ? '1' : '0')
-
 // The keypad's pseudo-notes (keylayout.h): the function keys are 'a' (97) + N.
 #define F1 (98)
 #define F2 (99)
@@ -648,7 +637,7 @@ struct Configuration* c = &global_config;
 
 /* Anything mentioned here should be initialized in voices_reset */
 
-bool piano_notes[MIDI_MAX];
+bool piano_notes[MIDI_MAX + 1];
 int root_note;
 int last_update_bass_note;
 int fifth_note;
@@ -1192,7 +1181,10 @@ void clear_footbass_3() {
 // predown, which blowing fills out (see DRUM_FILL_FROM) -- the Feet's
 // "thump . tap tap".  And BREATH FILL on, the drum's CHORD.
 void clear_drum() {
-  // select_voice ??
+  // Its volume, which it never used to be sent -- it sat on fluidsynth's
+  // default until -/+ moved it -- and its kit: the Feet on the Mac.
+  reload_voice_setting(c);
+  select_drum_kit(feet_hook ? KIT_FEET : KIT_RIM);
   c->downbeat[ENDPOINT_DRUM] = true;
   c->upbeat[ENDPOINT_DRUM] = true;
   c->upbeat_high[ENDPOINT_DRUM] = false;
@@ -1339,7 +1331,6 @@ void clear_configuration() {
   // The loop above leaves the selection on whatever it cleared last, so say
   // what we actually want to start on.
   c->selected_endpoint = ENDPOINT_FOOTBASS;
-  c->drum_voice = feet_hook ? KIT_FEET : KIT_RIM;
 }
 
 void clear_status() {
@@ -1347,7 +1338,7 @@ void clear_status() {
   drum_pedal_ns = 0;
   drum_kick_pedal_ns = 0;
   auto_hat_ns = 0;
-  for (int i = 0; i < MIDI_MAX; i++) {
+  for (int i = 0; i <= MIDI_MAX; i++) {
     piano_notes[i] = false;
   }
   root_note = to_root(26);  // D @ 37Hz
@@ -1414,10 +1405,6 @@ void voices_reset() {
   clear_configuration();
   clear_status();
 
-  // clear_configuration() picked a kit, but only in memory; the drum channel
-  // needs telling which percussion set that is.
-  select_drum_kit(c->drum_voice);
-
   // clear_configuration() broadcast CC11 to every endpoint using the old
   // fade_value, which on the very first run is 0 -- expression 0 is silence.
   // clear_status() then resets fade_value in memory but has nothing to send
@@ -1428,9 +1415,7 @@ void voices_reset() {
 }
 
 
-//  The flex organ follows flex_breath and flex_base.
-//  flex_breath follows breath.
-int flex_base = 0;
+//  The flex organ follows flex_breath, which follows breath.
 int flex_breath = 0;
 int last_flex_val = 1;
 // Flex's expression: the breath, and the fade on top of it.  Flex uses
@@ -1448,11 +1433,6 @@ int flex_val() {
 // Only some endpoints use this, and some only use it some of the time:
 //  * Always in use for jawharp
 int current_note[N_ENDPOINTS];
-
-int piano_left_hand_velocity = 100;  // most recent piano bass midi velocity
-
-int roll = MIDI_MAX / 2;
-int pitch = MIDI_MAX / 2;
 
 int breath = 0;  // current value from breath controller
 
@@ -1546,17 +1526,6 @@ char active_chord() {
     return chord_note;
   }
   return root_note;
-}
-
-float random_float() {
-  return (float)rand()/(float)(RAND_MAX);
-}
-
-float subbeat_location() {
-  if (last_downbeat_ns > 0 && current_beat_ns > 0) {
-    return 1.0 * (now() - last_downbeat_ns) / current_beat_ns;
-  }
-  return -1;
 }
 
 void drone_endpoint_off(int endpoint) {
@@ -1954,7 +1923,7 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
        candidate_bpm < 140;
        candidate_bpm += 0.25) {
 
-    uint64_t whole_note_ns = 60L * NS_PER_SEC / candidate_bpm;
+    uint64_t whole_note_ns = (uint64_t)(60.0 * NS_PER_SEC / candidate_bpm);
     uint64_t candidate_error = 0;
 
     // Look for a kick or snare (or maybe anything) on every past downbeat
@@ -1985,7 +1954,7 @@ float estimate_tempo_helper(uint64_t current_time, bool consider_high) {
     return best_bpm;
   }
 
-  uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
+  uint64_t whole_beat = (uint64_t)(60.0 * NS_PER_SEC / best_bpm);
 
   // Allow error of up to 1/32 note on each of the downbeats.
   uint64_t max_allowed_error = (whole_beat * n_downbeats_to_consider) / 32;
@@ -2018,7 +1987,7 @@ void estimate_tempo(uint64_t current_time, int note_in) {
   // We have a tempo: best_bpm
   printf("Tempo selected: %f\n", best_bpm);
   
-  uint64_t whole_beat = NS_PER_SEC * 60 / best_bpm;
+  uint64_t whole_beat = (uint64_t)(60.0 * NS_PER_SEC / best_bpm);
   current_beat_ns = whole_beat;
 
   arpeggiate(0, current_time, /*drone=*/false, /*running=*/true);
@@ -2492,125 +2461,6 @@ void advance_lead_schedule(void) {
   lead_now(number, led_scheduled_end);
 }
 
-char mapping(unsigned char note_in) {
-  switch(note_in) {
-  case 98: return 10;  // Bb
-  case 97: return 12;  // C
-  case 96: return 14;  // D
-  case 95: return 16;  // E
-  case 94: return 18;  // F#
-  case 93: return 20;  // G#
-  case 92: return 22;  // Bb
-
-  case 91: return 15;  // Eb
-  case 90: return 17;  // F
-  case 89: return 19;  // G
-  case 88: return 21;  // A
-  case 87: return 23;  // B
-  case 86: return 25;  // C#
-  case 85: return 27;  // Eb
-
-  case 84: return 22;  // Bb
-  case 83: return 24;  // C
-  case 82: return 26;  // D
-  case 81: return 28;  // E
-  case 80: return 30;  // F#
-  case 79: return 32;  // G#
-  case 78: return 34;  // Bb
-
-  case 77: return 27;  // Eb
-  case 76: return 29;  // F
-  case 75: return 31;  // G
-  case 74: return 33;  // A
-  case 73: return 35;  // B
-  case 72: return 37;  // C#
-  case 71: return 39;  // Eb
-
-  case 70: return 34;  // Bb
-  case 69: return 36;  // C
-  case 68: return 38;  // D
-  case 67: return 40;  // E
-  case 66: return 42;  // F#
-  case 65: return 44;  // G#
-  case 64: return 46;  // Bb
-
-  case 63: return 39;  // Eb
-  case 62: return 41;  // F
-  case 61: return 43;  // G
-  case 60: return 45;  // A
-  case 59: return 47;  // B
-  case 58: return 49;  // C#
-  case 57: return 51;  // Eb
-
-  case 56: return 46;  // Bb
-  case 55: return 48;  // C
-  case 54: return 50;  // D
-  case 53: return 52;  // E
-  case 52: return 54;  // F#
-  case 51: return 56;  // G#
-  case 50: return 58;  // Bb
-
-  case 49: return 53;  // F
-  case 48: return 55;  // G
-  case 47: return 57;  // A
-  case 46: return 59;  // B
-  case 45: return 61;  // C#
-  case 44: return 63;  // Eb
-  case 43: return 65;  // F
-
-  case 42: return 58;  // Bb
-  case 41: return 60;  // C
-  case 40: return 62;  // D
-  case 39: return 64;  // E
-  case 38: return 66;  // F#
-  case 37: return 68;  // G#
-  case 36: return 70;  // Bb
-
-  case 35: return 65;  // F
-  case 34: return 67;  // G
-  case 33: return 69;  // A
-  case 32: return 71;  // B
-  case 31: return 73;  // C#
-  case 30: return 75;  // Eb
-  case 29: return 77;  // F
-
-  case 28: return 70;  // Bb
-  case 27: return 72;  // C
-  case 26: return 74;  // D
-  case 25: return 76;  // E
-  case 24: return 78;  // F#
-  case 23: return 80;  // G#
-  case 22: return 82;  // Bb
-
-  case 21: return 77;  // F
-  case 20: return 79;  // G
-  case 19: return 81;  // A
-  case 18: return 82;  // B
-  case 17: return 84;  // C#
-  case 16: return 86;  // Eb
-  case 15: return 88;  // F
-
-  case 14: return 82;  // Bb
-  case 13: return 84;  // C
-  case 12: return 86;  // D
-  case 11: return 88;  // E
-  case 10: return 90;  // F#
-  case  9: return 92;  // G#
-  case  8: return 94;  // Bb
-
-  case  7: return 89;  // F
-  case  6: return 91;  // G
-  case  5: return 93;  // A
-  case  4: return 95;  // B
-  case  3: return 97;  // C#
-  case  2: return 99;  // Eb
-  case  1: return 101; // F
-
-  default:
-    return 0;
-  }
-}
-
 void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (note_in > MIDI_MAX) {
     return;
@@ -2625,7 +2475,6 @@ void handle_piano(unsigned int mode, unsigned int note_in, unsigned int val) {
   if (is_bass) {
     int root_candidate_note_in = -1;
     if (mode == MIDI_ON) {
-      piano_left_hand_velocity = val;
       root_candidate_note_in = note_in;
     } else {
       for (int i = 0; i < max_bass; i++) {
@@ -2713,6 +2562,16 @@ void toggle_endpoint(int endpoint) {
 // A kit's key: that kit, or if it's the one on, no kit at all.
 void pick_drum_kit(int kit) {
   select_drum_kit(c->drum_voice == kit ? KIT_NONE : kit);
+}
+
+// A key that changes how a held note is played -- OCT, CHORD -- cuts the
+// note off, and the endpoints that hold one, the jaw harp and the drones,
+// have to strike it again: they only strike a note they don't think is
+// sounding, so they'd otherwise stay silent until the chord changed.
+static void restrike_held_note(int endpoint) {
+  if (!holds_bass_note(endpoint)) return;
+  drone_endpoint_off(endpoint);
+  update_bass(/*force_refresh=*/true);
 }
 
 void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
@@ -2913,10 +2772,12 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case ']':
     endpoint_notes_off(c->selected_endpoint);
     c->octave_deltas[c->selected_endpoint]++;
+    restrike_held_note(c->selected_endpoint);
     return;
   case '\\':
     endpoint_notes_off(c->selected_endpoint);
     c->octave_deltas[c->selected_endpoint]--;
+    restrike_held_note(c->selected_endpoint);
     return;
   case 'L':
     c->upbeat_high[c->selected_endpoint] = !c->upbeat_high[c->selected_endpoint];
@@ -2930,6 +2791,7 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   case ',':
     c->chord[c->selected_endpoint] = !c->chord[c->selected_endpoint];
     endpoint_notes_off(c->selected_endpoint);
+    restrike_held_note(c->selected_endpoint);
     return;
   case '.':
     c->vel[c->selected_endpoint] = !c->vel[c->selected_endpoint];
@@ -3060,11 +2922,6 @@ void handle_keypad(unsigned int mode, unsigned char note_in, unsigned int val) {
   }
 }
 
-int remap(int val, int min, int max) {
-  int range = max - min;
-  return val * range / MIDI_MAX + min;
-}
-
 void feet_pedal(int note_in, int velocity, uint64_t current_time);  // below
 
 void handle_feet(unsigned int mode, unsigned int note_in, unsigned int val) {
@@ -3180,10 +3037,6 @@ const char* note_str(int note) {
   }
 }
 
-void handle_axis_49(int mode, int note_in, int val) {
-  handle_piano(mode, note_in, val);
-}
-
 void calculate_breath_speeds() {
   // We're modeling a bag that gets blown up from the breath controller and then
   // slowly deflates on its own.  Each tick we want to put `breath` air into the
@@ -3257,7 +3110,6 @@ int last_air_val = 0;
 void forward_air() {
   int val = air;
 
-  flex_base = val;
   int flex_value = flex_val();
 
   if (val > MIDI_MAX) {
@@ -3409,7 +3261,7 @@ static bool breath_grid(uint64_t t, uint64_t start, uint64_t* beat,
 // the breath at an even 116 BPM when they aren't.  On a channel of its own,
 // set to the kit's percussion set (select_drum_kit), so it blends with the
 // kit, and panned with the drum.  Over the Feet it's theirs, a toe's tap
-// (the Mac's), and with no kit the Standard set's hat.  With the drum on and F switching it on, a layer over
+// (the Mac's), and with no kit the Standard set's hat.  With the drum on and H switching it on, a layer over
 // whichever kit's playing, which it leaves be, as the drum's modifier keys
 // leave it: it's for over a drum synth the pedals play, the Feet or a kit,
 // or on its own.

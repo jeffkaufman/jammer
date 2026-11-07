@@ -35,18 +35,11 @@ void select_endpoint_voice(int endpoint, int voice, int bank, int volume_delta,
 // (start_synth).
 #define CHANNEL_KICK 16
 
-// The Breath Gate's brushes: a percussion channel set to the Brush kit, apart
-// from the drum's, which is on whichever kit's picked.  Past the voice
-// channels (below).
-#define CHANNEL_BRUSH 32
-#define BRUSH_KIT 40            // FluidR3's Brush set
-#define MIDI_BRUSH_TAP 38       // on it
-#define MIDI_BRUSH_SLAP 39
-#define MIDI_BRUSH_SWIRL 40
-
-// And the drum's Grid Hat: another, set to whichever percussion set the
-// drum's kit is from (select_drum_kit), for that kit's hat -- the 808's until
-// then.
+// The drum's Grid Hat: a percussion channel set to whichever percussion set
+// the drum's kit is from (select_drum_kit), for that kit's hat -- the 808's
+// until then.  Past the voice channels (below).  (32 was the Breath Gate's
+// brushes, a fluidsynth Brush kit, before the brushes became the Mac's own
+// stir; it's free.)
 #define CHANNEL_HAT 33
 #define HAT_KIT 25              // FluidR3's TR-808 set
 #define MIDI_HAT 42             // its closed hat

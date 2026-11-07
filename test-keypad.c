@@ -21,6 +21,12 @@
 
 static int failures = 0;
 
+// The MIDI tap, defined with the builds-and-drops tests below, which the
+// drone tests above them use too.
+static int n_tapped;
+static void tap_midi(int action, int note, int velocity, int channel);
+static int count_tapped(int action, int note, int channel);
+
 #define CHECK(cond, ...) do {                                   \
     if (!(cond)) {                                              \
       printf("FAIL %s:%d: ", __FILE__, __LINE__);               \
@@ -187,6 +193,11 @@ static void test_voices() {
   CHECK(c->drum_voice == KIT_808_A, "Z didn't pick the first 808 kit");
   CHECK(lit("Z"), "Z should be lit for the 808 kit");
   CHECK(c->voices[ENDPOINT_FLEX] == 75, "picking a kit changed a voice");
+  // F1 puts the kit back too, as it does every other endpoint's voice.
+  press("F1");
+  CHECK(c->drum_voice == (feet_hook ? KIT_FEET : KIT_RIM) && !lit("Z"),
+        "F1 on the drum should go back to the first kit");
+  press("Z");
 
   // The voice keys with no kit on them do nothing at all with the drum
   // selected -- in particular they must not fall through and set a melodic
@@ -513,7 +524,7 @@ static void test_breath_fx() {
 }
 
 // The Breath Gate on `: a drone chord like Dc, starting on Warm Pad, whose
-// voice keys are the drones' pads plus its own percussion on B, N and M.  On
+// voice keys are the drones' pads plus its own percussion on S, D and F.  On
 // one of those it plays no notes, and the Mac's audio is told to play it
 // instead -- only while it's on.
 static void test_breath_gate() {
@@ -2371,6 +2382,26 @@ static void test_drones() {
         DRONE_VOICES[drone_voice_for_note('H')].program == 18,
         "Rock Organ should still be on H");
 
+  // OCT and CHORD on a sounding drone strike it again, moved: they used to
+  // cut it off and leave it silent until the next chord.
+  midi_tap = tap_midi;
+  select_ep("I");
+  if (!c->on[ENDPOINT_DRONE_BASS]) press("I");
+  CHECK(current_note[ENDPOINT_DRONE_BASS] != -1, "Db should be sounding");
+  const char* movers[] = {"]", "\\", ","};
+  for (int m = 0; m < 3; m++) {
+    n_tapped = 0;
+    press(movers[m]);
+    CHECK(count_tapped(MIDI_CC, 123, ENDPOINT_DRONE_BASS) >= 1 &&
+          count_tapped(MIDI_ON, -1, ENDPOINT_DRONE_BASS) >= 1 &&
+          current_note[ENDPOINT_DRONE_BASS] != -1,
+          "%s on a sounding drone should strike it again (%d note-ons)",
+          movers[m], count_tapped(MIDI_ON, -1, ENDPOINT_DRONE_BASS));
+  }
+  press(",");  // back to a bass drone
+  press("I");
+  midi_tap = NULL;
+
   // The voice keys with no pad do nothing, and draw dead.
   select_ep("I");
   press("Z");
@@ -3598,7 +3629,9 @@ static void test_tambourines() {
   handle_cc(CC_BREATH, 127);
   handle_cc(CC_BREATH, 60);
   handle_cc(CC_BREATH, 127);
-  CHECK(count_tapped(MIDI_ON, -1, CHANNEL_BRUSH) == 0,
+  int notes = 0;
+  for (int i = 0; i < n_tapped; i++) notes += tapped[i].action == MIDI_ON;
+  CHECK(notes == 0,
         "blowing, however hard, should stir the brushes, not play a note");
   CHECK(tamb_taps(0, 127) == 0, "the brushes shouldn't play the tambourine");
   handle_cc(CC_BREATH, 0);
@@ -4795,12 +4828,11 @@ static void test_channels_follow_tb() {
     {CHANNEL_KICK, ENDPOINT_DRUM, "the kick"},
     {CHANNEL_PITCHED_KICK, ENDPOINT_DRUM, "the pitched kick"},
     {CHANNEL_HAT, ENDPOINT_DRUM, "the Grid Hat"},
-    {CHANNEL_BRUSH, ENDPOINT_BREATH, "the brushes"},
   };
   // The main output at the global volume, and the talkbox's without it.
   float g = atomic_load(&main_synth_gain);
 #define NEAR(x, want) (fabsf((x) - (want)) < 1e-6f)
-  for (int i = 0; i < 7; i++) {
+  for (int i = 0; i < 6; i++) {
     for (int tb = 0; tb < 2; tb++) {
       float b[N_BUSES][4] = {{0}};
       float* buses[N_BUSES] = {b[0], b[1], b[2], b[3]};
