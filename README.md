@@ -1025,6 +1025,27 @@ by ear; and **Talkbox return volume** how loud the microphone comes back.
 All remembered.  A talkbox device that's unplugged is taken up again when it
 comes back, and one that stops pulling audio is reopened, like the others.
 
+**Match Talkbox to Mandolin...**, under them, sets the mandolin through the
+talkbox to come back as loud as it plays without it.  Put the tube in your
+mouth, hold it open on "ah", press Start, and play for a few seconds: jammer
+turns the mandolin's `TB` on while it listens (and back off after, if it
+was off), and the window's title says to keep playing.  While the mandolin
+is over its gate it compares the mandolin as it would have played dry with
+what the microphone brings back at the return's level, and moves **Talkbox
+send from the right** by the difference.  It's the right's send, so what
+the left's endpoints send to the talkbox stays as it was; the drum, the
+other thing on the right, moves with it.  Picking it again while it listens
+cancels.
+
+When what's off is a knob outside jammer, it says which and changes nothing:
+input 1 clipping (turn its gain down), the talkbox hardly louder than the
+room between strums (turn the talkbox's amp up), or nothing back at all.
+If the send would have to go past the slider's top, or so high the
+talkbox's device would clip, it goes as far as it can and says how far
+short it still is, to turn the talkbox's amp up and match again.  Each
+match is logged (`talkbox match:`).  The deciding is `talkboxmatch.h`, and
+the measuring is in `talkbox.h`.
+
 Don't set `audio.periods` or `audio.period-size`.  On CoreAudio those make the driver open
 successfully and then never request a sample -- no error, no sound -- and
 which values break is device-dependent.  `$JAMMER_PERIODS` and

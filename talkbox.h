@@ -21,7 +21,9 @@
 // out over TALKBOX_RETURN_FADE_MS.  After the right's level, like the
 // mandolin: it's what that level is matched against.
 //
-// Include after whistleinput.h.
+// Include after whistleinput.h and mandolin.h.
+
+#include "talkboxmatch.h"
 
 #define TALKBOX_DEFAULT_DEVICE "USB Audio Device"
 #define TALKBOX_RING_FRAMES 16384u  // power of two, for the mask
@@ -66,9 +68,12 @@ void set_talkbox_return_gain(double gain) {
                         memory_order_relaxed);
 }
 
+static void talkbox_match_sent(const float* mono, int len);
+
 // From the main render, through talkbox_out_hook.  Dropped if the device's
 // thread has fallen that far behind.
 static void talkbox_push(const float* mono, int len) {
+  talkbox_match_sent(mono, len);
   if (!atomic_load_explicit(&talkbox_running, memory_order_acquire)) return;
   unsigned write = atomic_load_explicit(&talkbox_ring_write,
                                         memory_order_relaxed);
@@ -405,9 +410,80 @@ static void talkbox_return_add(float** out, int nout, int len) {
   talkbox_return_now = g;
 }
 
+// ---------------------------------------------------------------------------
+// Matching the talkbox's mandolin to the dry one: see talkboxmatch.h.
+//
+// The main thread arms it; the audio thread starts again from nothing when
+// it sees that, adds up while the mandolin is on the talkbox, and says done
+// once it's heard enough playing.  The main thread reads the sums only then,
+// or gives up and sets it idle.
+// ---------------------------------------------------------------------------
+
+enum { TBM_IDLE, TBM_ARMED, TBM_RUNNING, TBM_DONE };
+static _Atomic int talkbox_match_state = TBM_IDLE;
+static TalkboxMatchStats talkbox_match_stats;  // the audio thread's, till done
+
+// What went to the talkbox's device, from talkbox_push.
+static void talkbox_match_sent(const float* mono, int len) {
+  if (atomic_load_explicit(&talkbox_match_state, memory_order_relaxed) !=
+      TBM_RUNNING) {
+    return;
+  }
+  for (int i = 0; i < len; i++) {
+    float a = fabsf(mono[i]);
+    if (a > talkbox_match_stats.send_peak) talkbox_match_stats.send_peak = a;
+  }
+}
+
+// Before the return and the mandolin are mixed in, while both this block's
+// microphone and mandolin are still there.
+static void talkbox_match_listen(int len) {
+  int state = atomic_load_explicit(&talkbox_match_state,
+                                   memory_order_acquire);
+  if (state == TBM_ARMED) {
+    memset(&talkbox_match_stats, 0, sizeof(talkbox_match_stats));
+    atomic_store_explicit(&talkbox_match_state, TBM_RUNNING,
+                          memory_order_relaxed);
+  } else if (state != TBM_RUNNING) {
+    return;
+  }
+  if (whistle_input_block_len != len || mando_block_len != len ||
+      !atomic_load_explicit(&mando_pub_talkbox, memory_order_relaxed)) {
+    return;
+  }
+  float gain = atomic_load_explicit(&mando_gain, memory_order_relaxed);
+  float gate = powf(10.0f, atomic_load_explicit(&mando_pub_gate_db,
+                                                memory_order_relaxed) / 20.0f);
+  float peak = 0, mic_peak = 0;
+  double dry = 0, mic = 0;
+  for (int i = 0; i < len; i++) {
+    float d = mando_block[i];
+    float m = whistle_input_block[i];
+    if (fabsf(d) > peak) peak = fabsf(d);
+    if (fabsf(m) > mic_peak) mic_peak = fabsf(m);
+    dry += (double)(gain * d) * (gain * d);
+    mic += (double)m * m;
+  }
+  TalkboxMatchStats* s = &talkbox_match_stats;
+  if (peak >= gate) {
+    s->dry_energy += dry;
+    s->mic_energy += mic;
+    s->playing_frames += len;
+    if (mic_peak > s->mic_peak) s->mic_peak = mic_peak;
+    if (s->playing_frames >= TBMATCH_PLAYING_S * synth_sample_rate) {
+      atomic_store_explicit(&talkbox_match_state, TBM_DONE,
+                            memory_order_release);
+    }
+  } else {
+    s->quiet_energy += mic;
+    s->quiet_frames += len;
+  }
+}
+
 // The audio thread's after-the-right's-level: the talkbox's return, and the
 // mandolin.
 static void talkbox_after_alt(float** out, int nout, int len) {
+  talkbox_match_listen(len);
   talkbox_return_add(out, nout, len);
   mando_add(out, nout, len);
 }

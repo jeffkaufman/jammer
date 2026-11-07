@@ -1767,6 +1767,10 @@ static void flash_from_speech(int key) {
 @property(strong) NSMenuItem* talkboxSendLeftItem;
 @property(strong) NSMenuItem* talkboxSendRightItem;
 @property(strong) NSMenuItem* talkboxReturnItem;
+@property(strong) NSSlider* talkboxSendRightSlider;
+@property(strong) NSTimer* talkboxMatchTimer;
+@property(assign) double talkboxMatchStarted;
+@property(assign) BOOL talkboxMatchRestoreTB;
 @property(strong) NSSlider* drumVolumeSlider;
 @property(strong) NSSlider* mandoVolumeSlider;
 @property(strong) NSMenu* whistleMenu;
@@ -2198,6 +2202,7 @@ static void flash_from_speech(int key) {
                      max:MAX_TALKBOX_SEND
                   action:@selector(talkboxSendRightChanged:)
                   slider:&slider];
+  self.talkboxSendRightSlider = slider;
   return self.talkboxSendRightItem;
 }
 
@@ -2242,6 +2247,171 @@ static void flash_from_speech(int key) {
   [menu addItem:[self talkboxSendLeftMenuItem]];
   [menu addItem:[self talkboxSendRightMenuItem]];
   [menu addItem:[self talkboxReturnMenuItem]];
+  NSMenuItem* match =
+    [menu addItemWithTitle:self.talkboxMatchTimer
+                             ? @"Matching Talkbox to Mandolin..."
+                             : @"Match Talkbox to Mandolin..."
+                    action:@selector(matchTalkboxToMandolin:)
+             keyEquivalent:@""];
+  match.target = self;
+}
+
+// Match Talkbox to Mandolin: the right send set so the mandolin through the
+// talkbox comes back as loud as it plays without it.  See talkboxmatch.h.
+- (void)talkboxMatchAlert:(NSString*)title text:(NSString*)text {
+  NSAlert* alert = [[NSAlert alloc] init];
+  alert.messageText = title;
+  alert.informativeText = text;
+  [alert runModal];
+}
+
+- (void)matchTalkboxToMandolin:(NSMenuItem*)item {
+  (void)item;
+  if (self.talkboxMatchTimer) {
+    [self talkboxMatchFinish:NO];
+    return;
+  }
+  NSString* missing = nil;
+  if (!atomic_load(&talkbox_running)) {
+    missing = [NSString stringWithFormat:
+      @"The talkbox's device isn't playing (%s).  Pick it under Talkbox "
+      @"output.", talkbox_error[0] ? talkbox_error : "none chosen"];
+  } else if (!mando_has_input()) {
+    missing = @"There's no second input for the mandolin.  Choose an audio "
+              @"interface with two inputs in the Whistle menu.";
+  } else if (!mando_on) {
+    missing = @"The mandolin is off.  Switch it on with left option.";
+  }
+  if (missing) {
+    [self talkboxMatchAlert:@"Can't match the talkbox yet" text:missing];
+    return;
+  }
+  NSAlert* alert = [[NSAlert alloc] init];
+  alert.messageText = @"Match Talkbox to Mandolin";
+  alert.informativeText =
+    @"Put the talkbox's tube in your mouth, in front of the microphone on "
+    @"input 1, and hold your mouth open on \"ah\".  Then play the mandolin "
+    @"as you would, for about five seconds -- jammer turns TB on for it "
+    @"while it listens, and tells you when it has enough.\n\n"
+    @"It sets \"Talkbox send from the right\" so the mandolin comes back "
+    @"through the talkbox as loud as it plays without it.";
+  [alert addButtonWithTitle:@"Start"];
+  [alert addButtonWithTitle:@"Cancel"];
+  if ([alert runModal] != NSAlertFirstButtonReturn) return;
+
+  LOCK();
+  self.talkboxMatchRestoreTB = !mando_talkbox;
+  if (!mando_talkbox) mando_toggle_talkbox();
+  UNLOCK();
+  [self.view setNeedsDisplay:YES];
+  atomic_store_explicit(&talkbox_match_state, TBM_ARMED,
+                        memory_order_release);
+  self.talkboxMatchStarted = CFAbsoluteTimeGetCurrent();
+  self.window.subtitle = @"Matching the talkbox: keep playing...";
+  self.talkboxMatchTimer =
+    [NSTimer scheduledTimerWithTimeInterval:0.2
+                                    repeats:YES
+                                      block:^(NSTimer* timer) {
+      (void)timer;
+      if (atomic_load_explicit(&talkbox_match_state, memory_order_acquire) ==
+          TBM_DONE) {
+        [self talkboxMatchFinish:YES];
+      } else if (CFAbsoluteTimeGetCurrent() - self.talkboxMatchStarted >
+                 TBMATCH_TIMEOUT_S) {
+        [self talkboxMatchFinish:YES];
+      }
+    }];
+  [self rebuildAudioMenu];
+}
+
+// Done, or given up on (`report` NO: cancelled, so say nothing).
+- (void)talkboxMatchFinish:(BOOL)report {
+  [self.talkboxMatchTimer invalidate];
+  self.talkboxMatchTimer = nil;
+  self.window.subtitle = @"";
+  TalkboxMatchStats stats = {0};
+  bool done = atomic_load_explicit(&talkbox_match_state,
+                                   memory_order_acquire) == TBM_DONE;
+  if (done) stats = talkbox_match_stats;
+  atomic_store_explicit(&talkbox_match_state, TBM_IDLE, memory_order_release);
+  if (self.talkboxMatchRestoreTB) {
+    LOCK();
+    if (mando_talkbox) mando_toggle_talkbox();
+    UNLOCK();
+    self.talkboxMatchRestoreTB = NO;
+    [self.view setNeedsDisplay:YES];
+  }
+  [self rebuildAudioMenu];
+  if (!report) return;
+
+  double before = talkbox_send_volume[1];
+  TalkboxMatchResult r = talkbox_match_decide(
+    &stats, before, MAX_TALKBOX_SEND,
+    atomic_load(&talkbox_return_gain), synth_sample_rate);
+  printf("talkbox match: %s, outcome %d, %.1fdB off, send %.3f -> %.3f, "
+         "%.1fdB short; mic peak %.3f, send peak %.3f\n",
+         done ? "heard enough" : "timed out", r.outcome, r.off_db, before,
+         r.send_volume, r.short_db, stats.mic_peak, stats.send_peak);
+  if (r.send_volume != before) {
+    set_talkbox_send(1, r.send_volume);
+    self.talkboxSendRightSlider.doubleValue = r.send_volume;
+    [NSUserDefaults.standardUserDefaults setDouble:r.send_volume
+                                            forKey:@"talkboxSendRight"];
+  }
+  NSString* off = [NSString stringWithFormat:
+    @"The talkbox's mandolin was %.1fdB %@ than the dry mandolin.",
+    fabs(r.off_db), r.off_db > 0 ? @"louder" : @"quieter"];
+  NSString* moved = [NSString stringWithFormat:
+    @"\"Talkbox send from the right\" went from %.2f to %.2f.",
+    before, r.send_volume];
+  switch (r.outcome) {
+    case TBMATCH_OK:
+      [self talkboxMatchAlert:@"Talkbox matched to the mandolin"
+                         text:[NSString stringWithFormat:@"%@  %@", off,
+                               moved]];
+      break;
+    case TBMATCH_NOT_PLAYED:
+      [self talkboxMatchAlert:@"Didn't hear enough mandolin"
+                         text:@"It needs a few seconds of the mandolin over "
+                              @"its gate (Mandolin menu) with TB on.  Nothing "
+                              @"was changed; try again, playing as you "
+                              @"would."];
+      break;
+    case TBMATCH_NOTHING_BACK:
+      [self talkboxMatchAlert:@"The microphone heard nothing back"
+                         text:@"Is the talkbox's amp on and turned up, and "
+                              @"the tube in front of the microphone on input "
+                              @"1?  Nothing was changed."];
+      break;
+    case TBMATCH_MIC_CLIPS:
+      [self talkboxMatchAlert:@"Turn input 1's gain down"
+                         text:[NSString stringWithFormat:
+        @"The microphone clipped (peak %.2f), so the talkbox can't be "
+        @"measured.  Turn the gain on input 1 down on the interface, or the "
+        @"talkbox's amp down, and match again.  Nothing was changed.",
+        stats.mic_peak]];
+      break;
+    case TBMATCH_BURIED:
+      [self talkboxMatchAlert:@"Turn the talkbox's amp up"
+                         text:@"What came back was hardly louder than the "
+                              @"room between strums.  Turn the talkbox's amp "
+                              @"up (or input 1's gain, if the microphone is "
+                              @"quiet), keep your mouth open, and match "
+                              @"again.  Nothing was changed."];
+      break;
+    case TBMATCH_DEVICE_CLIPS:
+    case TBMATCH_SEND_MAXED:
+      [self talkboxMatchAlert:@"Turn the talkbox's amp up, and match again"
+                         text:[NSString stringWithFormat:
+        @"%@  %@  That's as far as it goes without %@, and it's still "
+        @"%.1fdB quieter than the dry mandolin.  Turn up the talkbox's amp "
+        @"and match again.",
+        off, moved,
+        r.outcome == TBMATCH_DEVICE_CLIPS ? @"clipping the talkbox's device"
+                                          : @"the slider's top",
+        r.short_db]];
+      break;
+  }
 }
 
 // ---------------------------------------------------------------------------

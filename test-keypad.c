@@ -17,6 +17,7 @@
 #include "keypad.h"
 #include "numrec.h"
 #include "loudness.h"
+#include "talkboxmatch.h"
 
 static int failures = 0;
 
@@ -1875,6 +1876,68 @@ static void test_mandolin_chord_effects() {
 
 // Record Mandolin: the second input as it came, sample for sample, whatever
 // the mandolin was doing to it, and a header that says how long it is.
+// Match Talkbox to Mandolin's deciding: the right send moved by however
+// far the return was off, and nothing moved when what's wrong is a knob
+// outside jammer.
+static void test_talkbox_match() {
+  const double rate = 48000;
+  double frames = TBMATCH_PLAYING_S * rate;
+  // The return 6dB quieter than the dry mandolin: the send doubles.
+  TalkboxMatchStats s = {
+    .dry_energy = frames * 0.01, .mic_energy = frames * 0.01 / 4,
+    .quiet_energy = rate * 1e-6, .playing_frames = frames,
+    .quiet_frames = rate, .mic_peak = 0.5f, .send_peak = 0.1f,
+  };
+  TalkboxMatchResult r = talkbox_match_decide(&s, 0.6, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_OK, "a plain match came out %d", r.outcome);
+  CHECK(fabs(r.send_volume - 1.2) < 1e-6, "6dB quiet should double the send, "
+        "not %f", r.send_volume);
+  CHECK(fabs(r.off_db + 6.02) < 0.01, "off by %f, not -6dB", r.off_db);
+  // The return's gain counts: at 0.5 the same is 12dB quiet.
+  r = talkbox_match_decide(&s, 0.3, 2.0, 0.5, rate);
+  CHECK(r.outcome == TBMATCH_OK && fabs(r.send_volume - 1.2) < 1e-6,
+        "the return's gain wasn't taken into account: %f", r.send_volume);
+  // Too loud comes down.
+  TalkboxMatchStats loud = s;
+  loud.mic_energy = s.dry_energy * 4;
+  r = talkbox_match_decide(&loud, 1.0, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_OK && fabs(r.send_volume - 0.5) < 1e-6,
+        "6dB loud should halve the send, not %f", r.send_volume);
+  // Past the slider's top: as far as it goes, and how far short.
+  r = talkbox_match_decide(&s, 1.5, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_SEND_MAXED && r.send_volume == 2.0 &&
+        fabs(r.short_db - 20 * log10(1.5)) < 0.01,
+        "a maxed send came out %d, %f, %fdB short", r.outcome,
+        r.send_volume, r.short_db);
+  // Sending so much the device would clip: kept under its ceiling.
+  TalkboxMatchStats hot = s;
+  hot.send_peak = 0.6f;
+  r = talkbox_match_decide(&hot, 0.6, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_DEVICE_CLIPS &&
+        fabs(r.send_volume - 0.6 * TBMATCH_SEND_CEILING / 0.6) < 1e-6,
+        "a clipping device came out %d, %f", r.outcome, r.send_volume);
+  // The knobs outside jammer: nothing set.
+  TalkboxMatchStats clip = s;
+  clip.mic_peak = 1.0f;
+  r = talkbox_match_decide(&clip, 0.6, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_MIC_CLIPS && r.send_volume == 0.6,
+        "a clipping microphone came out %d, %f", r.outcome, r.send_volume);
+  TalkboxMatchStats buried = s;
+  buried.quiet_energy = rate * 0.01 / 4 / 2;  // the room 3dB under
+  r = talkbox_match_decide(&buried, 0.6, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_BURIED && r.send_volume == 0.6,
+        "a buried return came out %d", r.outcome);
+  TalkboxMatchStats silent = s;
+  silent.mic_energy = 0;
+  r = talkbox_match_decide(&silent, 0.6, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_NOTHING_BACK && r.send_volume == 0.6,
+        "nothing back came out %d", r.outcome);
+  TalkboxMatchStats unplayed = {0};
+  r = talkbox_match_decide(&unplayed, 0.6, 2.0, 1.0, rate);
+  CHECK(r.outcome == TBMATCH_NOT_PLAYED && r.send_volume == 0.6,
+        "no playing came out %d", r.outcome);
+}
+
 static void test_mandolin_recording() {
   mando_reset();
   mando_prepare(48000);
@@ -5056,6 +5119,7 @@ int main() {
   test_mandolin_effects();
   test_mandolin_chord_effects();
   test_mandolin_recording();
+  test_talkbox_match();
   test_vocoder_holds();
   test_voice_fx();
   test_fx_gate();
