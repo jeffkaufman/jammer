@@ -1956,6 +1956,27 @@ static void flash_from_speech(int key) {
     last_talkbox =
       atomic_load_explicit(&talkbox_frames_played, memory_order_relaxed);
   }
+
+  // The talkbox following its device's clock (talkbox.h): any blips, as
+  // they happen, and how far apart the clocks are once a minute.
+  static unsigned last_underruns, last_skips;
+  static int talkbox_seconds;
+  unsigned underruns =
+    atomic_load_explicit(&talkbox_underruns, memory_order_relaxed);
+  unsigned skips = atomic_load_explicit(&talkbox_skips, memory_order_relaxed);
+  float ppm = atomic_load_explicit(&talkbox_ppm, memory_order_relaxed);
+  if (underruns != last_underruns || skips != last_skips) {
+    printf("talkbox: ran dry %u times, jumped ahead %u times; "
+           "reading %+.0fppm fast\n", underruns - last_underruns,
+           skips - last_skips, ppm);
+    fflush(stdout);
+    last_underruns = underruns;
+    last_skips = skips;
+  }
+  if (talkbox_unit && ++talkbox_seconds % 60 == 0) {
+    printf("talkbox: following its clock, reading %+.0fppm fast\n", ppm);
+    fflush(stdout);
+  }
 }
 
 - (void)reopenTalkbox {

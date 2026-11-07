@@ -82,10 +82,38 @@ static void talkbox_push(const float* mono, int len) {
                         memory_order_release);
 }
 
-// The device's thread: the ring, onto each of its channels.  Two clocks
-// drift, so a ring that's grown past three times its target is brought back
-// to it, and one that's run dry waits until it's back at it, rather than
-// stuttering a block at a time.
+// Following the device's clock.  The 1818 and the C-Media each run on their
+// own crystal, a hundred or so parts per million apart, so a ring read at
+// exactly the rate it's written runs dry (or over) every minute or two: a
+// blip.  Instead the device's thread reads it a touch faster or slower --
+// talkbox_ratio ring frames per device frame, interpolating between them --
+// steered to keep the ring at its target.  The fill is smoothed first,
+// since it saw-tooths by a block at a time as the two sides take turns.
+// Proportional, so a ring a whole target off is read 1000ppm fast; plus an
+// integral over TALKBOX_FOLLOW_TI_S that takes up the steady difference
+// between the clocks, so the fill settles on target.  That's critically
+// damped or near it: ~13s to pull back, inaudible as pitch.
+#define TALKBOX_FOLLOW_KP 1e-3
+#define TALKBOX_FOLLOW_TI_S 30.0
+#define TALKBOX_FOLLOW_SMOOTH_S 0.5
+#define TALKBOX_FOLLOW_MAX 0.005     // 5000ppm: further than any real drift
+
+// The device's thread's own, reset by talkbox_start before the unit runs.
+static double talkbox_frac;          // how far past ring_read, 0 to 1
+static double talkbox_fill;          // smoothed frames available
+static double talkbox_integral;
+static double talkbox_device_rate;   // the device's thread's frames per second
+
+// For the log, once a second on the main thread.
+static _Atomic unsigned talkbox_underruns;  // ran dry: a blip of silence
+static _Atomic unsigned talkbox_skips;      // ran over: jumped ahead
+static _Atomic float talkbox_ppm;           // how much faster it's read
+
+// The device's thread: the ring, onto each of its channels, at
+// talkbox_ratio.  If the following can't keep up -- the rig stalled, or the
+// device was just opened -- a ring that's grown past three times its target
+// is brought back to it, and one that's run dry waits until it's back at it,
+// rather than stuttering a block at a time.
 static OSStatus talkbox_play(void* context, AudioUnitRenderActionFlags* flags,
                              const AudioTimeStamp* timestamp, UInt32 bus,
                              UInt32 frames, AudioBufferList* io) {
@@ -103,15 +131,59 @@ static OSStatus talkbox_play(void* context, AudioUnitRenderActionFlags* flags,
   if (available > target * 3) {
     read += available - target;
     available = target;
+    talkbox_fill = target;
+    talkbox_frac = 0;
+    atomic_fetch_add_explicit(&talkbox_skips, 1, memory_order_relaxed);
   }
-  if (talkbox_priming && available >= target) talkbox_priming = false;
-  unsigned take = talkbox_priming ? 0
-    : available < frames ? available : frames;
-  if (take < frames) talkbox_priming = true;
+  if (talkbox_priming && available >= target) {
+    talkbox_priming = false;
+    talkbox_fill = available;
+  }
+
+  double ratio = 1.0;
+  if (!talkbox_priming) {
+    double dt = frames / talkbox_device_rate;
+    talkbox_fill += (available - talkbox_fill) *
+      fmin(1.0, dt / TALKBOX_FOLLOW_SMOOTH_S);
+    double error = (talkbox_fill - target) / target;
+    talkbox_integral += TALKBOX_FOLLOW_KP * error * dt / TALKBOX_FOLLOW_TI_S;
+    if (talkbox_integral > TALKBOX_FOLLOW_MAX) {
+      talkbox_integral = TALKBOX_FOLLOW_MAX;
+    }
+    if (talkbox_integral < -TALKBOX_FOLLOW_MAX) {
+      talkbox_integral = -TALKBOX_FOLLOW_MAX;
+    }
+    double adjust = TALKBOX_FOLLOW_KP * error + talkbox_integral;
+    if (adjust > TALKBOX_FOLLOW_MAX) adjust = TALKBOX_FOLLOW_MAX;
+    if (adjust < -TALKBOX_FOLLOW_MAX) adjust = -TALKBOX_FOLLOW_MAX;
+    ratio = 1.0 + adjust;
+    atomic_store_explicit(&talkbox_ppm, (float)(adjust * 1e6),
+                          memory_order_relaxed);
+  }
+
+  // Frames read: up to where the last sample lands, and one past it to
+  // interpolate toward.
+  double end = talkbox_frac + frames * ratio;
+  unsigned need = (unsigned)end + 1;
+  if (!talkbox_priming && available < need) {
+    talkbox_priming = true;
+    atomic_fetch_add_explicit(&talkbox_underruns, 1, memory_order_relaxed);
+  }
   float* first = (float*)io->mBuffers[0].mData;
-  for (UInt32 i = 0; i < frames; i++) {
-    first[i] = i < take
-      ? talkbox_ring[(read + i) & (TALKBOX_RING_FRAMES - 1)] : 0;
+  unsigned take = 0;
+  if (talkbox_priming) {
+    memset(first, 0, frames * sizeof(float));
+  } else {
+    for (UInt32 i = 0; i < frames; i++) {
+      double pos = talkbox_frac + i * ratio;
+      unsigned at = (unsigned)pos;
+      float f = (float)(pos - at);
+      float a = talkbox_ring[(read + at) & (TALKBOX_RING_FRAMES - 1)];
+      float b = talkbox_ring[(read + at + 1) & (TALKBOX_RING_FRAMES - 1)];
+      first[i] = a + f * (b - a);
+    }
+    take = (unsigned)end;
+    talkbox_frac = end - take;
   }
   for (UInt32 b = 1; b < io->mNumberBuffers; b++) {
     memcpy(io->mBuffers[b].mData, first, frames * sizeof(float));
@@ -226,6 +298,10 @@ static bool talkbox_start(const char* wanted, double rate) {
                                              memory_order_relaxed),
                         memory_order_relaxed);
   talkbox_priming = true;
+  talkbox_frac = 0;
+  talkbox_fill = 0;
+  talkbox_integral = 0;
+  talkbox_device_rate = rate;
 
   AudioComponentDescription description = {
     .componentType = kAudioUnitType_Output,
