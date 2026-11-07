@@ -57,6 +57,9 @@ sign() {
 for lib in "$APP"/Contents/Frameworks/*; do
     sign "$lib"
 done
+# The dictionary compiler keeps its sandbox: that's what it's for.
+sign --entitlements speechcompile.entitlements \
+    "$APP/Contents/MacOS/speechcompile"
 sign --entitlements jammer.entitlements "$APP"
 codesign --verify --deep --strict "$APP"
 

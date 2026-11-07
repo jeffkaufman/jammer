@@ -13,6 +13,7 @@
 #include "whistle.h"
 #include "speechwords.h"
 #include "speechgate.h"
+#include "speechtiming.h"
 #include "keylayout.h"
 #include "keypad.h"
 #include "numrec.h"
@@ -2962,6 +2963,32 @@ static void test_speech_gate() {
   CHECK(out[end + 40 * w] == 0, "400ms after, it should be shut again");
 }
 
+// When a spoken number lands: two beats after its onset, on the grid, with
+// a pedal up to a quarter beat early taking it; and once that's gone, the
+// next whole beat after the onset rather than now.
+static void test_speech_landing() {
+  const uint64_t beat = 500 * 1000000ULL, onset = 10 * NS_PER_SEC;
+  // Decided 600ms after the onset, pedals going: lands at two beats.
+  SpeechLandingTime l = speech_landing_time(onset, beat, true,
+                                            onset + 600 * 1000000ULL);
+  CHECK(l.beats == 2 && l.due == onset + 2 * beat &&
+        l.earliest == onset + 2 * beat - beat / 4,
+        "a number decided in time should land two beats after its onset");
+  // However quick the word was.
+  l = speech_landing_time(onset, beat, true, onset + 300 * 1000000ULL);
+  CHECK(l.due == onset + 2 * beat, "a quick word shouldn't land sooner");
+  // Decided after two beats: the third, not now.
+  l = speech_landing_time(onset, beat, true, onset + 2 * beat + 1);
+  CHECK(l.beats == 3 && l.due == onset + 3 * beat,
+        "a late decision should land on the next whole beat, not now");
+  l = speech_landing_time(onset, beat, true, onset + 3 * beat + 1);
+  CHECK(l.beats == 4, "or the one after that");
+  // No pedals: at its time, and nothing earlier.
+  l = speech_landing_time(onset, beat, false, onset + 600 * 1000000ULL);
+  CHECK(l.due == onset + 2 * beat && l.earliest == l.due,
+        "without pedals nothing should take it early");
+}
+
 // The chord each spoken number gives.
 static void test_nashville_chords() {
   // The chords: the major key on the root, whatever the arrows say.
@@ -5161,6 +5188,7 @@ int main() {
   test_nashville_numbers();
   test_spoken_presses();
   test_nashville_chords();
+  test_speech_landing();
   test_speech_dictionary();
   test_speech_gate();
   test_numrec_unusual();

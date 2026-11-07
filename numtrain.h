@@ -211,11 +211,9 @@ static void nt_begin(void) {
   LOCK();
   nt_running = true;
   UNLOCK();
-  // Whatever was waiting in the ring is from before the window opened.
-  atomic_store_explicit(&speech_ring_read,
-                        atomic_load_explicit(&speech_ring_write,
-                                             memory_order_acquire),
-                        memory_order_release);
+  // Whatever's waiting in the ring is from just before the window opened: a
+  // tick's worth, recorded with the rest rather than thrown away, so that
+  // the ring's count stays in step with speech_tap's (speech_sample_ns).
   speech_record_hook = nt_record;
   atomic_store_explicit(&speech_recording, 1, memory_order_relaxed);
   printf("recording number samples to %s\n", nt_path);

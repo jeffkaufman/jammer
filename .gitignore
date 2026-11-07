@@ -9,6 +9,7 @@ whistle-build/
 whistlelevels
 speechphrases
 speechmodel
+speechcompile
 speech-model.bin
 numrec-eval
 breathmic-eval

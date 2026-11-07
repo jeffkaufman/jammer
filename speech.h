@@ -22,10 +22,10 @@
 //
 // It only hears what's loud enough to be said right into the microphone (the
 // gate in speechgate.h, set from the Speech Recognition menu).  A number it
-// hears takes effect two beats after the talking stops, so it lands in time
-// however long the recognizer took; anything else, the moment it's heard.
-// A chord change has to land on a beat, but a button, a key or a mode is
-// wanted now, not a beat or two later.
+// hears lands two beats after the word began (see "Landing"), so it lands
+// in time however long the recognizer took; anything else is done the
+// moment it's heard.  A chord change has to land on a beat, but a button, a
+// key or a mode is wanted now, not a beat or two later.
 //
 // It only listens while F3 or F8 is on.  Partial results are
 // acted on as they arrive, so a number lands a moment after it's said rather
@@ -47,6 +47,7 @@
 
 #include "speechwords.h"
 #include "speechgate.h"
+#include "speechtiming.h"
 #include "numrec.h"
 
 // ---------------------------------------------------------------------------
@@ -67,6 +68,11 @@ static _Atomic int speech_recording;  // ... or this: numtrain.h is recording
 // Everything the microphone sends, ungated, as it's drained: numtrain.h's
 // recorder while it's recording.  Speech queue.
 static void (*speech_record_hook)(const float* samples, int n) = NULL;
+// The clock as each block arrives, and how many samples the ring has been
+// handed by then, so a place on the microphone's timeline can be put on
+// now()'s clock (speech_sample_ns).  speech_drain counts the same samples.
+static _Atomic long long speech_tap_total;
+static _Atomic uint64_t speech_tap_ns;
 
 // The last dozen seconds of the microphone, ungated, as drained, for
 // numheard.h to cut clips from.  speech_mic_samples counts everything drained
@@ -92,6 +98,11 @@ static void speech_tap(const float* samples, int frames) {
   }
   atomic_store_explicit(&speech_ring_write, write + (unsigned)frames,
                         memory_order_release);
+  atomic_store_explicit(&speech_tap_ns, now(), memory_order_relaxed);
+  atomic_store_explicit(&speech_tap_total,
+                        atomic_load_explicit(&speech_tap_total,
+                                             memory_order_relaxed) + frames,
+                        memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -237,302 +248,182 @@ static void speech_apply_locked(const SwAction* action) {
 }
 
 // ---------------------------------------------------------------------------
-// On the beat
+// Landing
 //
-// A number heard doesn't happen when the recognizer gets round to it, which
-// could be anywhere from a quarter of a second to a second later, but on the
-// beat two beats after the talking stopped: say "four" ending on the one and
-// the IV comes in on the three.  (Everything else is made the moment it's
-// heard: see speech_queue_action.)
+// A number lands SPEECH_BEATS_AFTER_ONSET beats after you started saying it
+// (speechtiming.h) -- the same for both recognizers -- on the beat's grid:
+// the pedals' while they're going, and SPEECH_DEFAULT_BPM's from the onset
+// otherwise.  So with the feet going, call a number on the one and the chord
+// comes in on the three, however long the word took or the recognizer did.
+// If even that has gone by -- a long word at a fast tempo, or Apple taking
+// its time -- it's the next whole beat after the onset, never the moment
+// it's heard, which is a different time for every word.
 //
 // On the beat itself, not near it.  The beat here is the pedal: each hit is
 // when the rhythm parts play, so a change that arrives a few milliseconds
-// after it is heard only on the next note, half a beat or more late.  So a
-// change is armed half a beat before it's due and then made by the next beat,
-// inside it, before its notes (before_beat_hook) -- which is to say a hair
-// ahead of them.
+// after it is heard only on the next note, half a beat or more late.  So
+// once a landing is within a quarter beat, the next pedal beat makes it,
+// inside the beat before its notes (before_beat_hook, from arpeggiate); and
+// if no pedal has come by its time, it's made then, so a pedal a hair late
+// still plays the new chord.  Either way the chord is heard on the first
+// pedal at least a beat and three quarters after the onset.
 //
-// Which beat is decided on the pedals' grid, not the voice's: the change is
-// due two pedal beats after the beat the call ended on.  That's the last beat
-// at or before the end of the talking -- not the nearest -- since the end as
-// measured here, the last moment above the gate, comes 140-320ms *after* the
-// beat a call is ended on: the word is placed on the beat and rings on past
-// it.  At 120 BPM that's around the middle of the beat, where "nearest" was a
-// coin toss between landing two beats later and three.  A call that ends a
-// little early, up to SPEECH_EARLY_FRACTION of a beat, still counts.
-//
-// If the feet have stopped -- no pedal hit in the last beat and a half --
-// there's no beat to land on, so it's made the moment it's heard, talking or
-// not.  If they stop in the half beat after it's armed, it's made then.
+// The onset is the fast recognizer's: where its utterance detector found
+// the word rising out of the quiet (numrec.h), on the microphone's
+// timeline, which speech_tap stamps with the clock as each block arrives
+// (speech_sample_ns).  Apple's words are set against the same utterances,
+// by its timestamps for them, so a number it hears lands as the fast
+// path's would have.  Both recognizers hearing one word is one landing.
 // ---------------------------------------------------------------------------
 
-#define SPEECH_BEATS_AFTER 2
 #define SPEECH_DEFAULT_BPM 116
-#define SPEECH_MAX_PENDING 16
-#define SPEECH_EARLY_FRACTION 0.15
+#define SPEECH_MAX_WAITING 16
+// Two numbers whose onsets are this close are the same word, heard twice.
+#define SPEECH_SAME_WORD_S 0.4
+// How near Apple's timestamps for a word must come to an utterance to be it.
+#define SPEECH_WORD_SLACK_S 0.15
 
-// Heard, waiting to be armed.  Speech queue only.
-static SwAction speech_pending[SPEECH_MAX_PENDING];
-static int speech_n_pending;
-static uint64_t speech_last_loud_ns;  // when the talking last stopped
-// When a change heard too late for its beat has been moved on to a later
-// one, that beat, so it stays moved.  0 otherwise.
-static uint64_t speech_moved_due;
-static uint64_t speech_scheduled_for; // a precise wakeup already asked for
-// With no feet, when the voice-led drones will have glided to what's pending,
-// and so when to make it.  0 otherwise.
-static uint64_t speech_glide_due;
+// A number waiting for its time.  Under the lock.
+typedef struct {
+  int number;
+  uint64_t onset_ns;
+  uint64_t due;       // when it lands
+  uint64_t earliest;  // or a pedal beat from here on makes it
+  bool fast;          // the fast recognizer's, else Apple's
+} SpeechLanding;
+static SpeechLanding speech_waiting[SPEECH_MAX_WAITING];
+static int speech_n_waiting;
 
-// Armed, for the next beat to make.  Under the lock.
-static SwAction speech_armed[SPEECH_MAX_PENDING];
-static int speech_n_armed;
-static uint64_t speech_armed_due;       // the beat it's meant for, roughly
-static uint64_t speech_armed_deadline;  // made anyway if no beat by then
-
-// A fast number waiting for its time, or 0, and that time: a beat after it
-// began to be said.  A pedal beat from speech_fast_earliest on makes it
-// there, so a kick a hair ahead of its time still plays it.  Under the lock.
-static int speech_fast_armed;
-static uint64_t speech_fast_due;
-static uint64_t speech_fast_earliest;
-
-// The next beat's notes are about to play: make whatever's armed first.
-// Called by arpeggiate with the lock held.
-static void speech_before_beat(void) {
-  if (speech_fast_armed && now() >= speech_fast_earliest) {
-    SwAction action = {SW_NUMBER, speech_fast_armed};
-    printf("timing: fast number made on the beat, %ldms from its time\n",
-           (long)(((int64_t)now() - (int64_t)speech_fast_due) / 1000000));
-    speech_apply_locked(&action);
-    speech_fast_armed = 0;
-  }
-  if (speech_n_armed == 0) return;
-  printf("timing: made on the beat, %ldms from when it was due\n",
-         (long)(((int64_t)now() - (int64_t)speech_armed_due) / 1000000));
-  for (int i = 0; i < speech_n_armed; i++) {
-    speech_apply_locked(&speech_armed[i]);
-  }
-  speech_n_armed = 0;
+// A place on the microphone's timeline, as speech_drain counts it, on
+// now()'s clock: from the clock at the latest block and how far back of it
+// the sample is.
+static uint64_t speech_sample_ns(long long sample) {
+  long long total = atomic_load_explicit(&speech_tap_total,
+                                         memory_order_relaxed);
+  uint64_t at = atomic_load_explicit(&speech_tap_ns, memory_order_relaxed);
+  double behind = (double)(total - sample) / speech_format.sampleRate;
+  if (behind < 0) behind = 0;
+  return at - (uint64_t)(behind * 1e9);
 }
 
-static uint64_t speech_beat_ns(bool* known) {
+// The beat, and whether it's the pedals': theirs if a pedal hit has come
+// within the last beat and a half, else the default tempo's.
+static uint64_t speech_beat_now(bool* pedals) {
   LOCK();
-  uint64_t beat = current_beat_ns;
+  uint64_t beat = current_beat_ns, last = last_downbeat_ns;
   UNLOCK();
-  if (known) *known = beat != 0;
-  return beat ? beat : 60 * NS_PER_SEC / SPEECH_DEFAULT_BPM;
+  bool going = beat > 0 && last > 0 && now() - last < beat * 3 / 2;
+  if (pedals) *pedals = going;
+  return going ? beat : 60 * NS_PER_SEC / SPEECH_DEFAULT_BPM;
 }
 
-// The beat a change is for: two pedal beats after the one nearest the end of
-// the talking, on the grid the last pedal hit and the tempo make.  Without a
-// grid, two default beats after the talking stopped.  *feet_going if pedal
-// hits are still coming, so there'll be a real beat to make it in.
-static uint64_t speech_due_beat(bool* feet_going) {
-  bool known;
-  uint64_t beat = speech_beat_ns(&known);
-  LOCK();
-  uint64_t last = last_downbeat_ns;
-  UNLOCK();
-  bool grid = known && last > 0;
-  *feet_going = grid && now() - last < beat * 3 / 2;
-  if (!grid) return speech_last_loud_ns + SPEECH_BEATS_AFTER * beat;
-  int64_t from_last = (int64_t)speech_last_loud_ns - (int64_t)last;
-  int64_t k = (int64_t)floor(
-    ((double)from_last + SPEECH_EARLY_FRACTION * (double)beat) /
-    (double)beat);
-  return (uint64_t)((int64_t)last + (k + SPEECH_BEATS_AFTER) * (int64_t)beat);
-}
+// When the talking last stopped (speech_drain), for the log.
+static uint64_t speech_last_loud_ns;
 
-// Milliseconds since the talking stopped, for the timing in the log.
+// Milliseconds since, for the log.
 static long speech_ms_since_stop(void) {
   return (long)(((int64_t)now() - (int64_t)speech_last_loud_ns) / 1000000);
 }
 
-// Ask to be woken at `when`, if that's sooner than the next tick would.
-static void speech_wake_at(uint64_t when, void (*fn)(void)) {
+// Make the landing at `i`, and forget it.  Caller holds the lock.
+static void speech_land_apply_locked(int i, const char* how) {
+  SpeechLanding w = speech_waiting[i];
+  speech_n_waiting--;
+  memmove(&speech_waiting[i], &speech_waiting[i + 1],
+          sizeof(SpeechLanding) * (size_t)(speech_n_waiting - i));
   uint64_t t = now();
-  if (when <= t || when - t >= (SPEECH_TICK_MS + 10) * 1000000ULL ||
-      speech_scheduled_for == when) {
-    return;
-  }
-  speech_scheduled_for = when;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(when - t)),
-                 speech_queue, ^{ fn(); });
+  printf("timing: %d landed %s, %+ldms from its time, %ldms after the "
+         "onset\n", w.number, how,
+         (long)(((int64_t)t - (int64_t)w.due) / 1000000),
+         (long)((t - w.onset_ns) / 1000000));
+  SwAction action = {SW_NUMBER, w.number};
+  speech_apply_locked(&action);
 }
 
-// A fast number whose time has come, if no beat has made it already.
-static void speech_run_fast(void) {
-  LOCK();
-  if (speech_fast_armed && now() >= speech_fast_due) {
-    printf("timing: fast number made at its time, %ldms late\n",
-           (long)(((int64_t)now() - (int64_t)speech_fast_due) / 1000000));
-    SwAction action = {SW_NUMBER, speech_fast_armed};
-    speech_apply_locked(&action);
-    speech_fast_armed = 0;
-  }
-  UNLOCK();
-}
-
-static void speech_run_pending(void) {
-  speech_run_fast();
-
-  // An armed change whose beat never came.
-  LOCK();
-  if (speech_n_armed && now() >= speech_armed_deadline) {
-    printf("timing: the feet stopped before its beat; made anyway\n");
-    for (int i = 0; i < speech_n_armed; i++) {
-      speech_apply_locked(&speech_armed[i]);
-    }
-    speech_n_armed = 0;
-  }
-  UNLOCK();
-
-  if (speech_n_pending == 0) return;
-
-  // No beat to land on: now -- or, with voice-led drones to glide, as soon as
-  // they've glided there, half a beat from now.
-  bool feet;
-  speech_due_beat(&feet);
-  if (!feet) {
-    LOCK();
-    bool glide = voice_lead_on;
-    if (glide && !speech_glide_due) {
-      speech_glide_due = now() + lead_beat_ns(now()) / 2;
-      for (int i = 0; i < speech_n_pending; i++) {
-        if (speech_pending[i].kind == SW_NUMBER) {
-          nashville_leads(speech_pending[i].value, speech_glide_due);
-        }
-      }
-    }
-    UNLOCK();
-    if (glide && now() < speech_glide_due) {
-      speech_wake_at(speech_glide_due, speech_run_pending);
-      return;
-    }
-    speech_glide_due = 0;
-    printf("timing: no beat; made %ldms after you stopped\n",
-           speech_ms_since_stop());
-    LOCK();
-    for (int i = 0; i < speech_n_pending; i++) {
-      speech_apply_locked(&speech_pending[i]);
-    }
-    UNLOCK();
-    speech_n_pending = 0;
-    speech_moved_due = 0;
-    return;
-  }
-
-  if (speech_gate_open) return;  // still talking
-  bool known;
-  uint64_t beat = speech_beat_ns(&known);
-  bool on_grid;
-  uint64_t due = speech_moved_due ? speech_moved_due
-                                  : speech_due_beat(&on_grid);
-  if (speech_moved_due) speech_due_beat(&on_grid);  // just for on_grid
-
-  // Heard too late for its beat: the next beat instead, so that a late change
-  // is a beat late but still on a beat rather than somewhere between two.
-  // With feet, the beat has gone if a pedal hit has come near it; without,
-  // if its moment has passed.
-  LOCK();
-  uint64_t last_hit = last_downbeat_ns;
-  UNLOCK();
-  bool missed = on_grid ? last_hit + beat / 2 >= due
-                        : now() + 1000000 > due;
-  if (missed) {
-    uint64_t moved = due;
-    if (on_grid) {
-      moved = last_hit + beat;
+// The next beat's notes are about to play: make whatever's within reach
+// first.  Called by arpeggiate with the lock held.
+static void speech_before_beat(void) {
+  uint64_t t = now();
+  for (int i = 0; i < speech_n_waiting;) {
+    if (t >= speech_waiting[i].earliest) {
+      speech_land_apply_locked(i, "on the beat");
     } else {
-      while (moved <= now() + 1000000) moved += beat;
-    }
-    printf("timing: heard %ldms after its beat; moved to the next one\n",
-           (long)(((int64_t)now() - (int64_t)due) / 1000000));
-    speech_moved_due = due = moved;
-  }
-
-  // With a beat coming to land on, hand over to it from half a beat before;
-  // without one, a millisecond before the moment itself.
-  uint64_t hand_over = on_grid ? due - beat / 2 : due - 1000000;
-  if (now() < hand_over) {
-    speech_wake_at(hand_over, speech_run_pending);
-    return;
-  }
-
-  LOCK();
-  if (on_grid) {
-    for (int i = 0; i < speech_n_pending && speech_n_armed < SPEECH_MAX_PENDING;
-         i++) {
-      speech_armed[speech_n_armed++] = speech_pending[i];
-      // Its beat may have moved since it was heard: glide in to this one.
-      if (speech_pending[i].kind == SW_NUMBER) {
-        nashville_leads(speech_pending[i].value, due);
-      }
-    }
-    speech_armed_due = due;
-    speech_armed_deadline = due + beat / 2;
-  } else {
-    printf("timing: no feet; made on a timer, %ldms from the beat\n",
-           (long)(((int64_t)now() - (int64_t)due) / 1000000));
-    for (int i = 0; i < speech_n_pending; i++) {
-      speech_apply_locked(&speech_pending[i]);
+      i++;
     }
   }
-  UNLOCK();
-  speech_n_pending = 0;
-  speech_moved_due = 0;
 }
 
-static bool speech_fast_claims(const SwAction* action);
+// Whatever's time has come, with no beat having made it.  Speech queue: on
+// a timer set for each landing, and every tick.
+static void speech_land_due(void) {
+  LOCK();
+  uint64_t t = now();
+  for (int i = 0; i < speech_n_waiting;) {
+    if (t >= speech_waiting[i].due) {
+      speech_land_apply_locked(i, "on its timer");
+    } else {
+      i++;
+    }
+  }
+  UNLOCK();
+}
 
-// Heard: a number, to happen on the beat two beats after the talking stops;
-// anything else, now.
-static void speech_queue_action(const SwAction* action) {
-  if (speech_fast_claims(action)) return;
-  // Numbers only with F3, everything else only with F8.
+// A number heard, said from `onset_ns`: set it to land, and the voice-led
+// drones gliding there.  True if it's a new word rather than the other
+// recognizer's again; the fast recognizer's word wins a disagreement.
+static bool speech_land(int number, uint64_t onset_ns, bool fast,
+                        const char* heard_by) {
+  uint64_t t = now();
+  bool pedals;
+  uint64_t beat = speech_beat_now(&pedals);
+  SpeechLandingTime when = speech_landing_time(onset_ns, beat, pedals, t);
+  bool is_new = true;
   LOCK();
-  bool wanted = action->kind == SW_NUMBER ? speech_chooses_notes
-                                          : speech_commands_on;
-  UNLOCK();
-  if (!wanted) return;
-  if (action->kind != SW_NUMBER) {
-    LOCK();
-    speech_apply_locked(action);
-    UNLOCK();
-    printf("timing: made %ldms after you stopped\n", speech_ms_since_stop());
-    fflush(stdout);
-    return;
+  for (int i = 0; i < speech_n_waiting; i++) {
+    SpeechLanding* w = &speech_waiting[i];
+    uint64_t gap = w->onset_ns > onset_ns ? w->onset_ns - onset_ns
+                                          : onset_ns - w->onset_ns;
+    if (gap >= SPEECH_SAME_WORD_S * NS_PER_SEC) continue;
+    is_new = false;
+    if (w->number == number || w->fast) {
+      UNLOCK();
+      printf("%s heard %d too; %s\n", heard_by, number,
+             w->number == number ? "already waiting"
+                                 : "the fast recognizer's word stands");
+      fflush(stdout);
+      return false;
+    }
+    // Apple's word, waiting, and the fast recognizer disagrees: its word,
+    // at the time already set.
+    w->number = number;
+    w->fast = true;
+    when.due = w->due;
+    when.earliest = w->earliest;
+    break;
   }
-  if (speech_n_pending < SPEECH_MAX_PENDING) {
-    speech_pending[speech_n_pending++] = *action;
+  if (is_new) {
+    if (speech_n_waiting == SPEECH_MAX_WAITING) {
+      speech_land_apply_locked(0, "to make room");
+    }
+    speech_waiting[speech_n_waiting++] =
+      (SpeechLanding){number, onset_ns, when.due, when.earliest, fast};
   }
-  char text[64];
-  bool known;
-  uint64_t beat = speech_beat_ns(&known);
-  bool feet;
-  uint64_t due = speech_due_beat(&feet);
-  LOCK();
-  // The voice-led drones glide in over the half beat before it.  With no feet
-  // speech_run_pending glides them now, and makes it when they get there.
-  if (feet) nashville_leads(action->value, due);
-  speech_describe_locked(action, text, sizeof(text));
-  snprintf(speech_last_action, sizeof(speech_last_action), "%s …", text);
+  nashville_leads(number, when.due);
+  snprintf(speech_last_action, sizeof(speech_last_action), "%d …", number);
   UNLOCK();
-  printf("timing: recognized %s %ldms after you stopped; beat %ldms "
-         "(%.0f bpm%s), due on the beat at %ldms%s%s\n", text,
-         speech_ms_since_stop(), (long)(beat / 1000000),
-         60.0 * NS_PER_SEC / beat, known ? "" : ", default",
-         (long)(((int64_t)due - (int64_t)speech_last_loud_ns) / 1000000),
-         feet ? "" : ", no feet", speech_gate_open ? "; still talking" : "");
-  // Whether one beat would have been enough: recognized before the beat after
-  // the one the call ended on.
-  int64_t one_beat = (int64_t)due - (SPEECH_BEATS_AFTER - 1) * (int64_t)beat;
-  printf("timing: %ldms after the beat you ended on; one beat would have "
-         "%s\n",
-         (long)(((int64_t)now() - (one_beat - (int64_t)beat)) / 1000000),
-         (int64_t)now() < one_beat ? "made it" : "been too late");
+  printf("timing: %s %d, %ldms after the onset; lands %d beats after it, "
+         "%+ldms from now (%.0f bpm%s)\n", heard_by, number,
+         (long)((t - onset_ns) / 1000000), when.beats,
+         (long)(((int64_t)when.due - (int64_t)t) / 1000000),
+         60.0 * NS_PER_SEC / beat, pedals ? ", the pedals'" : "");
   fflush(stdout);
-  speech_run_pending();  // in case it's already due
+  if (when.due > t) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(when.due - t)),
+                   speech_queue, ^{ speech_land_due(); });
+  } else {
+    speech_land_due();
+  }
+  return is_new;
 }
 
 // ---------------------------------------------------------------------------
@@ -542,17 +433,12 @@ static void speech_queue_action(const SwAction* action) {
 // ending, having learned your voice from numtrain.h's recordings.  It's fed
 // the same microphone as Apple's recognizer, before the gate -- it has its
 // own, set from the same menu -- and only while number recognition (F3) is
-// on.
-//
-// What it hears goes in a beat after you started saying it -- you start on
-// the beat, so that's the next one -- or the moment it's heard, if that's
-// later.  The beat is the feet's while they're going, and otherwise
-// SPEECH_DEFAULT_BPM's rather than whatever they last went at.  With the feet
-// going, a pedal beat up to a quarter of a beat ahead of that time makes it,
-// inside the beat before its notes, so a kick a hair early still plays the new
-// chord rather than the old one.  Apple's recognizer hears the same word a while later: a number from
-// it within SPEECH_FAST_CLAIM_S of one the fast path took is that word again,
-// and is dropped.  A number the fast path wasn't sure of it leaves to Apple.
+// on.  What it hears lands as above, from the onset its detector found.
+// Apple's recognizer hears the same word a while later: a number from it
+// within SPEECH_FAST_CLAIM_S of one the fast path took is that word again,
+// and is dropped.  A number the fast path wasn't sure of it leaves to Apple,
+// whose word lands from the same onset -- the utterances the detector found
+// are kept for that (speech_utterances), whether or not it took them.
 // ---------------------------------------------------------------------------
 
 #define SPEECH_FAST_CLAIM_S 3
@@ -576,6 +462,50 @@ static char speech_fast_state[64] = "fast: learning";
 static int speech_fast_unclaimed;   // fast numbers Apple hasn't reported yet
 static uint64_t speech_fast_at;
 
+// The last few utterances the detector found, on the microphone's timeline,
+// for putting Apple's words on their onsets.  Speech queue.
+typedef struct { long long onset, end; } SpeechUtterance;
+#define SPEECH_UTTERANCES 8
+static SpeechUtterance speech_utterances[SPEECH_UTTERANCES];
+static int speech_n_utterances;  // all told; a ring
+
+static void speech_note_utterance(long long onset, long long end) {
+  int n = speech_n_utterances < SPEECH_UTTERANCES ? speech_n_utterances
+                                                  : SPEECH_UTTERANCES;
+  for (int k = 0; k < n; k++) {
+    if (speech_utterances[k].onset == onset) {  // again, now it's over
+      speech_utterances[k].end = end;
+      return;
+    }
+  }
+  speech_utterances[speech_n_utterances++ % SPEECH_UTTERANCES] =
+    (SpeechUtterance){onset, end};
+}
+
+// Where the word Apple wrote as word `index` of its transcript was said: the
+// onset of the utterance found there, or -1 if none fits.  By Apple's
+// timestamps for the word when it gives them; else by when it arrived, as
+// the latest utterance.  The one still going counts too, since Apple can be
+// quicker than the detector's end of it.
+static long long speech_onset_for_word(int index) {
+  long long from = speech_word_from[index], to = speech_word_to[index];
+  long long slack = (long long)(SPEECH_WORD_SLACK_S * speech_format.sampleRate);
+  long long best = -1;
+  int n = speech_n_utterances < SPEECH_UTTERANCES ? speech_n_utterances
+                                                  : SPEECH_UTTERANCES;
+  for (int k = 0; k < n; k++) {
+    const SpeechUtterance* u = &speech_utterances[k];
+    bool fits = to < 0 || (from <= u->end + slack && to >= u->onset - slack);
+    if (fits && u->onset > best) best = u->onset;
+  }
+  const NrStream* s = speech_fast_stream;
+  if (s->active) {
+    long long onset = s->onset * s->f.hop + speech_fast_offset;
+    if ((to < 0 || to >= onset - slack) && onset > best) best = onset;
+  }
+  return best;
+}
+
 // A number from Apple's recognizer that the fast path already took.  Before
 // F3 is asked, so a number the fast path took just before F3 went off still
 // isn't done twice.
@@ -592,53 +522,52 @@ static bool speech_fast_claims(const SwAction* action) {
   return true;
 }
 
-// `quiet_ms` since the word ended, `said_ms` since it began.
-static bool speech_fast_take(int number, int quiet_ms, int said_ms) {
+// Heard: a number lands from its onset; anything else is done now.  `word`
+// is which word of Apple's transcript it was, for its onset.
+static void speech_queue_action(const SwAction* action, int word) {
+  if (speech_fast_claims(action)) return;
+  // Numbers only with F3, everything else only with F8.
+  LOCK();
+  bool wanted = action->kind == SW_NUMBER ? speech_chooses_notes
+                                          : speech_commands_on;
+  UNLOCK();
+  if (!wanted) return;
+  if (action->kind != SW_NUMBER) {
+    LOCK();
+    speech_apply_locked(action);
+    UNLOCK();
+    printf("timing: made %ldms after you stopped\n", speech_ms_since_stop());
+    fflush(stdout);
+    return;
+  }
+  long long onset = speech_onset_for_word(word);
+  if (onset < 0) {
+    printf("timing: apple heard %d, but nothing was found said; counting "
+           "from now\n", action->value);
+  }
+  speech_land(action->value, onset >= 0 ? speech_sample_ns(onset) : now(),
+              false, "apple heard");
+}
+
+// The fast recognizer took `number`, said from `onset_sample` on the
+// microphone's timeline; `said_ms` since the word began and `quiet_ms` since
+// it ended, for the log.  False if F3 has just gone off.
+static bool speech_fast_take(int number, long long onset_sample, int said_ms,
+                             int quiet_ms) {
   LOCK();
   bool numbers = speech_chooses_notes;
-  UNLOCK();
-  if (!numbers) return false;  // F3 just went off
-  speech_fast_unclaimed++;
-  uint64_t t = now();
-  speech_fast_at = t;
-  bool feet;
-  speech_due_beat(&feet);
-  uint64_t beat = feet ? speech_beat_ns(NULL)
-                       : 60 * NS_PER_SEC / SPEECH_DEFAULT_BPM;
-  uint64_t due = t - (uint64_t)said_ms * 1000000 + beat;
-  bool made = t >= due;
-  SwAction action = {SW_NUMBER, number};
-  LOCK();
-  // Its time already gone, with no feet, and voice-led drones to glide: the
-  // chord waits for the glide, half a beat, rather than landing before it.
-  if (made && !feet && voice_lead_on) {
-    due = t + beat / 2;
-    made = false;
-  }
-  snprintf(speech_heard_text, sizeof(speech_heard_text), "%d (fast)",
-           number);
-  if (made) {
-    speech_fast_armed = 0;  // this one's newer than any still waiting
-    speech_apply_locked(&action);
-  } else {
-    speech_fast_armed = number;
-    speech_fast_due = due;
-    nashville_leads(number, due);  // glide in, arriving on its beat
-    speech_fast_earliest = feet ? due - beat / 4 : due;
-    snprintf(speech_last_action, sizeof(speech_last_action), "%d …",
+  if (numbers) {
+    snprintf(speech_heard_text, sizeof(speech_heard_text), "%d (fast)",
              number);
   }
   UNLOCK();
-  if (!made) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(due - t)),
-                   speech_queue, ^{ speech_run_fast(); });
-  }
+  if (!numbers) return false;
   printf("fast: heard %d, %dms after the word began and %dms after it "
-         "ended; %s %ldms from now (%.0f bpm%s)\n", number, said_ms,
-         quiet_ms, made ? "a beat had gone by, made now," : "due",
-         (long)(((int64_t)due - (int64_t)t) / 1000000),
-         60.0 * NS_PER_SEC / beat, feet ? "" : ", no feet");
-  fflush(stdout);
+         "ended\n", number, said_ms, quiet_ms);
+  if (speech_land(number, speech_sample_ns(onset_sample), true, "fast heard")) {
+    speech_fast_unclaimed++;
+    speech_fast_at = now();
+  }
   return true;
 }
 
@@ -646,7 +575,13 @@ static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
                                   long long end, bool clear, int quiet,
                                   bool final) {
   (void)ctx;
-  if (!speech_fast_model || !clear) return true;
+  long long hop = s->f.hop;
+  long long onset_sample = onset * hop + speech_fast_offset;
+  long long end_sample = (end + 1) * hop + speech_fast_offset;
+  // Kept whether or not it's taken, or even matched: Apple may hear a
+  // number in it, and that lands from this onset.
+  if (final) speech_note_utterance(onset_sample, end_sample);
+  if (!speech_fast_model || !clear) return final;
   // Asked again every 10ms until its word's wait is up, but while it's quiet
   // the utterance doesn't change, so neither does what it's nearest: match it
   // once, and after that it's only the wait.  Different if the talking
@@ -665,11 +600,12 @@ static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
     matched_generation = speech_fast_generation;
   }
   if (r.label >= 0 && quiet >= speech_fast_model->wait[r.label]) {
+    speech_note_utterance(onset_sample, end_sample);
     // A tick's worth on top: that's how long the audio waited in the ring.
     // Frames are 10ms, and the one just finished is the quiet's last.
     int quiet_ms = quiet * 10 + SPEECH_TICK_MS;
     int said_ms = (int)(end - onset + 1) * 10 + quiet_ms;
-    if (speech_fast_take(r.label + 1, quiet_ms, said_ms)) {
+    if (speech_fast_take(r.label + 1, onset_sample, said_ms, quiet_ms)) {
       nh_fast_judged(s, onset, end, r.label + 1, &r);
     }
     return true;
@@ -811,7 +747,7 @@ static void speech_read(bool settled) {
       nh_apple_word(speech_consumed - 1, words[speech_consumed - 1],
                     action.value);
     }
-    speech_queue_action(&action);
+    speech_queue_action(&action, speech_consumed - 1);
   }
 
   // Everything heard has been dealt with: start listening afresh, so the next
@@ -975,7 +911,9 @@ static void speech_drain(void) {
   LOCK();
   bool numbers = speech_chooses_notes;
   UNLOCK();
-  if (numbers && speech_fast_model) {
+  // With or without a model, for the utterances it finds: Apple's numbers
+  // land from their onsets.
+  if (numbers) {
     speech_fast_offset = speech_mic_samples - speech_fast_pushed;
     nr_stream_push(speech_fast_stream, in, (int)available);
     speech_fast_pushed += available;
@@ -1010,13 +948,14 @@ static void speech_drain(void) {
 }
 
 static void speech_tick(void) {
-  speech_run_pending();
+  speech_land_due();
 
   LOCK();
   bool wanted = (speech_chooses_notes || speech_commands_on) &&
                 whistle_available;
   bool numbers = speech_chooses_notes, commands = speech_commands_on;
   bool switched_on = numbers || commands;
+  if (!numbers) speech_n_waiting = 0;  // F3 off: nothing's to land
   UNLOCK();
 
   // Asked at launch, so the prompt doesn't interrupt the first time F3 or F8
@@ -1110,9 +1049,88 @@ static NSString* speech_model_path(void) {
   return nil;
 }
 
-// Compile the dictionary, in the background, into the caches directory under
-// a name that changes when the training data does.  Once it's ready the
-// running task is ended, so the next one starts with it.
+// Compiling the dictionary: who does it, and where it goes.
+//
+// macOS compiles the training data (speech-model.bin) into a language model
+// on the Mac that uses it, the first time and whenever it changes -- a
+// directory named by a hash of the data, with the compiled model in it.
+// As of macOS 27.2 the speech service will only do that for a process in
+// the App Sandbox ("Caller lacks write access to outDirectory", in its log,
+// for any directory at all), and jammer isn't one: it reads the soundfont
+// from wherever it is, shares memory with VSL Mixer, and so on.  So the
+// compiling is done by speechcompile, a small sandboxed helper beside the
+// executable (speechcompile.swift).  A sandboxed process can only read and
+// write its own container, so jammer puts the training data there, under
+// the helper's Library/Caches, and reads the model back from beside it;
+// nothing stops jammer reading a container.  Without the helper -- a build
+// without it -- it's compiled in-process, into jammer's own caches, which
+// is all it took before 27.2.
+
+// The helper beside the executable, or nil.
+static NSString* speech_helper_path(void) {
+  NSString* dir =
+    NSBundle.mainBundle.executablePath.stringByDeletingLastPathComponent;
+  NSString* path = [dir stringByAppendingPathComponent:@"speechcompile"];
+  return [NSFileManager.defaultManager isExecutableFileAtPath:path] ? path
+                                                                    : nil;
+}
+
+// Run the helper with these arguments, and give back what it printed,
+// trimmed, or nil with *why set if it failed.  Waits for it: not for the
+// speech queue.
+static NSString* speech_run_helper(NSString* helper, NSArray<NSString*>* args,
+                                   NSString** why) {
+  NSTask* task = [NSTask new];
+  task.executableURL = [NSURL fileURLWithPath:helper];
+  task.arguments = args;
+  NSPipe* pipe = [NSPipe pipe];
+  task.standardOutput = pipe;
+  task.standardError = pipe;
+  NSError* error = nil;
+  if (![task launchAndReturnError:&error]) {
+    if (why) *why = error.localizedDescription ?: @"couldn't run speechcompile";
+    return nil;
+  }
+  NSData* data = [pipe.fileHandleForReading readDataToEndOfFile];
+  [task waitUntilExit];
+  NSString* text = [[[NSString alloc] initWithData:data
+                                          encoding:NSUTF8StringEncoding]
+    stringByTrimmingCharactersInSet:
+      NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
+  if (task.terminationStatus != 0) {
+    if (why) *why = text.length ? text : @"speechcompile failed";
+    return nil;
+  }
+  return text;
+}
+
+// Whether a compiled model is at `dir`.
+static bool speech_dictionary_at(NSURL* dir) {
+  NSFileManager* files = NSFileManager.defaultManager;
+  return [files fileExistsAtPath:[dir URLByAppendingPathComponent:@"lm"].path] &&
+    [files fileExistsAtPath:[dir URLByAppendingPathComponent:@"vocab"].path];
+}
+
+// The compiled model at `dir` is the dictionary from now on.  Speech queue.
+static void speech_dictionary_ready(NSURL* dir) API_AVAILABLE(macos(14)) {
+  speech_dictionary = [[SFSpeechLanguageModelConfiguration alloc]
+    initWithLanguageModel:[dir URLByAppendingPathComponent:@"lm"]
+               vocabulary:[dir URLByAppendingPathComponent:@"vocab"]];
+  snprintf(speech_dictionary_state, sizeof(speech_dictionary_state),
+           "with dictionary");
+  if (speech_task) speech_end_task();  // restart with it
+  printf("speech: %s, from %s\n", speech_dictionary_state, dir.path.UTF8String);
+  fflush(stdout);
+}
+
+static void speech_dictionary_failed(const char* why) {
+  snprintf(speech_dictionary_state, sizeof(speech_dictionary_state),
+           "no dictionary: %s", why);
+  printf("speech: %s\n", speech_dictionary_state);
+  fflush(stdout);
+}
+
+// Compile the dictionary, in the background, and use it once it's ready.
 static void speech_prepare_dictionary(void) {
   if (@available(macOS 14, *)) {
     NSString* path = speech_model_path();
@@ -1127,12 +1145,52 @@ static void speech_prepare_dictionary(void) {
     for (NSUInteger i = 0; i < training.length; i++) {
       hash = (hash ^ bytes[i]) * 1099511628211ULL;
     }
+    NSString* name = [NSString stringWithFormat:
+      @"com.jefftk.jammer/speech-%016llx", (unsigned long long)hash];
+    snprintf(speech_dictionary_state, sizeof(speech_dictionary_state),
+             "loading dictionary");
+
+    NSString* helper = speech_helper_path();
+    if (helper) {
+      dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSString* why = nil;
+        NSString* home = speech_run_helper(helper, @[@"--home"], &why);
+        NSURL* dir = nil;
+        bool ok = false;
+        if (home) {
+          dir = [NSURL fileURLWithPath:[[home
+            stringByAppendingPathComponent:@"Library/Caches"]
+            stringByAppendingPathComponent:name]];
+          ok = speech_dictionary_at(dir);
+          if (!ok) {
+            [NSFileManager.defaultManager createDirectoryAtURL:dir
+                                   withIntermediateDirectories:YES
+                                                    attributes:nil
+                                                         error:nil];
+            [training writeToURL:[dir URLByAppendingPathComponent:@"model.bin"]
+                      atomically:YES];
+            ok = speech_run_helper(helper, @[dir.path], &why) != nil &&
+                 speech_dictionary_at(dir);
+            if (!ok && !why) why = @"speechcompile left no model";
+          }
+        }
+        dispatch_async(speech_queue, ^{
+          if (ok) speech_dictionary_ready(dir);
+          else speech_dictionary_failed(why.UTF8String ?: "?");
+        });
+      });
+      return;
+    }
+
+    // No helper: in-process, which works before macOS 27.2.
     NSURL* caches = [[NSFileManager.defaultManager
       URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask]
       firstObject];
-    NSURL* dir = [caches URLByAppendingPathComponent:
-      [NSString stringWithFormat:@"com.jefftk.jammer/speech-%016llx",
-                                 (unsigned long long)hash]];
+    NSURL* dir = [caches URLByAppendingPathComponent:name];
+    if (speech_dictionary_at(dir)) {
+      speech_dictionary_ready(dir);
+      return;
+    }
     [NSFileManager.defaultManager createDirectoryAtURL:dir
                            withIntermediateDirectories:YES
                                             attributes:nil
@@ -1141,25 +1199,17 @@ static void speech_prepare_dictionary(void) {
       [[SFSpeechLanguageModelConfiguration alloc]
         initWithLanguageModel:[dir URLByAppendingPathComponent:@"lm"]
                    vocabulary:[dir URLByAppendingPathComponent:@"vocab"]];
-    snprintf(speech_dictionary_state, sizeof(speech_dictionary_state),
-             "loading dictionary");
     [SFSpeechLanguageModel
       prepareCustomLanguageModelForUrl:[NSURL fileURLWithPath:path]
                          configuration:config
                             completion:^(NSError* error) {
       dispatch_async(speech_queue, ^{
         if (error) {
-          snprintf(speech_dictionary_state, sizeof(speech_dictionary_state),
-                   "no dictionary: %s",
-                   error.localizedDescription.UTF8String ?: "?");
+          speech_dictionary_failed(error.localizedDescription.UTF8String
+                                   ?: "?");
         } else {
-          speech_dictionary = config;
-          snprintf(speech_dictionary_state, sizeof(speech_dictionary_state),
-                   "with dictionary");
-          if (speech_task) speech_end_task();  // restart with it
+          speech_dictionary_ready(dir);
         }
-        printf("speech: %s\n", speech_dictionary_state);
-        fflush(stdout);
       });
     }];
   } else {

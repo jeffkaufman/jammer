@@ -25,7 +25,7 @@ SOUNDFONT_POOL := http://deb.debian.org/debian/pool/main/f/fluid-soundfont/
 MAC_SRCS := jammer-mac.m macapi.h keylayout.h keypad.h fkeys.h render.h \
             jammermidilib.h voices.h common.h whistle.h whistleinput.h talkbox.h talkboxmatch.h vsllink.h \
             breathmic.h voicefx.h mandolin.h \
-            speech.h speechwords.h speechgate.h numrec.h numtrain.h numheard.h \
+            speech.h speechwords.h speechgate.h speechtiming.h numrec.h numtrain.h numheard.h \
             Info.plist
 
 # The speech recognizer's dictionary; how it's built is below.  Named here,
@@ -59,22 +59,27 @@ $(SOUNDFONT):
 soundfont: $(SOUNDFONT)
 
 # Run straight out of the source directory.
-run-mac: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
+run-mac: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL) speechcompile
 	./jammer-mac
 
 # Jammer.app is self-contained: it carries the soundfont and its own copies of
 # libfluidsynth and everything that links against, so it runs on a Mac with no
 # homebrew installed.
 APP := Jammer.app
-app: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL)
+app: jammer-mac $(SOUNDFONT) $(SPEECH_MODEL) speechcompile
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources \
 	         $(APP)/Contents/Frameworks
 	cp jammer-mac $(APP)/Contents/MacOS/jammer
+	cp speechcompile $(APP)/Contents/MacOS/
 	cp $(SOUNDFONT) $(SPEECH_MODEL) $(APP)/Contents/Resources/
 	cp Info.plist $(APP)/Contents/
 	./vendor-dylibs.sh $(APP)
-	codesign --force --deep --sign - $(APP)
+	for lib in $(APP)/Contents/Frameworks/*; do \
+	  codesign --force --sign - $$lib; done
+	codesign --force --sign - --entitlements speechcompile.entitlements \
+	  $(APP)/Contents/MacOS/speechcompile
+	codesign --force --sign - $(APP)
 	@echo "built $(APP)"
 
 # Jammer.zip, for handing out: Jammer.app signed with a Developer ID,
@@ -84,7 +89,7 @@ dist: app jammer.entitlements dist.sh
 
 clean-mac:
 	rm -rf jammer-mac $(APP) audition pads speechphrases speechmodel \
-	  $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval \
+	  speechcompile $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval \
 	  breathmic-eval voicefx-levels mandolin-levels
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
@@ -108,6 +113,17 @@ speechphrases: speechphrases.c $(MAC_SRCS) $(WHISTLE_OBJS)
 
 speechmodel: speechmodel.swift
 	swiftc -O speechmodel.swift -o speechmodel
+
+# And what compiles it on the Mac that runs jammer, from inside the App
+# Sandbox, which macOS 27.2 insists on: its Info.plist linked in, for the
+# bundle identifier its container is named after, and signed with the
+# sandbox entitlement.  See speechcompile.swift.
+speechcompile: speechcompile.swift speechcompile.plist speechcompile.entitlements
+	swiftc -O speechcompile.swift -o speechcompile \
+	  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist \
+	  -Xlinker speechcompile.plist
+	codesign --force --sign - --entitlements speechcompile.entitlements \
+	  speechcompile
 
 $(SPEECH_MODEL): speechphrases speechmodel
 	./speechphrases | ./speechmodel $(SPEECH_MODEL)

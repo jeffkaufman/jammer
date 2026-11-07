@@ -297,9 +297,14 @@ educator".  `speechphrases` prints the phrases from the jammer's own tables,
 so renaming a button renames it for the recognizer too; `speechmodel.swift`
 (Swift, since that's the only way Apple offers) turns them into training data,
 `speech-model.bin`, with pronunciations for the unusual words from
-`SW_PRONUNCIATIONS` in `speechwords.h`; and the app compiles it into a custom
-language model at startup, cached under `~/Library/Caches/com.jefftk.jammer`.
-`make run-mac` and `make app` build it.  The same phrases go to the
+`SW_PRONUNCIATIONS` in `speechwords.h`; and at startup it's compiled into a
+custom language model on the Mac that runs it, once per version of the
+data.  Since macOS 27.2 the speech service will only do that for a
+process in the App Sandbox, which jammer isn't, so the compiling is done by
+`speechcompile`, a small sandboxed helper beside the executable
+(`speechcompile.swift`): the training data goes into its container,
+`~/Library/Containers/com.jefftk.jammer.speechcompile`, and the compiled
+model is read back from there.  `make run-mac` and `make app` build both.  The same phrases go to the
 recognizer as hint words too.  On top of that, once "press" or "change key to"
 has been said, sound-alikes count -- "base" for "bass", "for" for 4 -- though
 never for a bare number.  The speech row shows the words it's hearing, and flags
@@ -309,28 +314,34 @@ Speaking is played, not just said.  Only what's loud enough to be said right
 into the microphone reaches the recognizer -- the gate, set from the Speech
 Recognition menu and shown as a white tick on the speech row's meter, which
 brightens while it's open.  It starts strict, at -20dBFS peak, so a caller
-across the room doesn't count.  And a number takes effect on the beat
-two beats after you stop talking: say "four" ending on the one and the IV
-comes in on the three, however long the recognizer took.  On the beat itself
--- each pedal hit is a beat, and the change is made inside the nearest one,
-just before its notes, since arriving a few milliseconds after it would only
-be heard on the next note.  Heard too late for its beat -- recognition
-sometimes takes longer than two beats -- it goes on the next beat instead: a
-beat late, but still on a beat.  With the pedals stopped there's no beat to
-land on, so it's made the moment it's heard.  Talk
-again before then and it waits for you to finish.  The speech row shows a
-change that's waiting with "…", and jammer's output logs the timing of each.
+across the room doesn't count.  And a number lands two beats after you
+*start* saying it, whichever recognizer heard it: call "four" on the one and
+the IV comes in on the three, however long the word took or the recognizer
+did.  Two beats rather than one because a number and the moment it takes to
+be sure of it run from about 450ms to a second, which at dance tempos is
+more than a beat as often as not, and a chord that came a beat after some
+words and the moment it was heard after others wasn't on anything.  If even
+two beats have gone -- a long word at a fast tempo, or Apple taking its time
+-- it's the next whole beat after the onset, never the moment it's heard.
+The beat is the pedals' while they're going, and 116 BPM's from the onset
+otherwise.  On the beat itself: each pedal hit is a beat, and once the
+landing is within a quarter beat the next pedal makes the change inside the
+beat, just before its notes, since arriving a few milliseconds after it would
+only be heard on the next note; a pedal that hasn't come by the landing's
+time finds the change already made.  So the chord is heard on the first
+pedal at least a beat and three quarters after you started the word.  The
+speech row shows a change that's waiting with "…", and jammer's output logs
+the timing of each: when the word was heard and landed, against its onset.
 
 Numbers also have a faster way in than Apple's recognizer: `numrec.h`, which
-knows only one to seven, in your voice, and hears them 40-120ms after the
+knows only one to seven, in your voice, and hears them 40-170ms after the
 word ends -- as soon as it can be sure the word is over, which for "six",
-with its "k", is longer than for "two".  What it hears goes in a beat after
-you started saying it -- start on the beat and that's the next one -- or the
-moment it's heard, if that's later.  The beat is the pedals' while they're
-going, and 116 BPM's otherwise.  Apple's recognizer hearing the same number
-a moment later is ignored.  Anything it isn't sure of it leaves to
-Apple.  It only takes a whole word that follows a moment of quiet, so "press
-room two" doesn't count.
+with its "k", is longer than for "two".  What it hears lands as above, two
+beats after the onset its detector found.  Apple's recognizer hearing the
+same number a moment later is ignored.  Anything it isn't sure of it leaves
+to Apple, whose word lands from the same onset: the detector's utterances
+are kept for that, taken or not.  It only takes a whole word that follows a
+moment of quiet, so "press room two" doesn't count.
 
 It learns your voice from recordings: Speech Recognition > Record Number
 Samples... shows one word at a time in a big window for about four minutes
@@ -476,12 +487,8 @@ off, and the same chord again is struck again, as it would be without it.
 
 When number recognition (`F3`) hears a new chord, voice-led drones glide
 into it: each voice that moves glides from its note to the new chord's over
-the half beat before the chord's beat, so it arrives just as the chord is
-made (`nashville_leads`).  The common tones stay where they are.  Heard too
-late for that, it glides from then to the beat; with no beat to wait for,
-it glides over half a beat from when it's heard, and the chord waits for it,
-made as the glide ends.  (With VOICE LEAD off, there's nothing to wait for,
-and a number with no beat is made the moment it's heard, as ever.)  Once
+the half beat before the chord lands, so it arrives just as the chord is
+made (`nashville_leads`).  The common tones stay where they are.  Once
 it's gliding it's the drone's chord: a breath on the Breath Gate, or Pulse,
 striking the drones again doesn't pull it back.  For that, each of a
 voice-led drone's notes plays on a channel of its own -- three spare channels
