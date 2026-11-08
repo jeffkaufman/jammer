@@ -417,42 +417,54 @@ static void whistle_restore_rate(void) {
 // works, just at the old latency.
 static AudioDeviceID whistle_output_device;
 
-static void whistle_prepare_output_device(const char* name, int frames) {
-  if (!name || !*name || frames <= 0) return;
-
+// The output device fluidsynth will open for `name`, or kAudioObjectUnknown.
+// fluidsynth reports "default" for the system default, which is the one case
+// where there is no name to match.  Otherwise matched the way fluidsynth
+// matches, ignoring case, so it's the device it will open.
+static AudioDeviceID whistle_find_output_device(const char* name) {
+  if (!name || !*name) return kAudioObjectUnknown;
   AudioObjectPropertyAddress address = {
     kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
     kAudioObjectPropertyElementMain };
   UInt32 size = 0;
   if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0,
                                      NULL, &size) != noErr) {
-    return;
+    return kAudioObjectUnknown;
   }
   int count = (int)(size / sizeof(AudioDeviceID));
   AudioDeviceID* ids = (AudioDeviceID*)malloc(size);
-  if (!ids) return;
+  if (!ids) return kAudioObjectUnknown;
+  AudioDeviceID found = kAudioObjectUnknown;
   if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL,
                                  &size, ids) == noErr) {
     for (int i = 0; i < count; i++) {
       char device_name[WHISTLE_DEVICE_NAME_MAX];
       whistle_copy_cfstring(ids[i], kAudioObjectPropertyName, device_name,
                             sizeof(device_name));
-      // fluidsynth reports "default" for the system default, which is the
-      // one case where there is no name to match.  Otherwise matched the way
-      // fluidsynth matches, ignoring case, so it's the device it will open.
       bool matches = strcmp(name, "default") == 0
         ? ids[i] == whistle_default_output()
         : strcasecmp(device_name, name) == 0;
       if (matches && whistle_output_channels(ids[i]) > 0) {
-        whistle_output_device = ids[i];
-        whistle_request_buffer_frames(ids[i], frames);
-        printf("whistle: asked %s for %d-frame output blocks, got %d\n",
-               device_name, frames, whistle_device_buffer_frames(ids[i]));
+        found = ids[i];
         break;
       }
     }
   }
   free(ids);
+  return found;
+}
+
+static void whistle_prepare_output_device(const char* name, int frames) {
+  if (!name || !*name || frames <= 0) return;
+  AudioDeviceID id = whistle_find_output_device(name);
+  if (id == kAudioObjectUnknown) return;
+  whistle_output_device = id;
+  whistle_request_buffer_frames(id, frames);
+  char device_name[WHISTLE_DEVICE_NAME_MAX];
+  whistle_copy_cfstring(id, kAudioObjectPropertyName, device_name,
+                        sizeof(device_name));
+  printf("whistle: asked %s for %d-frame output blocks, got %d\n",
+         device_name, frames, whistle_device_buffer_frames(id));
 }
 
 /* --------------------------------------------------------------- stream --- */

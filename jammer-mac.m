@@ -2005,9 +2005,15 @@ static void flash_from_speech(int key) {
     [self reopenWhistle];
   }
 
+  // By name isn't enough: switch an interface off and on and it comes back
+  // under the same name but as a new device, while CoreAudio has quietly
+  // moved the synth onto the system default and we still believe we're on
+  // it.  So by the device itself too.
   char resolved[256];
   resolve_audio_device(wanted_output, resolved, sizeof(resolved));
-  if (strcmp(resolved, "default") != 0 && strcmp(resolved, audio_device) != 0) {
+  if (strcmp(resolved, "default") != 0 &&
+      (strcmp(resolved, audio_device) != 0 ||
+       whistle_find_output_device(resolved) != whistle_output_device)) {
     printf("audio output: %s is back; playing through it again\n", resolved);
     [self reopenOutput];
   }
