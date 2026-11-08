@@ -1663,6 +1663,17 @@ static void test_mandolin_effects() {
   CHECK(fabs(20 * log10(voice / plain)) < 6,
         "the Synth is %+.1fdB against the mandolin",
         20 * log10(voice / plain));
+  // Boost leaves the Synth where it is.
+  double synth_boosted;
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_SYNTH) | MANDO_BIT(MANDO_BOOST);
+  mando_publish();
+  mando_strums(3, 24000, false, 2, NULL, &synth_boosted);
+  CHECK(fabs(synth_boosted / voice - 1) < 0.02,
+        "Boost took the Synth %.2fx", synth_boosted / voice);
+  mando_prepare(48000);
+  mando_voices = MANDO_BIT(MANDO_SYNTH);
+  mando_publish();
   mando_run(440, 0.1, 9600, false);
   for (int b = 0; b < 100; b++) {
     mando_run(440, 0.1, 480, false);

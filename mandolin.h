@@ -15,6 +15,7 @@
 //
 //   Z  Tuner       the mandolin muted, and a tuning guide on screen
 //   X  Boost       the mandolin about 6dB louder, and everything on it
+//                  but the Synth
 //   J  Vocoder     the whistle's vocoder, played by the mandolin
 //   A  Bass        the whistle's Bass voice, following the mandolin down to
 //                  190Hz, just under its G, two octaves under it
@@ -566,7 +567,7 @@ static double leslie_run(Leslie* l, double x, double motor, double rate) {
 #define SYNTH_Q 2.5
 #define SYNTH_ATTACK_S 0.002
 #define SYNTH_RELEASE_S 0.120
-#define SYNTH_LEVEL 1.4
+#define SYNTH_LEVEL 0.7
 
 typedef struct {
   double phase[SYNTH_VOICES][2];
@@ -1026,7 +1027,7 @@ static void mando_process(const float* in, int len, double rate) {
   // The Tuner mutes all of it.
   bool heard = on && !tuning;
   whistle_ramp_to(&mando.dry, heard ? 1 : 0, ramp_frames);
-  // Boost is on all of it, the mandolin and everything on it.
+  // Boost is on the mandolin and everything on it but the Synth.
   whistle_ramp_to(&mando.boost,
                   pub & MANDO_BIT(MANDO_BOOST) ? MANDO_BOOST_GAIN : 1.0f,
                   ramp_frames);
@@ -1131,7 +1132,7 @@ static void mando_process(const float* in, int len, double rate) {
     }
     float boost = whistle_ramp_next(&mando.boost);
     mando_block[i] = boost * whistle_ramp_next(&mando.dry) * (float)dry;
-    float out = 0, bass_out = 0;
+    float out = 0, bass_out = 0, synth_out = 0;
     // How pitched it is, for Shimmer's send and the Synth.
     if (shimmer || synth) {
       double tonal = tonal_run(&mando.tonal, x);
@@ -1142,7 +1143,7 @@ static void mando_process(const float* in, int len, double rate) {
     }
     double gate = bass || synth ? room_gate_run(&mando.gate, x) : 0;
     if (synth) {
-      out += whistle_ramp_next(&mando.voice[MANDO_SYNTH]) *
+      synth_out = whistle_ramp_next(&mando.voice[MANDO_SYNTH]) *
         (float)synth_run(&mando.synth, x, synth_hz, gate * mando.tonal_level,
                          gate_db, rate);
     }
@@ -1171,9 +1172,8 @@ static void mando_process(const float* in, int len, double rate) {
              shimmer_run(&mando.shimmer, send);
       if (!shimmer_in) mando.shimmer_tail--;
     }
-    mando_voice_block[i] = boost *
-      ((float)mando.breath * out +
-       whistle_ramp_next(&mando.bass_breath) * bass_out);
+    mando_voice_block[i] = (float)mando.breath * (boost * out + synth_out) +
+      boost * whistle_ramp_next(&mando.bass_breath) * bass_out;
   }
   mando_block_len = len;
   int scaled = (int)(peak * 10000);
