@@ -970,9 +970,11 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   NSFont* font = mono_font(17, NSFontWeightRegular);
   CGFloat y = 120;
 
-  NSString* audio = [NSString stringWithFormat:@"♪ %s%s   vol %3d%%",
-                     snapshot.audio_device,
-                     snapshot.audio_to_vsl ? " → VSL Mixer in 1-2" : "",
+  // %@, not %s, for anything that isn't plain ASCII: %s takes the system's
+  // old 8-bit encoding, which turns a UTF-8 arrow into three wrong letters.
+  NSString* audio = [NSString stringWithFormat:@"♪ %@%@   vol %3d%%",
+                     @(snapshot.audio_device),
+                     snapshot.audio_to_vsl ? @" → VSL Mixer in 1-2" : @"",
                      (int)(snapshot.gain * 100 + 0.5)];
   [self drawString:audio
             inRect:NSMakeRect(VIEW_PAD, y,
@@ -984,9 +986,9 @@ static CGFloat text_width(NSString* s, NSFont* font) {
 
   // The mandolin, after it: on or off, and its voices.
   CGFloat x = VIEW_PAD + text_width(audio, font) + 40;
-  NSMutableString* mando = [NSMutableString stringWithFormat:@"mandolin %s%s",
+  NSMutableString* mando = [NSMutableString stringWithFormat:@"mandolin %s%@",
                             snapshot.mando_on ? "on " : "off",
-                            snapshot.mando_talkbox ? " → talkbox" : ""];
+                            snapshot.mando_talkbox ? @" → talkbox" : @""];
   if (!snapshot.mando_has_input) {
     [mando appendString:@"  no input 2"];
   } else {
@@ -1305,9 +1307,9 @@ static CGFloat text_width(NSString* s, NSFont* font) {
   if (action.length > 24) {
     action = [[action substringToIndex:23] stringByAppendingString:@"…"];
   }
-  NSString* text = [NSString stringWithFormat:@"→ %@%*s   heard: \"%s\"",
+  NSString* text = [NSString stringWithFormat:@"→ %@%*s   heard: \"%@\"",
                     action, (int)(24 - action.length), "",
-                    snapshot.speech_heard];
+                    @(snapshot.speech_heard)];
   [self drawString:text
             inRect:NSMakeRect(x, y, self.bounds.size.width - x - VIEW_PAD, 24)
               font:font
@@ -2184,7 +2186,7 @@ static void flash_from_speech(int key) {
       ? NSControlStateValueOn : NSControlStateValueOff;
   }
   NSString* title = talkbox_device_name[0]
-    ? [NSString stringWithFormat:@"Talkbox output: %s", talkbox_device_name]
+    ? [NSString stringWithFormat:@"Talkbox output: %@", @(talkbox_device_name)]
     : [NSString stringWithFormat:@"Talkbox output: %s", talkbox_error];
   NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title action:nil
                                          keyEquivalent:@""];
@@ -2759,7 +2761,7 @@ static void flash_from_speech(int key) {
     whistle_preferred_input(preferred, sizeof(preferred)) !=
       kAudioObjectUnknown;
   NSString* automatic = have_preferred
-    ? [NSString stringWithFormat:@"Automatic (%s)", preferred]
+    ? [NSString stringWithFormat:@"Automatic (%@)", @(preferred)]
     : @"Automatic (system default)";
   NSMenuItem* auto_item =
     [menu addItemWithTitle:automatic
@@ -2777,7 +2779,7 @@ static void flash_from_speech(int key) {
   int n = whistle_list_input_devices(devices, WHISTLE_MAX_INPUT_DEVICES);
   for (int i = 0; i < n; i++) {
     NSString* label = devices[i].is_default
-      ? [NSString stringWithFormat:@"%s (system default)", devices[i].name]
+      ? [NSString stringWithFormat:@"%@ (system default)", @(devices[i].name)]
       : @(devices[i].name);
     NSMenuItem* item = [menu addItemWithTitle:label
                                        action:@selector(chooseWhistleDevice:)
