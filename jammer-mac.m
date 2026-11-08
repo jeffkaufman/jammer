@@ -3343,6 +3343,40 @@ static void log_start(void) {
   printf("logging to %s\n", path.UTF8String);
 }
 
+// Asks for the microphone before anything opens an audio device.  Left to
+// itself, macOS asks the first time the app touches an interface with inputs
+// -- here, opening the 1818 for output -- and coreaudiod holds that open
+// until someone answers.  That's the main thread, before there's a window,
+// so all you'd see is VSL Mixer waiting for Jammer, and the question itself
+// can be off on another Space, behind a full-screen app.  It comes up after
+// every rebuild, since each one is a new app to macOS.  So ask here, as the
+// app in front, and say in the log what's being waited on.  Turned down,
+// play on: output still works, only the whistle and spoken numbers go deaf.
+static void ensure_microphone_access(void) {
+  AVAuthorizationStatus status =
+    [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+  if (status == AVAuthorizationStatusNotDetermined) {
+    printf("microphone: asking for access -- answer the dialog to go on\n");
+    [NSApplication sharedApplication];
+    NSApp.activationPolicy = NSApplicationActivationPolicyRegular;
+    [NSApp activateIgnoringOtherApps:YES];
+    __block _Atomic int answer = -1;
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio
+                             completionHandler:^(BOOL granted) {
+      atomic_store(&answer, granted ? 1 : 0);
+    }];
+    while (atomic_load(&answer) < 0) {
+      CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, true);
+    }
+    status = atomic_load(&answer) ? AVAuthorizationStatusAuthorized
+                                  : AVAuthorizationStatusDenied;
+  }
+  if (status != AVAuthorizationStatusAuthorized) {
+    printf("microphone: no access, so no whistle or spoken numbers -- "
+           "System Settings > Privacy & Security > Microphone\n");
+  }
+}
+
 int main(int argc, const char** argv) {
   @autoreleasepool {
     // In an .app bundle the soundfont sits in Contents/Resources; running
@@ -3363,6 +3397,7 @@ int main(int argc, const char** argv) {
       return render_main(argc, argv, soundfont);
     }
     log_start();
+    ensure_microphone_access();
 
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.
