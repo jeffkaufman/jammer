@@ -387,6 +387,15 @@ wrong -- with Speech Recognition > Review Number Clips..., which plays each
 and asks what you said.  The kept clips are held to
 2GB, oldest going first.
 
+And everything said while it's listening is kept, for working on it later:
+every utterance the fast one judged, agreed on or not, goes to
+`numbers/live/` with a `.tsv` of what each recognizer made of it and where
+the detector put the word -- laid out like the kept clips, so `numrec-eval`
+can be pointed at it, but never learned from.  Held to 4GB.  Jammer's output
+is kept too, in `~/Library/Logs/Jammer/`, one file per launch with every
+line stamped with the time of day, to line up with these and with VSL Mixer
+recordings; held to 500MB.
+
 The review then goes on to anything especially unusual that nobody has
 listened to yet, from the recordings as well as the kept clips: a word that
 sounds clearly more like a different word than like any other recording of

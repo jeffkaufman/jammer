@@ -37,6 +37,22 @@
 //
 // Nothing's kept while numtrain.h is recording, which labels its own.
 //
+// Separately, every utterance the fast path judged -- and every one too long
+// for it to -- is archived, whatever the two made of it, for working on the
+// recognizer later:
+//
+//   ~/Library/Application Support/com.jefftk.jammer/numbers/live/
+//     live-YYYYMMDD-HHMMSS-mmm.wav   the raw microphone, as above
+//     live-YYYYMMDD-HHMMSS-mmm.tsv   what each recognizer made of it
+//
+// Laid out the same way, so numrec-eval can be pointed at the directory,
+// but not learned from: the prompt is the number where both agreed, "other:"
+// and Apple's words where neither heard one, and "unsure" otherwise.  The
+// .tsv's "# word" is where the detector put the word in the clip, in
+// samples, and "# nearest" what it was nearest and how near.  Kept to
+// NL_MAX_BYTES, the oldest going first; jammer's log for the same time is in
+// ~/Library/Logs/Jammer, by the clip's name.
+//
 // Speech queue, apart from the files, which are written on nh_queue so a
 // slow disk never holds up listening.  Include after speech.h and
 // numtrain.h, in jammer-mac.m.
@@ -44,6 +60,7 @@
 #include <ctype.h>
 
 #define NH_MAX_BYTES (2LL << 30)  // 2GB
+#define NL_MAX_BYTES (4LL << 30)  // 4GB of the archive
 #define NH_WAIT_S 3.5      // after a word, for Apple to say what it heard
 #define NH_ARRIVAL_S 2.5   // untimed, a word arriving this late isn't it
 #define NH_SLACK_S 0.15    // timed, how near a word must be to count
@@ -60,7 +77,9 @@ typedef struct {
   long long start;  // where its clip starts
   int number;       // what the fast path took it as, 1-7, or 0
   int maybe;        // not taken, but nearly: what it nearly was, 1-7, or 0
+  int nearest;      // what it was nearest, 1-7, 0 for not a number, -1 none
   float dist;       // to the nearest recording
+  float runner_up;  // to the nearest of any other word
   float gate_db, room_db;
 } NhJudged;
 
@@ -88,36 +107,42 @@ static dispatch_queue_t nh_queue(void) {
   return queue;
 }
 
-static NSURL* nh_dir(void) {
+static NSURL* nh_numbers_dir(NSString* sub) {
   NSURL* support = [[NSFileManager.defaultManager
     URLsForDirectory:NSApplicationSupportDirectory
            inDomains:NSUserDomainMask] firstObject];
-  return [support
-    URLByAppendingPathComponent:@"com.jefftk.jammer/numbers/heard"];
+  return [support URLByAppendingPathComponent:
+    [@"com.jefftk.jammer/numbers/" stringByAppendingString:sub]];
 }
+
+static NSURL* nh_dir(void) { return nh_numbers_dir(@"heard"); }
+static NSURL* nl_dir(void) { return nh_numbers_dir(@"live"); }
 
 // ---------------------------------------------------------------------------
 // Keeping to NH_MAX_BYTES
 // ---------------------------------------------------------------------------
 
 static long long nh_bytes = -1;  // -1 until counted
+static long long nl_bytes = -1;  // the archive's
 
-// nh_queue.  Counts it all the first time, and again whenever it's over, when
-// the oldest clips go -- a .wav and its .tsv together -- until it isn't.
-static void nh_prune(void) {
-  if (nh_bytes >= 0 && nh_bytes <= NH_MAX_BYTES) return;
+// nh_queue.  Counts the clips named `prefix` in `dir` the first time, and
+// again whenever they're over `max`, when the oldest go -- a .wav and its
+// .tsv together -- until they aren't.
+static void nh_prune_dir(NSURL* dir, NSString* prefix, long long max,
+                         long long* bytes) {
+  if (*bytes >= 0 && *bytes <= max) return;
   NSMutableDictionary<NSString*, NSMutableArray<NSURL*>*>* clips =
     [NSMutableDictionary dictionary];
   NSMutableDictionary<NSString*, NSNumber*>* sizes =
     [NSMutableDictionary dictionary];
   long long total = 0;
   for (NSURL* file in [NSFileManager.defaultManager
-         contentsOfDirectoryAtURL:nh_dir()
+         contentsOfDirectoryAtURL:dir
        includingPropertiesForKeys:@[NSURLFileSizeKey]
                           options:NSDirectoryEnumerationSkipsHiddenFiles
                             error:nil]) {
     NSString* stem = file.lastPathComponent.stringByDeletingPathExtension;
-    if (![stem hasPrefix:@"heard-"]) continue;
+    if (![stem hasPrefix:prefix]) continue;
     NSNumber* size = nil;
     [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
     if (!clips[stem]) clips[stem] = [NSMutableArray array];
@@ -129,7 +154,7 @@ static void nh_prune(void) {
   int removed = 0;
   for (NSString* stem in
        [clips.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-    if (total <= NH_MAX_BYTES) break;
+    if (total <= max) break;
     for (NSURL* file in clips[stem]) {
       [NSFileManager.defaultManager removeItemAtURL:file error:nil];
     }
@@ -137,22 +162,23 @@ static void nh_prune(void) {
     removed++;
   }
   if (removed) {
-    printf("heard: over %lldMB of clips; removed the oldest %d\n",
-           NH_MAX_BYTES >> 20, removed);
+    printf("%s over %lldMB of clips; removed the oldest %d\n",
+           dir.lastPathComponent.UTF8String, max >> 20, removed);
     fflush(stdout);
   }
-  nh_bytes = total;
+  *bytes = total;
 }
+
 
 // ---------------------------------------------------------------------------
 // Keeping a clip
 // ---------------------------------------------------------------------------
 
-// Speech queue: cut it from the microphone's last few seconds, and hand it
-// over to be written.  A near miss to ask about has "# maybe" in its .tsv,
-// what it nearly was.
-static void nh_keep(const NhJudged* c, const char* label, const char* said,
-                    bool ask) {
+// Speech queue: cut c's clip from the microphone's last few seconds, and
+// hand it over to be written as `prefix`-<now>.wav with `tsv` beside it, in
+// `dir`, kept to `max` bytes.  The clip starts at c->start.
+static void nh_write_clip(const NhJudged* c, NSURL* dir, NSString* prefix,
+                          NSString* tsv, long long max, long long* bytes) {
   double rate = speech_format.sampleRate;
   long long from = c->start < 0 ? 0 : c->start;
   long long to = c->end + (long long)(NH_POST_S * rate);
@@ -163,15 +189,8 @@ static void nh_keep(const NhJudged* c, const char* label, const char* said,
   for (long long i = 0; i < n; i++) {
     x[i] = speech_mic[(from + i) & speech_mic_mask];
   }
-  NSString* maybe = ask ? [NSString stringWithFormat:
-    @"# maybe\t%s\n# dist\t%.2f\n", NR_WORDS[c->maybe - 1], c->dist] : @"";
-  NSString* tsv = [NSString stringWithFormat:
-    @"# rate\t%.0f\n# gate_db\t%.0f\n# room_db\t%.1f\n# fast\t%s\n%@"
-    @"# apple\t%s\n0\t%s\n", rate, c->gate_db, c->room_db,
-    c->number ? NR_WORDS[c->number - 1] : "nothing", maybe, said, label];
-
+  NSDate* when = [NSDate date];
   dispatch_async(nh_queue(), ^{
-    NSURL* dir = nh_dir();
     [NSFileManager.defaultManager createDirectoryAtURL:dir
                            withIntermediateDirectories:YES
                                             attributes:nil
@@ -179,8 +198,7 @@ static void nh_keep(const NhJudged* c, const char* label, const char* said,
     NSDateFormatter* format = [NSDateFormatter new];
     format.dateFormat = @"yyyyMMdd-HHmmss-SSS";
     NSString* base = [dir URLByAppendingPathComponent:
-      [@"heard-" stringByAppendingString:
-        [format stringFromDate:[NSDate date]]]].path;
+      [prefix stringByAppendingString:[format stringFromDate:when]]].path;
     NSString* wav = [base stringByAppendingString:@".wav"];
     FILE* f = fopen(wav.UTF8String, "wb");
     if (f) {
@@ -189,18 +207,57 @@ static void nh_keep(const NhJudged* c, const char* label, const char* said,
       fclose(f);
       [tsv writeToFile:[base stringByAppendingString:@".tsv"]
             atomically:YES encoding:NSUTF8StringEncoding error:nil];
-      if (nh_bytes >= 0) {
-        nh_bytes += 44 + n * 4 +
+      if (*bytes >= 0) {
+        *bytes += 44 + n * 4 +
           (long long)[tsv lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
       }
-      printf("heard: kept %s\n", wav.lastPathComponent.UTF8String);
+      printf("%s kept %s\n", dir.lastPathComponent.UTF8String,
+             wav.lastPathComponent.UTF8String);
     } else {
-      printf("heard: can't keep %s: %s\n", wav.UTF8String, strerror(errno));
+      printf("%s can't keep %s: %s\n", dir.lastPathComponent.UTF8String,
+             wav.UTF8String, strerror(errno));
     }
     fflush(stdout);
     free(x);
-    nh_prune();
+    nh_prune_dir(dir, prefix, max, bytes);
   });
+}
+
+// A clip of c to learn from, labeled `label`.  A near miss to ask about has
+// "# maybe" in its .tsv, what it nearly was.
+static void nh_keep(const NhJudged* c, const char* label, const char* said,
+                    bool ask) {
+  NSString* maybe = ask ? [NSString stringWithFormat:
+    @"# maybe\t%s\n# dist\t%.2f\n", NR_WORDS[c->maybe - 1], c->dist] : @"";
+  NSString* tsv = [NSString stringWithFormat:
+    @"# rate\t%.0f\n# gate_db\t%.0f\n# room_db\t%.1f\n# fast\t%s\n%@"
+    @"# apple\t%s\n0\t%s\n", speech_format.sampleRate, c->gate_db,
+    c->room_db, c->number ? NR_WORDS[c->number - 1] : "nothing", maybe, said,
+    label];
+  nh_write_clip(c, nh_dir(), @"heard-", tsv, NH_MAX_BYTES, &nh_bytes);
+}
+
+// Every judged utterance, into the archive: `apple` the number Apple heard
+// in it, or 0, and `said` its words.
+static void nl_keep(const NhJudged* c, int apple, const char* said) {
+  char label[160];
+  if (c->number && apple == c->number) {
+    snprintf(label, sizeof(label), "%s", NR_WORDS[apple - 1]);
+  } else if (!c->number && !apple && said[0]) {
+    snprintf(label, sizeof(label), "other: %s", said);
+  } else {
+    snprintf(label, sizeof(label), "unsure");
+  }
+  long long start = c->start < 0 ? 0 : c->start;
+  NSString* tsv = [NSString stringWithFormat:
+    @"# rate\t%.0f\n# gate_db\t%.0f\n# room_db\t%.1f\n# fast\t%s\n"
+    @"# nearest\t%s\t%.2f\t%.2f\n# word\t%lld\t%lld\n# apple\t%s\n"
+    @"0\t%s\n", speech_format.sampleRate, c->gate_db, c->room_db,
+    c->number ? NR_WORDS[c->number - 1] : "nothing",
+    c->nearest < 0 ? "none" : c->nearest == 0 ? "other"
+                            : NR_WORDS[c->nearest - 1],
+    c->dist, c->runner_up, c->onset - start, c->end - start, said, label];
+  nh_write_clip(c, nl_dir(), @"live-", tsv, NL_MAX_BYTES, &nl_bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +287,10 @@ static void nh_fast_judged(const NrStream* s, long long onset, long long end,
   bool near = !number && r->nearest >= 0 && r->nearest != NR_OTHER &&
               r->dist <= s->p.accept + NH_NEAR;
   c->maybe = near ? r->nearest + 1 : 0;
+  c->nearest = r->nearest < 0 ? -1 : r->nearest == NR_OTHER ? 0
+                                   : r->nearest + 1;
   c->dist = r->dist;
+  c->runner_up = r->runner_up;
   c->gate_db = s->p.trigger_db;
   c->room_db = s->noise;
 }
@@ -312,6 +372,14 @@ static void nh_resolve(int i) {
     said[j].index = w->index;
     said[j].text = w->text;
   }
+  char words[128] = "";
+  for (int j = 0; j < n_said; j++) {
+    size_t len = strlen(words);
+    snprintf(words + len, sizeof(words) - len, "%s%s", j ? " " : "",
+             said[j].text);
+  }
+  for (char* p = words; *p; p++) *p = (char)tolower((unsigned char)*p);
+  nl_keep(c, apple, words);
   // A near miss Apple didn't hear as that number is asked about, whatever
   // Apple made of it.
   bool ask = c->maybe && apple != c->maybe;
@@ -323,13 +391,6 @@ static void nh_resolve(int i) {
     return;
   }
 
-  char words[128] = "";
-  for (int j = 0; j < n_said; j++) {
-    size_t len = strlen(words);
-    snprintf(words + len, sizeof(words) - len, "%s%s", j ? " " : "",
-             said[j].text);
-  }
-  for (char* p = words; *p; p++) *p = (char)tolower((unsigned char)*p);
   // Never a bare number word, which would be learned as that number.
   char label[64];
   snprintf(label, sizeof(label), "%s%s", apple ? "" : "other: ",

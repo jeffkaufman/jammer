@@ -3242,6 +3242,107 @@ static void load_settings(void) {
 
 }
 
+// ---------------------------------------------------------------------------
+// The session log
+//
+// Everything jammer prints also goes to ~/Library/Logs/Jammer/
+// jammer-YYYYMMDD-HHMMSS.log, each line stamped with the time of day to the
+// millisecond, so a set can be gone over afterwards against a VSL Mixer
+// recording or numheard.h's archive -- without having had to start jammer
+// with its output saved.  The terminal still gets it as it was.  Kept to
+// LOG_MAX_BYTES, the oldest going first.
+// ---------------------------------------------------------------------------
+
+#define LOG_MAX_BYTES (500LL << 20)
+
+static int log_terminal = -1;  // where stdout went before
+static FILE* log_file;
+
+static void* log_tee(void* arg) {
+  int in = (int)(intptr_t)arg;
+  char buf[4096];
+  bool line_start = true;
+  for (;;) {
+    ssize_t n = read(in, buf, sizeof(buf));
+    if (n <= 0) break;
+    if (log_terminal >= 0) {
+      for (ssize_t done = 0; done < n;) {
+        ssize_t w = write(log_terminal, buf + done, (size_t)(n - done));
+        if (w <= 0) break;
+        done += w;
+      }
+    }
+    if (!log_file) continue;
+    for (ssize_t i = 0; i < n; i++) {
+      if (line_start) {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        struct tm tm;
+        localtime_r(&tv.tv_sec, &tm);
+        fprintf(log_file, "%02d:%02d:%02d.%03d ", tm.tm_hour, tm.tm_min,
+                tm.tm_sec, (int)(tv.tv_usec / 1000));
+      }
+      fputc(buf[i], log_file);
+      line_start = buf[i] == '\n';
+    }
+    fflush(log_file);
+  }
+  return NULL;
+}
+
+static void log_prune(NSURL* dir) {
+  NSArray<NSURL*>* files = [NSFileManager.defaultManager
+    contentsOfDirectoryAtURL:dir includingPropertiesForKeys:@[NSURLFileSizeKey]
+                     options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+  files = [files sortedArrayUsingComparator:^(NSURL* a, NSURL* b) {
+    return [b.lastPathComponent compare:a.lastPathComponent];  // newest first
+  }];
+  long long total = 0;
+  for (NSURL* file in files) {
+    if (![file.lastPathComponent hasPrefix:@"jammer-"]) continue;
+    NSNumber* size = nil;
+    [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
+    total += size.longLongValue;
+    if (total > LOG_MAX_BYTES) {
+      [NSFileManager.defaultManager removeItemAtURL:file error:nil];
+    }
+  }
+}
+
+static void log_start(void) {
+  NSURL* dir = [[[NSFileManager.defaultManager
+    URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask]
+    firstObject] URLByAppendingPathComponent:@"Logs/Jammer"];
+  [NSFileManager.defaultManager createDirectoryAtURL:dir
+                         withIntermediateDirectories:YES attributes:nil
+                                               error:nil];
+  log_prune(dir);
+  NSDateFormatter* format = [NSDateFormatter new];
+  format.dateFormat = @"yyyyMMdd-HHmmss";
+  NSString* path = [dir URLByAppendingPathComponent:
+    [NSString stringWithFormat:@"jammer-%@.log",
+      [format stringFromDate:[NSDate date]]]].path;
+  log_file = fopen(path.UTF8String, "w");
+  int fds[2];
+  if (!log_file || pipe(fds) != 0) {
+    printf("can't keep a log at %s\n", path.UTF8String);
+    if (log_file) fclose(log_file);
+    log_file = NULL;
+    return;
+  }
+  fflush(stdout);
+  fflush(stderr);
+  log_terminal = dup(STDOUT_FILENO);
+  dup2(fds[1], STDOUT_FILENO);
+  dup2(fds[1], STDERR_FILENO);
+  close(fds[1]);
+  setvbuf(stdout, NULL, _IOLBF, 0);  // a pipe would be block-buffered
+  pthread_t thread;
+  pthread_create(&thread, NULL, log_tee, (void*)(intptr_t)fds[0]);
+  pthread_detach(thread);
+  printf("logging to %s\n", path.UTF8String);
+}
+
 int main(int argc, const char** argv) {
   @autoreleasepool {
     // In an .app bundle the soundfont sits in Contents/Resources; running
@@ -3261,6 +3362,7 @@ int main(int argc, const char** argv) {
     if (argc > 1 && strcmp(argv[1], "--render") == 0) {
       return render_main(argc, argv, soundfont);
     }
+    log_start();
 
     // An explicit choice beats the system default, which on a laptop is the
     // built-in speakers -- rarely what you want on stage.
