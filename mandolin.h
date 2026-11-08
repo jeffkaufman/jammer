@@ -167,11 +167,13 @@ static void set_mando_gain(double volume) {
 // The whistle's Bass, moved to the mandolin: the lowest note that counts is
 // just under the G string, the highest well over what the E string reaches,
 // and the preset's four octaves down brought up two, so a mandolin's low G
-// comes out as a bass's G1.
+// comes out as a bass's G1, and 6dB under the whistle's.  Tracked as a
+// plucked string, so a note's decay, where its octave outlasts it, isn't
+// taken for a leap up.
 #define MANDO_BASS_LOW_HZ 190
 #define MANDO_BASS_HIGH_HZ 1600
 #define MANDO_BASS_OCTAVE 2
-#define MANDO_BASS_LEVEL_FULL 2
+#define MANDO_BASS_LEVEL_FULL 0
 // And the mandolin into it 15dB hotter than it comes in: a pickup runs
 // quieter than a whistle into a microphone, and the Bass's dynamics are set
 // against the whistle's.  After the gate, which goes by the input as it is.
@@ -979,6 +981,7 @@ static void mando_prepare(double rate) {
   engine_set_octave(&mando.engine, MANDO_BASS_OCTAVE);
   engine_set_level_full(&mando.engine, MANDO_BASS_LEVEL_FULL);
   engine_set_range(&mando.engine, MANDO_BASS_LOW_HZ, MANDO_BASS_HIGH_HZ);
+  engine_set_plucked(&mando.engine, true);
   vocoder_prepare(&mando.vocoder, rate);
   mando_line_prepare(&mando.tuner, rate, TUNER_RATE);
   room_gate_init(&mando.gate, rate);
