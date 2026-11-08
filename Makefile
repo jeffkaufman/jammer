@@ -89,7 +89,7 @@ dist: app jammer.entitlements dist.sh
 
 clean-mac:
 	rm -rf jammer-mac $(APP) audition pads speechphrases speechmodel \
-	  speechcompile $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval \
+	  speechcompile $(SPEECH_MODEL) kitlevels whistlelevels whistle-build numrec-eval liveval \
 	  breathmic-eval voicefx-levels mandolin-levels
 
 # Hear the soundfont's drum sounds one at a time; see the top of audition.c.
@@ -132,6 +132,11 @@ $(SPEECH_MODEL): speechphrases speechmodel
 # numrec-eval.c.
 numrec-eval: numrec-eval.c numrec.h
 	clang numrec-eval.c -o numrec-eval -std=gnu11 -Wall -O2
+
+# Replays VSL Mixer recordings of calling numbers through the fast recognizer
+# and the landing rule; see the top of liveval.c.
+liveval: liveval.c numrec.h speechtiming.h
+	clang liveval.c -o liveval -std=gnu11 -Wall -O2
 
 # Hear pads as the drone bass and drone chord would play them; see the top
 # of pads.c.

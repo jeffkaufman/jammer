@@ -376,6 +376,27 @@ sessions, and ones made with the band playing, make it better.  `make
 numrec-eval && ./numrec-eval` says how well it does on them.  Jammer's output
 says how many numbers it has learned.
 
+And `make liveval && ./liveval` says how well calling numbers works in a
+set: point it at VSL Mixer recordings made with jammer linked, and it plays
+each one's microphone (input 1) back through the fast recognizer and the
+landing rule, as jammer would have heard it, against that recording's own
+pedal beats, and says which beat each call lands on.  Tell it which beats
+you meant the changes for, counting pedal beats from 0 -- every eighth from
+beat 12, or a list -- and it scores each call on time, early or late:
+
+    ./liveval "~/Music/VSL Mixer/2026-11-07 20.04.13=8/12" \
+        "~/Music/VSL Mixer/2026-11-07 21.05.10=20,28,32,36"
+
+Without that, each is set against where it landed live.  It learns the
+model the way jammer does, and takes the detector's parameters
+(`noise_db=15`) and the landing rule's (`lead=1.75`, `conf=4`,
+`chord=4`, `bar=0`...) on the command line, so a change can be tried on every
+recording before it's tried on stage; `-v` lists every call.  Apple's
+recognizer isn't simulated, so a call the fast one left is just reported.
+The top of `liveval.c` has the rest.  The easiest recordings to score are
+ones where the changes come on a schedule -- every eight beats, say --
+with an instrument playing the chords on an input of its own.
+
 It also learns from playing.  Whenever Apple's recognizer and the fast one
 disagree about whether something you said was a number, the audio is kept,
 labeled with what Apple heard, in `numbers/heard/` (`numheard.h`), and
