@@ -155,6 +155,9 @@ double synth_sample_rate = 44100;
 // How big a block fluidsynth's driver asks for.  Read by the whistle, which
 // has to keep at least one of these buffered to hand it -- see
 // whistle_input_start.  Set here because this is the only place that knows.
+// The largest seen since the driver was made, and started over with each new
+// one: kept from a stretch on the system default's 512 after an interface was
+// switched off and on, it would leave the microphone 9ms behind for good.
 static _Atomic int audio_block_frames = 0;
 
 // ---------------------------------------------------------------------------
@@ -2336,6 +2339,7 @@ bool set_audio_device(const char* wanted) {
   }
   fluid_settings_setstr(fl_settings, AUDIO_DEVICE_SETTING, resolved);
   vsl_link_choose(resolved);
+  audio_block_frames = 0;
   fl_driver = new_fluid_audio_driver2(fl_settings, jammer_audio_render,
                                       fl_synth);
 
@@ -2357,6 +2361,7 @@ bool set_audio_device(const char* wanted) {
     fluid_settings_setint(fl_settings, "audio.period-size",
                           default_period_size);
 
+    audio_block_frames = 0;
     fl_driver = new_fluid_audio_driver2(fl_settings, jammer_audio_render,
                                         fl_synth);
     if (fl_driver && !audio_is_flowing()) {
@@ -2371,6 +2376,7 @@ bool set_audio_device(const char* wanted) {
     snprintf(resolved, sizeof(resolved), "default");
     fluid_settings_setstr(fl_settings, AUDIO_DEVICE_SETTING, resolved);
     vsl_link_choose(resolved);
+    audio_block_frames = 0;
     fl_driver = new_fluid_audio_driver2(fl_settings, jammer_audio_render,
                                         fl_synth);
     if (!fl_driver) die("couldn't open any audio output");
