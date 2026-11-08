@@ -314,34 +314,57 @@ Speaking is played, not just said.  Only what's loud enough to be said right
 into the microphone reaches the recognizer -- the gate, set from the Speech
 Recognition menu and shown as a white tick on the speech row's meter, which
 brightens while it's open.  It starts strict, at -20dBFS peak, so a caller
-across the room doesn't count.  And a number lands two beats after you
-*start* saying it, whichever recognizer heard it: call "four" on the one and
-the IV comes in on the three, however long the word took or the recognizer
-did.  Two beats rather than one because a number and the moment it takes to
-be sure of it run from about 450ms to a second, which at dance tempos is
-more than a beat as often as not, and a chord that came a beat after some
-words and the moment it was heard after others wasn't on anything.  If even
-two beats have gone -- a long word at a fast tempo, or Apple taking its time
--- it's the next whole beat after the onset, never the moment it's heard.
-The beat is the pedals' while they're going, and 116 BPM's from the onset
-otherwise.  On the beat itself: each pedal hit is a beat, and once the
-landing is within a quarter beat the next pedal makes the change inside the
-beat, just before its notes, since arriving a few milliseconds after it would
-only be heard on the next note; a pedal that hasn't come by the landing's
-time finds the change already made.  So the chord is heard on the first
-pedal at least a beat and three quarters after you started the word.  The
-speech row shows a change that's waiting with "…", and jammer's output logs
-the timing of each: when the word was heard and landed, against its onset.
+across the room doesn't count.  And a number lands on the
+pedal beat nearest 1.7 beats after you *start* saying it, whichever
+recognizer heard it: a word started anywhere from 2.2 to 1.2 beats before a
+beat lands on it, however long the word took or the recognizer did.  So
+call "four" a beat and a half or so before the change.  Not one beat on,
+because a number and the moment it takes to be sure of it run about
+450-650ms, the better part of a beat at dance tempos.  The nearest beat
+rather than exactly so many beats on because nobody starts a word to the
+millisecond: landing exactly two beats after each put most changes between
+beats, a couple of hundred milliseconds off the band.
+
+Even so, calls spread over a whole beat, so one whose time falls near the
+halfway point between two beats could mean either -- and there the music
+decides.  Chords last a multiple of two beats (four or eight, mostly, and
+runs of two-beat ones), and a tune doesn't gain or lose beats, so jammer
+counts pedal beats and learns where in the bar changes have been falling
+from the calls that were clear, over the last 128 beats; a borderline call
+goes where they've been going.  The more calls have agreed, the more it
+trusts that: with none, every call goes by its time; after eight, all but
+the ones right on a beat follow the bar.  One or two changes out of step
+are taken as mistakes, three in a row as a beat dropped, and it starts
+over whenever the pedals stop.  Over five recordings that took the calls
+landing on the beat meant from 125 of 163 to 148; most of the rest were
+started less than a beat ahead, which nothing can land on time.  Keep the
+word short, though: a drawn-out "fooour" may not be heard in time, and if
+the beat's gone by it's the next one, never the moment it's heard.  Without
+the pedals it's 1.7 beats of 116 BPM after the onset.  On the beat itself:
+each pedal hit is a beat, and once the landing is within a quarter beat the
+next pedal makes the change inside the beat, just before its notes, since
+arriving a few milliseconds after it would only be heard on the next note;
+a pedal that hasn't come by the landing's time finds the change already
+made.  The speech row shows a change that's
+waiting with "…", and jammer's output logs the timing of each: when the word
+was heard and landed, against its onset.
 
 Numbers also have a faster way in than Apple's recognizer: `numrec.h`, which
 knows only one to seven, in your voice, and hears them 40-170ms after the
 word ends -- as soon as it can be sure the word is over, which for "six",
-with its "k", is longer than for "two".  What it hears lands as above, two
-beats after the onset its detector found.  Apple's recognizer hearing the
+with its "k", is longer than for "two".  What it hears lands as above, from
+the onset its detector found.  Apple's recognizer hearing the
 same number a moment later is ignored.  Anything it isn't sure of it leaves
 to Apple, whose word lands from the same onset: the detector's utterances
 are kept for that, taken or not.  It only takes a whole word that follows a
-moment of quiet, so "press room two" doesn't count.
+moment of quiet, so "press room two" doesn't count.  Where a word starts
+and ends is where it rises out of the room's sound and falls back: with the
+band playing, the mandolin and drums reach the microphone too, so anything
+less than 20dB above the room's quietest, or 20dB below the word's
+loudest, is taken as the room.  A word too
+long to be a number (1.2 seconds) is left to Apple, still with its own
+onset; Apple's words are only ever set against something said in the last
+two seconds.
 
 It learns your voice from recordings: Speech Recognition > Record Number
 Samples... shows one word at a time in a big window for about four minutes

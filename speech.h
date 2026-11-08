@@ -22,8 +22,8 @@
 //
 // It only hears what's loud enough to be said right into the microphone (the
 // gate in speechgate.h, set from the Speech Recognition menu).  A number it
-// hears lands two beats after the word began (see "Landing"), so it lands
-// in time however long the recognizer took; anything else is done the
+// hears lands on a beat about two after the word began (see "Landing"), so
+// it lands in time however long the recognizer took; anything else is done the
 // moment it's heard.  A chord change has to land on a beat, but a button, a
 // key or a mode is wanted now, not a beat or two later.
 //
@@ -250,14 +250,15 @@ static void speech_apply_locked(const SwAction* action) {
 // ---------------------------------------------------------------------------
 // Landing
 //
-// A number lands SPEECH_BEATS_AFTER_ONSET beats after you started saying it
-// (speechtiming.h) -- the same for both recognizers -- on the beat's grid:
-// the pedals' while they're going, and SPEECH_DEFAULT_BPM's from the onset
-// otherwise.  So with the feet going, call a number on the one and the chord
-// comes in on the three, however long the word took or the recognizer did.
-// If even that has gone by -- a long word at a fast tempo, or Apple taking
-// its time -- it's the next whole beat after the onset, never the moment
-// it's heard, which is a different time for every word.
+// A number lands on the pedal beat nearest SPEECH_BEATS_AFTER_ONSET beats
+// after you started saying it (speechtiming.h) -- the same for both
+// recognizers -- and without pedals, that many beats of SPEECH_DEFAULT_BPM
+// after the onset.  So with the feet going, start a number around the "and"
+// of the beat two before the change and the chord comes in on the change,
+// however long the word took or the recognizer did.  If that
+// has gone by -- a long word at a fast tempo, or Apple taking its time --
+// it's the next beat, never the moment it's heard, which is a different
+// time for every word.
 //
 // On the beat itself, not near it.  The beat here is the pedal: each hit is
 // when the rhythm parts play, so a change that arrives a few milliseconds
@@ -265,8 +266,7 @@ static void speech_apply_locked(const SwAction* action) {
 // once a landing is within a quarter beat, the next pedal beat makes it,
 // inside the beat before its notes (before_beat_hook, from arpeggiate); and
 // if no pedal has come by its time, it's made then, so a pedal a hair late
-// still plays the new chord.  Either way the chord is heard on the first
-// pedal at least a beat and three quarters after the onset.
+// still plays the new chord.
 //
 // The onset is the fast recognizer's: where its utterance detector found
 // the word rising out of the quiet (numrec.h), on the microphone's
@@ -282,6 +282,11 @@ static void speech_apply_locked(const SwAction* action) {
 #define SPEECH_SAME_WORD_S 0.4
 // How near Apple's timestamps for a word must come to an utterance to be it.
 #define SPEECH_WORD_SLACK_S 0.15
+// The longest an utterance can have been over and still be a word Apple has
+// only now written.  Apple writes a word within about a second of its end;
+// without this, a word whose utterance went unnoticed took the one before,
+// seconds earlier, and landed on whatever beat came next.
+#define SPEECH_WORD_MAX_AGE_S 2.0
 
 // A number waiting for its time.  Under the lock.
 typedef struct {
@@ -290,9 +295,16 @@ typedef struct {
   uint64_t due;       // when it lands
   uint64_t earliest;  // or a pedal beat from here on makes it
   bool fast;          // the fast recognizer's, else Apple's
+  bool borderline;    // its beat chosen by the changes before it
+  long beat;          // which pedal beat, as speech_pedal_beats counts
 } SpeechLanding;
 static SpeechLanding speech_waiting[SPEECH_MAX_WAITING];
 static int speech_n_waiting;
+// Where changes have landed since the pedals last started, for the next
+// (speech_landing_time): cleared whenever they stop.  Under the lock.
+static SpeechRecent speech_recent;
+// Pedal beats so far, counted in speech_before_beat.  Under the lock.
+static long speech_pedal_beats;
 
 // A place on the microphone's timeline, as speech_drain counts it, on
 // now()'s clock: from the clock at the latest block and how far back of it
@@ -308,12 +320,17 @@ static uint64_t speech_sample_ns(long long sample) {
 
 // The beat, and whether it's the pedals': theirs if a pedal hit has come
 // within the last beat and a half, else the default tempo's.
-static uint64_t speech_beat_now(bool* pedals) {
+// `pedal_beat` is which beat the last hit was, counting them.
+static uint64_t speech_beat_now(bool* pedals, uint64_t* pedal_ns,
+                                long* pedal_beat) {
   LOCK();
   uint64_t beat = current_beat_ns, last = last_downbeat_ns;
+  long count = speech_pedal_beats;
   UNLOCK();
   bool going = beat > 0 && last > 0 && now() - last < beat * 3 / 2;
   if (pedals) *pedals = going;
+  if (pedal_ns) *pedal_ns = going ? last : 0;
+  if (pedal_beat) *pedal_beat = count;
   return going ? beat : 60 * NS_PER_SEC / SPEECH_DEFAULT_BPM;
 }
 
@@ -336,6 +353,7 @@ static void speech_land_apply_locked(int i, const char* how) {
          "onset\n", w.number, how,
          (long)(((int64_t)t - (int64_t)w.due) / 1000000),
          (long)((t - w.onset_ns) / 1000000));
+  speech_recent_add(&speech_recent, w.beat, w.borderline);
   SwAction action = {SW_NUMBER, w.number};
   speech_apply_locked(&action);
 }
@@ -343,6 +361,7 @@ static void speech_land_apply_locked(int i, const char* how) {
 // The next beat's notes are about to play: make whatever's within reach
 // first.  Called by arpeggiate with the lock held.
 static void speech_before_beat(void) {
+  speech_pedal_beats++;  // this one, before last_downbeat_ns says so
   uint64_t t = now();
   for (int i = 0; i < speech_n_waiting;) {
     if (t >= speech_waiting[i].earliest) {
@@ -375,8 +394,14 @@ static bool speech_land(int number, uint64_t onset_ns, bool fast,
                         const char* heard_by) {
   uint64_t t = now();
   bool pedals;
-  uint64_t beat = speech_beat_now(&pedals);
-  SpeechLandingTime when = speech_landing_time(onset_ns, beat, pedals, t);
+  uint64_t pedal_ns;
+  long pedal_beat;
+  uint64_t beat = speech_beat_now(&pedals, &pedal_ns, &pedal_beat);
+  LOCK();
+  SpeechRecent recent = speech_recent;
+  UNLOCK();
+  SpeechLandingTime when = speech_landing_time(onset_ns, beat, pedal_ns,
+                                               pedal_beat, t, &recent);
   bool is_new = true;
   LOCK();
   for (int i = 0; i < speech_n_waiting; i++) {
@@ -399,6 +424,8 @@ static bool speech_land(int number, uint64_t onset_ns, bool fast,
     w->fast = true;
     when.due = w->due;
     when.earliest = w->earliest;
+    when.beat = w->beat;
+    when.borderline = w->borderline;
     break;
   }
   if (is_new) {
@@ -406,16 +433,22 @@ static bool speech_land(int number, uint64_t onset_ns, bool fast,
       speech_land_apply_locked(0, "to make room");
     }
     speech_waiting[speech_n_waiting++] =
-      (SpeechLanding){number, onset_ns, when.due, when.earliest, fast};
+      (SpeechLanding){number, onset_ns, when.due, when.earliest, fast,
+                      when.borderline, when.beat};
   }
   nashville_leads(number, when.due);
   snprintf(speech_last_action, sizeof(speech_last_action), "%d …", number);
   UNLOCK();
   printf("timing: %s %d, %ldms after the onset; lands %d beats after it, "
-         "%+ldms from now (%.0f bpm%s)\n", heard_by, number,
+         "%+ldms from now (%.0f bpm%s)", heard_by, number,
          (long)((t - onset_ns) / 1000000), when.beats,
          (long)(((int64_t)when.due - (int64_t)t) / 1000000),
          60.0 * NS_PER_SEC / beat, pedals ? ", the pedals'" : "");
+  if (pedals) {
+    printf(", pedal beat %ld%s", when.beat,
+           when.borderline ? ", borderline: by the changes before" : "");
+  }
+  printf("\n");
   fflush(stdout);
   if (when.due > t) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(when.due - t)),
@@ -486,17 +519,22 @@ static void speech_note_utterance(long long onset, long long end) {
 // onset of the utterance found there, or -1 if none fits.  By Apple's
 // timestamps for the word when it gives them; else by when it arrived, as
 // the latest utterance.  The one still going counts too, since Apple can be
-// quicker than the detector's end of it.
+// quicker than the detector's end of it.  Either way, never one that ended
+// more than SPEECH_WORD_MAX_AGE_S ago.
 static long long speech_onset_for_word(int index) {
   long long from = speech_word_from[index], to = speech_word_to[index];
-  long long slack = (long long)(SPEECH_WORD_SLACK_S * speech_format.sampleRate);
+  double rate = speech_format.sampleRate;
+  long long slack = (long long)(SPEECH_WORD_SLACK_S * rate);
+  long long oldest_end =
+    atomic_load_explicit(&speech_tap_total, memory_order_relaxed) -
+    (long long)(SPEECH_WORD_MAX_AGE_S * rate);
   long long best = -1;
   int n = speech_n_utterances < SPEECH_UTTERANCES ? speech_n_utterances
                                                   : SPEECH_UTTERANCES;
   for (int k = 0; k < n; k++) {
     const SpeechUtterance* u = &speech_utterances[k];
     bool fits = to < 0 || (from <= u->end + slack && to >= u->onset - slack);
-    if (fits && u->onset > best) best = u->onset;
+    if (fits && u->end >= oldest_end && u->onset > best) best = u->onset;
   }
   const NrStream* s = speech_fast_stream;
   if (s->active) {
@@ -618,6 +656,26 @@ static bool speech_fast_utterance(void* ctx, NrStream* s, long long onset,
     fflush(stdout);
   }
   return final;
+}
+
+// Something said that was too long to be a number.  Still kept as an
+// utterance, so that if Apple hears a number in it, that lands from its
+// onset rather than from an older one's; and still set beside what Apple
+// heard (numheard.h), as the fast path's "nothing".
+static bool speech_fast_overlong(void* ctx, NrStream* s, long long onset,
+                                 long long end, bool clear, int quiet,
+                                 bool final) {
+  (void)ctx; (void)clear; (void)quiet; (void)final;
+  long long hop = s->f.hop;
+  speech_note_utterance(onset * hop + speech_fast_offset,
+                        (end + 1) * hop + speech_fast_offset);
+  printf("fast: %lldms, too long to be a number; leaving it to apple\n",
+         (end - onset + 1) * 10);
+  fflush(stdout);
+  NrResult none = {.label = -1, .nearest = -1, .dist = INFINITY,
+                   .runner_up = INFINITY, .why = "too long"};
+  nh_fast_judged(s, onset, end, 0, &none);
+  return true;
 }
 
 // Everything numtrain.h has recorded and numheard.h has kept, learned into a
@@ -949,6 +1007,14 @@ static void speech_drain(void) {
 
 static void speech_tick(void) {
   speech_land_due();
+  // The pedals have stopped: the changes before are over (speech_recent).
+  bool pedals;
+  speech_beat_now(&pedals, NULL, NULL);
+  if (!pedals) {
+    LOCK();
+    speech_recent_clear(&speech_recent);
+    UNLOCK();
+  }
 
   LOCK();
   bool wanted = (speech_chooses_notes || speech_commands_on) &&
@@ -1247,6 +1313,7 @@ static void speech_start(double sample_rate) {
   stream_params.hangover = NR_PAD;
   nr_stream_init(speech_fast_stream, sample_rate, stream_params,
                  speech_fast_utterance, NULL);
+  speech_fast_stream->on_overlong = speech_fast_overlong;
   speech_fast_learn();
   whistle_input_tap = speech_tap;
   before_beat_hook = speech_before_beat;

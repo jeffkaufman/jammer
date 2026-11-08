@@ -17,7 +17,16 @@
 // through the speech gate, reaching back to where it rose out of the quiet,
 // and ends at the last frame that isn't quiet once end_hangover frames of
 // quiet have followed.  Quiet is relative: well below the utterance's own
-// peak, or down near the room's noise.
+// peak, or not far above the room's noise.  "Not far" is 20dB, not 10: with
+// the band playing, the mandolin and drums reach the microphone at -45 to
+// -35dB, and at 10dB above the quietest moments between strums they counted
+// as talking -- a 300ms word came out as 700ms, or as more than
+// NR_MAX_FRAMES and never matched, and its onset as up to 300ms early.  In a
+// quiet room the floor (floor_db) is what decides, so it's the same there.
+// And "well below the peak" is 20dB, not 30: a 340ms "one" with something
+// at -25 to -35dB after it was 880ms to the detector, heard after the beat
+// it was for.  The recordings were matched as well or better that way
+// (numrec-eval: 158 of 163 right rather than 154 of 159).
 //
 // Only a whole word is ever taken: the utterance is matched end to end
 // against whole recorded words, by dynamic time warping, which lines two
@@ -83,7 +92,7 @@ typedef struct {
 
 static NrParams nr_default_params(float trigger_db) {
   return (NrParams){
-    .trigger_db = trigger_db, .floor_db = -60, .noise_db = 10, .rel_db = 30,
+    .trigger_db = trigger_db, .floor_db = -60, .noise_db = 20, .rel_db = 20,
     .hangover = 4, .end_hangover = 18, .pre_quiet = 30, .max_back = 30,
     .accept = 1.6f, .margin = 0.05f, .room_db = -70,
   };
@@ -250,6 +259,9 @@ struct NrStream {
   int quiet_run;
   long long last_end;     // where the last utterance ended
   NrUtteranceFn on_utterance;
+  // Told of an utterance too long to be a number once it's over, which
+  // on_utterance never is: that something was said, and where.  Optional.
+  NrUtteranceFn on_overlong;
   void* ctx;
 };
 
@@ -319,6 +331,9 @@ static void nr_stream_frame(NrStream* s) {
                                  final);
   }
   if (!final) return;
+  if (s->overlong && s->on_overlong) {
+    s->on_overlong(s->ctx, s, onset, end, clear, s->quiet_run, true);
+  }
   s->active = false;
   if (!click) s->last_end = end;  // a click is as if unheard
 }

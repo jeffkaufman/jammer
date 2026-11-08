@@ -2963,30 +2963,109 @@ static void test_speech_gate() {
   CHECK(out[end + 40 * w] == 0, "400ms after, it should be shut again");
 }
 
-// When a spoken number lands: two beats after its onset, on the grid, with
-// a pedal up to a quarter beat early taking it; and once that's gone, the
-// next whole beat after the onset rather than now.
+// When a spoken number lands: on the pedal beat nearest
+// SPEECH_BEATS_AFTER_ONSET beats after its onset, with a pedal up to a
+// quarter beat early taking it; once that's gone, the next beat rather than
+// now; and without pedals, that many beats after the onset.  A borderline
+// call goes with where the changes before it fell, a whole number of chords
+// back.
 static void test_speech_landing() {
-  const uint64_t beat = 500 * 1000000ULL, onset = 10 * NS_PER_SEC;
-  // Decided 600ms after the onset, pedals going: lands at two beats.
-  SpeechLandingTime l = speech_landing_time(onset, beat, true,
-                                            onset + 600 * 1000000ULL);
-  CHECK(l.beats == 2 && l.due == onset + 2 * beat &&
-        l.earliest == onset + 2 * beat - beat / 4,
-        "a number decided in time should land two beats after its onset");
+  const uint64_t ms = 1000000ULL, beat = 500 * ms, onset = 10 * NS_PER_SEC;
+  const uint64_t after = (uint64_t)(SPEECH_BEATS_AFTER_ONSET * beat);
+  const long b0 = 100;  // the pedal at `onset` is beat 100
+  // A word started on a beat lands on the beat nearest `after` on.
+  long k = (long)((after + beat / 2) / beat);
+  uint64_t want = onset + (uint64_t)k * beat;
+  SpeechLandingTime l = speech_landing_time(onset, beat, onset, b0,
+                                            onset + 400 * ms, NULL);
+  CHECK(l.due == want && l.earliest == l.due - beat / 4 && l.beat == b0 + k,
+        "a number should land on the pedal beat nearest its time");
+  // Started a little before or after the grid's beat: the same beat.
+  l = speech_landing_time(onset + 60 * ms, beat, onset, b0, onset + 400 * ms,
+                          NULL);
+  CHECK(l.due == want, "a word started just after a beat should land there");
+  l = speech_landing_time(onset - 60 * ms, beat, onset, b0, onset + 400 * ms,
+                          NULL);
+  CHECK(l.due == want, "a word started just before a beat should too");
+  // Half a beat either way of `after` is where it changes over.
+  l = speech_landing_time(want + beat / 2 - after + 10 * ms, beat, onset, b0,
+                          onset + 900 * ms, NULL);
+  CHECK(l.due == want + beat,
+        "a word started later than that should land a beat later");
+  // A pedal more than a beat back still sets the grid.
+  l = speech_landing_time(onset, beat, onset - 3 * beat, b0 - 3,
+                          onset + 400 * ms, NULL);
+  CHECK(l.due == want && l.beat == b0 + k,
+        "the grid should run on past the last pedal");
   // However quick the word was.
-  l = speech_landing_time(onset, beat, true, onset + 300 * 1000000ULL);
-  CHECK(l.due == onset + 2 * beat, "a quick word shouldn't land sooner");
-  // Decided after two beats: the third, not now.
-  l = speech_landing_time(onset, beat, true, onset + 2 * beat + 1);
-  CHECK(l.beats == 3 && l.due == onset + 3 * beat,
-        "a late decision should land on the next whole beat, not now");
-  l = speech_landing_time(onset, beat, true, onset + 3 * beat + 1);
-  CHECK(l.beats == 4, "or the one after that");
-  // No pedals: at its time, and nothing earlier.
-  l = speech_landing_time(onset, beat, false, onset + 600 * 1000000ULL);
-  CHECK(l.due == onset + 2 * beat && l.earliest == l.due,
-        "without pedals nothing should take it early");
+  l = speech_landing_time(onset, beat, onset, b0, onset + 100 * ms, NULL);
+  CHECK(l.due == want, "a quick word shouldn't land sooner");
+  // Decided after that beat: the next one, not now.
+  l = speech_landing_time(onset, beat, onset, b0, want, NULL);
+  CHECK(l.due == want + beat && l.beat == b0 + k + 1,
+        "a late decision should land on the next beat");
+  l = speech_landing_time(onset, beat, onset, b0, want + beat + 1, NULL);
+  CHECK(l.due == want + 2 * beat, "or the one after that");
+  // No pedals: `after` on, and nothing earlier.
+  l = speech_landing_time(onset, beat, 0, 0, onset + 400 * ms, NULL);
+  CHECK(l.due == onset + after && l.earliest == l.due,
+        "without pedals it should land at its time, nothing taking it early");
+
+  // A call whose time is 1.45 beats after beat 100 -- nearest 101, but
+  // well toward 102: borderline.
+  const double ahead = SPEECH_BEATS_AFTER_ONSET;
+  uint64_t early = (uint64_t)((int64_t)onset +
+                              (int64_t)((1.45 - ahead) * (double)beat));
+  uint64_t heard = early + 300 * ms;
+  SpeechRecent recent = {0};
+  speech_recent_add(&recent, 94, false);
+  speech_recent_add(&recent, 98, false);  // 102 is a whole number of chords on
+  l = speech_landing_time(early, beat, onset, b0, heard, &recent);
+  CHECK(l.beat == 102 && l.due == onset + 2 * beat && l.borderline,
+        "a borderline call should land a whole number of chords on");
+  l = speech_landing_time(early, beat, onset, b0, heard, NULL);
+  CHECK(l.beat == 101 && !l.borderline, "without changes before, its time");
+  // Changes in step with the nearer beat: that one.
+  SpeechRecent nearer = {0};
+  speech_recent_add(&nearer, 93, false);
+  speech_recent_add(&nearer, 97, false);
+  l = speech_landing_time(early, beat, onset, b0, heard, &nearer);
+  CHECK(l.beat == 101, "in step with the nearer beat, that one");
+  // A change or two out of step are taken as mistakes; SPEECH_SHIFT_AFTER
+  // in a row, in step with each other, as a dropped beat.
+  SpeechRecent stray = {0};
+  speech_recent_add(&stray, 84, false);
+  speech_recent_add(&stray, 88, false);
+  for (int i = 1; i < SPEECH_SHIFT_AFTER; i++) {
+    speech_recent_add(&stray, 88 + 4 * i - 3, false);  // odd: out of step
+  }
+  l = speech_landing_time(early, beat, onset, b0, heard, &stray);
+  CHECK(l.beat == 102, "fewer than SPEECH_SHIFT_AFTER strays shouldn't move it");
+  speech_recent_add(&stray, 88 + 4 * SPEECH_SHIFT_AFTER - 3, false);
+  l = speech_landing_time(early, beat, onset, b0, heard, &stray);
+  CHECK(l.beat == 101, "SPEECH_SHIFT_AFTER in a row should move it");
+  // Borderline changes don't count unless asked, nor ones too long ago.
+  SpeechRecent unsure = {0};
+  speech_recent_add(&unsure, 98, true);
+  l = speech_landing_time(early, beat, onset, b0, heard, &unsure);
+  CHECK(l.beat == (SPEECH_BORDERLINE_VOTES ? 102 : 101),
+        "a borderline change counts only if SPEECH_BORDERLINE_VOTES");
+  SpeechRecent old = {0};
+  speech_recent_add(&old, 102 - 4 * (SPEECH_MEMORY_BEATS / 4 + 1), false);
+  l = speech_landing_time(early, beat, onset, b0, heard, &old);
+  CHECK(l.beat == 101, "a change past SPEECH_MEMORY_BEATS shouldn't count");
+  // A call whose time is right on a beat goes by its time, whatever came
+  // before.
+  uint64_t on_beat = (uint64_t)((int64_t)onset +
+                                (int64_t)((2.0 - ahead) * (double)beat));
+  l = speech_landing_time(on_beat, beat, onset, b0, on_beat + 300 * ms,
+                          &nearer);
+  CHECK(l.beat == 102 && !l.borderline,
+        "a call right on a beat should go by its time alone");
+  // And never a beat that's gone by.
+  l = speech_landing_time(early, beat, onset, b0, onset + beat + 1, &nearer);
+  CHECK(l.beat == 102 && l.borderline,
+        "nor a beat that's gone by, and that's no evidence either");
 }
 
 // The chord each spoken number gives.
